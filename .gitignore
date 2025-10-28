@@ -1,0 +1,276 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+*.mo
+*.pot
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+instance/
+.webassets-cache
+.scrapy
+docs/_build/
+.pybuilder/
+target/
+.ipynb_checkpoints
+profile_default/
+ipython_config.py
+.pdm.toml
+__pypackages__/
+celerybeat-schedule
+celerybeat.pid
+*.sage.py
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.spyderproject
+.spyproject
+.ropeproject
+/site
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+cython_debug/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+pids
+*.pid
+*.seed
+*.pid.lock
+lib-cov
+coverage
+*.lcov
+.nyc_output
+.grunt
+bower_components
+.lock-wscript
+build/Release
+node_modules/
+jspm_packages/
+web_modules/
+*.tsbuildinfo
+.npm
+.eslintcache
+.stylelintcache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+.node_repl_history
+*.tgz
+.yarn-integrity
+.env
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
+.cache
+.parcel-cache
+.next
+out
+.nuxt
+dist
+.cache/
+.vuepress/dist
+.temp
+.serverless/
+.fusebox/
+.dynamodb/
+.tern-port
+.vscode-test
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+
+# Next.js
+.next/
+out/
+build/
+*.tsbuildinfo
+# Keep next config files
+# next-env.d.ts
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+.DS_Store
+Thumbs.db
+
+# Project specific - temp files
+/videos/*
+!/videos/.gitkeep
+/outputs/*
+!/outputs/.gitkeep
+/traffic-server/app/static/outputs/*
+!/traffic-server/app/static/outputs/.gitkeep
+/traffic-server/app/static/temp/*
+!/traffic-server/app/static/temp/.gitkeep
+/traffic-server/app/static/uploads/*
+!/traffic-server/app/static/uploads/.gitkeep
+
+# Model files (large files) - KEEP for this project
+# *.pt
+# *.pth
+# *.onnx
+# *.pb
+# *.h5
+# *.tflite
+# *.weights
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+*.log
+log.txt
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+# *.bak  # Comment out if you want backups
+# *.backup
+*.swp
+*.swo
+*~
+
+# Lock files (keep package-lock.json and yarn.lock)
+# bun.lockb
+
+# Test coverage
+coverage/
+.coverage
+htmlcov/
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Documentation build
+docs/_build/
+site/
+
+# Secrets and credentials
+.env*
+!.env.example
+secrets/
+credentials/
+*.key
+*.pem
+*.crt
+
+# Media files (video outputs) - Keep assets
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.flv
+*.wmv
+# Allow images in assets
+# *.jpg
+# *.jpeg
+# *.png
+# *.gif
+# *.bmp
+!src/assets/images/**
+!public/**
+
+# Cache
+.cache/
+.parcel-cache/
+*.cache
+
+# Compiled files
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.dll
+*.dylib
+*.exe
+*.out
+*.app
+
+# Archives
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# Misc
+.python-version
+.ruby-version
+.nvmrc

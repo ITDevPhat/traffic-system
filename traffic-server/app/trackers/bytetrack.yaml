@@ -1,0 +1,20 @@
+# ByteTrack Configuration for Traffic Violation Detection
+# Optimized for vehicle tracking in traffic scenarios
+
+tracker_type: bytetrack
+
+# Detection thresholds
+track_high_thresh: 0.5    # High confidence threshold for tracking
+track_low_thresh: 0.1     # Low confidence threshold for detection recovery
+new_track_thresh: 0.7     # Threshold for creating new tracks
+
+# Tracking parameters
+track_buffer: 30          # Number of frames to keep lost tracks (30 frames @ 30fps = 1 second)
+match_thresh: 0.8         # IoU threshold for matching detections to tracks
+
+# Filtering
+min_box_area: 10          # Minimum bounding box area to consider (pixels²)
+
+# Dataset format
+mot20: false              # Use MOT17/MOT20 format (false for custom)
+

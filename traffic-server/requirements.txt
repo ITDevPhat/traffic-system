@@ -1,0 +1,29 @@
+# FastAPI và dependencies
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+pydantic-settings==2.1.0
+pydantic==2.5.0
+
+# Database
+sqlmodel==0.0.14
+psycopg2-binary==2.9.9
+
+# Computer Vision và AI
+ultralytics>=8.0.0
+opencv-python-headless>=4.8.0
+boxmot>=10.0.0  # ByteTrack tracker for YOLO
+PyTurboJPEG>=1.7.0  # Fast JPEG encoding for 30 FPS
+
+# PyTorch (install riêng - sẽ cài ở bước sau)
+# numpy sẽ tự động cài theo torch
+numpy>=1.24.0
+
+# OCR - EasyOCR
+easyocr>=1.7.0
+pillow>=10.0.0
+
+# Utilities
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-dotenv==1.0.0

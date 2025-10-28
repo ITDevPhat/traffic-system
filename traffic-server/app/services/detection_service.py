@@ -1,0 +1,748 @@
+"""
+Detection Service - Full Multi-YOLO + ByteTrack + OCR Pipeline
+
+Pipeline:
+1. YOLO Vehicle → Detect vehicles
+2. ByteTrack → Track vehicles across frames (stable track_id)
+3. YOLO Plate → Detect license plates on vehicles
+4. YOLO OCR / EasyOCR → Read plate text (Vietnamese format)
+5. YOLO Traffic Light → Detect traffic light status
+6. Violation Logic → Combine all to detect violations
+7. Save Evidence + DB → Store results
+
+Author: Traffic System Team
+Version: 2.0.0 (ByteTrack Integration)
+"""
+
+import os
+import uuid
+import cv2
+import torch
+import numpy as np
+import logging
+from datetime import datetime
+from typing import List, Dict, Any, Optional, Tuple
+from ultralytics import YOLO
+
+from sqlmodel import Session, select
+
+from app.core.config import settings
+from app.models.violation import Violation
+from app.models.vehicle import Vehicle
+from app.models.video_job import VideoJob, JobStatus
+from app.models.roi import ROI
+
+from app.utils.plate_utils import (
+    deskew_and_crop,
+    split_two_lines,
+    normalize_plate_text,
+    validate_plate,
+    format_plate_display,
+    preprocess_plate_for_ocr,
+    is_two_line_plate
+)
+from app.utils.roi_utils import (
+    centroid_of_bbox,
+    bottom_center_of_bbox,
+    point_in_polygon,
+    draw_polygon_on_frame,
+    denormalize_polygon_coords
+)
+
+logger = logging.getLogger("detection_service")
+
+# ============================================
+# 🔧 GPU Configuration
+# ============================================
+torch.backends.cudnn.benchmark = True
+DEVICE = settings.DEVICE if torch.cuda.is_available() else "cpu"
+logger.info(f"🖥️  Using device: {DEVICE}")
+
+# ============================================
+# 🧠 Load YOLO Models (Singleton Pattern)
+# ============================================
+class YOLOModelsV2:
+    """
+    Singleton class để load tất cả YOLO models + ByteTrack tracker.
+    
+    V2: Thêm ByteTrack tracking cho vehicles.
+    """
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+    
+    def __init__(self):
+        if self._initialized:
+            return
+        
+        logger.info("📦 Loading YOLO models + ByteTrack...")
+        
+        try:
+            # Vehicle detection
+            vehicle_path = settings.YOLO_VEHICLE_MODEL
+            if os.path.exists(vehicle_path):
+                self.vehicle = YOLO(vehicle_path).to(DEVICE)
+                logger.info(f"✅ Vehicle model loaded: {vehicle_path}")
+            else:
+                logger.warning(f"⚠️  Vehicle model not found: {vehicle_path}")
+                self.vehicle = None
+            
+            # Plate detection
+            plate_path = settings.YOLO_PLATE_MODEL
+            if os.path.exists(plate_path):
+                self.plate = YOLO(plate_path).to(DEVICE)
+                logger.info(f"✅ Plate model loaded: {plate_path}")
+            else:
+                logger.warning(f"⚠️  Plate model not found: {plate_path}")
+                self.plate = None
+            
+            # OCR detection
+            ocr_path = settings.YOLO_OCR_MODEL
+            if os.path.exists(ocr_path):
+                self.ocr = YOLO(ocr_path).to(DEVICE)
+                logger.info(f"✅ OCR model loaded: {ocr_path}")
+            else:
+                logger.warning(f"⚠️  OCR model not found: {ocr_path}")
+                self.ocr = None
+            
+            # Traffic light detection
+            light_path = settings.YOLO_TRAFFIC_LIGHT_MODEL
+            if os.path.exists(light_path):
+                self.traffic_light = YOLO(light_path).to(DEVICE)
+                logger.info(f"✅ Traffic light model loaded: {light_path}")
+            else:
+                logger.warning(f"⚠️  Traffic light model not found: {light_path}")
+                self.traffic_light = None
+            
+            self._initialized = True
+            logger.info("🎉 All models loaded successfully!")
+            
+        except Exception as e:
+            logger.error(f"❌ Error loading models: {e}")
+            raise
+
+# Global models instance
+try:
+    models = YOLOModelsV2()
+except Exception as e:
+    logger.error(f"Failed to initialize YOLO models: {e}")
+    models = None
+
+# ============================================
+# 🔍 EasyOCR Fallback (Lazy Load)
+# ============================================
+_easyocr_reader = None
+
+def get_easyocr_reader():
+    """Lazy load EasyOCR reader."""
+    global _easyocr_reader
+    if _easyocr_reader is None and settings.USE_EASYOCR_FALLBACK:
+        try:
+            import easyocr
+            _easyocr_reader = easyocr.Reader(
+                settings.EASYOCR_LANGUAGES,
+                gpu=torch.cuda.is_available()
+            )
+            logger.info("✅ EasyOCR reader initialized")
+        except Exception as e:
+            logger.warning(f"⚠️  EasyOCR initialization failed: {e}")
+    return _easyocr_reader
+
+
+def ocr_with_easyocr(plate_crop: np.ndarray) -> str:
+    """
+    Sử dụng EasyOCR để đọc biển số khi YOLO OCR thất bại.
+    
+    Args:
+        plate_crop: numpy array của vùng biển số
+    
+    Returns:
+        Chuỗi biển số, hoặc "UNKNOWN" nếu không đọc được
+    """
+    try:
+        reader = get_easyocr_reader()
+        if reader is None:
+            return "UNKNOWN"
+        
+        # Preprocess
+        plate_crop = preprocess_plate_for_ocr(plate_crop)
+        
+        results = reader.readtext(plate_crop)
+        if len(results) > 0:
+            # Lấy text có confidence cao nhất
+            text = max(results, key=lambda x: x[2])[1]
+            # Loại bỏ khoảng trắng
+            text = text.replace(" ", "").upper()
+            logger.info(f"📝 EasyOCR result: {text}")
+            return text
+    except Exception as e:
+        logger.warning(f"EasyOCR failed: {e}")
+    
+    return "UNKNOWN"
+
+
+# ============================================
+# 🚦 Traffic Light Detection
+# ============================================
+def detect_traffic_light_status(frame: np.ndarray) -> str:
+    """
+    Phát hiện trạng thái đèn giao thông.
+    
+    Returns:
+        "red", "green", "yellow", hoặc "unknown"
+    """
+    if models is None or models.traffic_light is None:
+        return "unknown"
+    
+    try:
+        results = models.traffic_light.predict(
+            frame,
+            conf=settings.INFERENCE_CONFIDENCE_LIGHT,
+            device=DEVICE,
+            verbose=False
+        )
+        
+        if len(results) == 0 or results[0].boxes is None or len(results[0].boxes) == 0:
+            return "unknown"
+        
+        # Lấy detection có confidence cao nhất
+        best_light = max(results[0].boxes, key=lambda b: b.conf[0])
+        cls_name = models.traffic_light.names[int(best_light.cls[0])]
+        
+        return cls_name.lower()
+    
+    except Exception as e:
+        logger.warning(f"Traffic light detection failed: {e}")
+        return "unknown"
+
+
+# ============================================
+# 🔳 Plate Detection + OCR
+# ============================================
+def detect_and_read_plate(vehicle_crop: np.ndarray) -> Tuple[Optional[str], float]:
+    """
+    Phát hiện biển số và đọc nội dung với OCR Vietnamese.
+    
+    Pipeline:
+    1. Detect plate region
+    2. Deskew and crop
+    3. Check if 2-line plate
+    4. Try YOLO OCR first
+    5. Fallback to EasyOCR if needed
+    6. Normalize and validate
+    
+    Args:
+        vehicle_crop: numpy array của vùng phương tiện
+    
+    Returns:
+        (plate_text, confidence)
+    """
+    if models is None or models.plate is None:
+        return None, 0.0
+    
+    try:
+        # 1. Phát hiện vùng biển số
+        results_plate = models.plate.predict(
+            vehicle_crop,
+            conf=settings.INFERENCE_CONFIDENCE_PLATE,
+            device=DEVICE,
+            verbose=False
+        )
+        
+        if len(results_plate[0].boxes) == 0:
+            return None, 0.0
+        
+        # Lấy detection có confidence cao nhất (hoặc area lớn nhất)
+        best_plate = max(results_plate[0].boxes, key=lambda b: b.conf[0])
+        px1, py1, px2, py2 = map(int, best_plate.xyxy[0].tolist())
+        plate_conf = float(best_plate.conf[0])
+        
+        # Crop plate region
+        plate_crop = vehicle_crop[max(0, py1):max(0, py2), max(0, px1):max(0, px2)]
+        
+        if plate_crop.size == 0:
+            return None, 0.0
+        
+        # 2. Deskew and crop
+        plate_crop = deskew_and_crop(plate_crop)
+        
+        # 3. Check if 2-line plate
+        two_line = is_two_line_plate(plate_crop)
+        
+        plate_text = "UNKNOWN"
+        
+        # 4. Try YOLO OCR (if available)
+        if models.ocr is not None:
+            try:
+                if two_line:
+                    # Split and OCR each line separately
+                    upper, lower = split_two_lines(plate_crop)
+                    
+                    def yolo_ocr_line(img):
+                        results = models.ocr.predict(
+                            img,
+                            conf=settings.INFERENCE_CONFIDENCE_OCR,
+                            device=DEVICE,
+                            verbose=False
+                        )
+                        
+                        if len(results) == 0 or len(results[0].boxes) == 0:
+                            return ""
+                        
+                        # Sort characters by x-coordinate (left to right)
+                        chars = sorted(results[0].boxes, key=lambda b: b.xyxy[0][0])
+                        return "".join([models.ocr.names[int(c.cls[0])] for c in chars])
+                    
+                    upper_text = yolo_ocr_line(upper)
+                    lower_text = yolo_ocr_line(lower)
+                    plate_text = upper_text + lower_text
+                else:
+                    # Single line OCR
+                    results_ocr = models.ocr.predict(
+                        plate_crop,
+                        conf=settings.INFERENCE_CONFIDENCE_OCR,
+                        device=DEVICE,
+                        verbose=False
+                    )
+                    
+                    if len(results_ocr[0].boxes) > 0:
+                        # Sort by x-coordinate
+                        chars = sorted(results_ocr[0].boxes, key=lambda b: b.xyxy[0][0])
+                        plate_text = "".join([
+                            models.ocr.names[int(c.cls[0])] for c in chars
+                        ])
+                
+                if plate_text != "UNKNOWN":
+                    logger.info(f"📝 YOLO OCR result: {plate_text}")
+            
+            except Exception as e:
+                logger.warning(f"YOLO OCR failed: {e}")
+                plate_text = "UNKNOWN"
+        
+        # 5. Fallback EasyOCR nếu YOLO OCR thất bại
+        if plate_text == "UNKNOWN" and settings.USE_EASYOCR_FALLBACK:
+            plate_text = ocr_with_easyocr(plate_crop)
+        
+        # 6. Normalize and validate
+        plate_text = normalize_plate_text(plate_text)
+        
+        # Format for display
+        if validate_plate(plate_text):
+            plate_text = format_plate_display(plate_text)
+        
+        return plate_text, plate_conf
+    
+    except Exception as e:
+        logger.warning(f"Plate detection failed: {e}")
+        return None, 0.0
+
+
+# ============================================
+# 🚨 Violation Detection Logic
+# ============================================
+def check_violation(
+    track_info: Dict[str, Any],
+    traffic_light_status: str,
+    rois: Dict[str, Any],
+    frame_number: int
+) -> Optional[Dict[str, Any]]:
+    """
+    Kiểm tra xem vehicle có vi phạm hay không.
+    
+    Logic:
+    1. Red light violation: Đèn đỏ + xe trong violation_zone
+    2. Stop line violation: Đèn đỏ + xe vượt stop_line (future)
+    3. Wrong lane violation: (future)
+    
+    Args:
+        track_info: Vehicle tracking info
+        traffic_light_status: "red"/"green"/"yellow"/"unknown"
+        rois: Dictionary of ROI polygons
+        frame_number: Frame index
+    
+    Returns:
+        Violation info dict or None
+    """
+    violation_type = None
+    violation_code = None
+    
+    # Get vehicle position
+    x1, y1, x2, y2 = track_info["bbox"]
+    cx, cy = centroid_of_bbox(x1, y1, x2, y2)
+    
+    # Logic 1: Red light violation
+    if settings.ENABLE_RED_LIGHT_DETECTION and traffic_light_status == "red":
+        violation_zone = rois.get("violation_zone")
+        
+        if violation_zone:
+            # Check if vehicle center is in violation zone
+            if point_in_polygon((cx, cy), violation_zone):
+                violation_type = "red_light"
+                violation_code = "RED_LIGHT"
+        else:
+            # No ROI configured - mark as potential violation
+            # (for demo purposes, sau này phải có ROI mới chính xác)
+            violation_type = "red_light"
+            violation_code = "RED_LIGHT"
+    
+    # Logic 2: Stop line violation (TODO: implement)
+    # if settings.ENABLE_STOP_LINE_DETECTION:
+    #     stop_line = rois.get("stop_line")
+    #     if stop_line and check_stop_line_crossing(...):
+    #         violation_type = "stop_line"
+    #         violation_code = "STOP_LINE"
+    
+    if violation_type:
+        return {
+            "violation_type": violation_type,
+            "violation_code": violation_code,
+            "vehicle_class": track_info["class"],
+            "plate": track_info.get("plate", "UNKNOWN"),
+            "confidence": track_info["confidence"],
+            "frame_number": frame_number,
+            "traffic_light_status": traffic_light_status,
+            "bbox": track_info["bbox"],
+            "track_id": track_info["track_id"]
+        }
+    
+    return None
+
+
+# ============================================
+# 💾 Evidence & Database
+# ============================================
+def save_evidence(frame: np.ndarray, track_info: Dict[str, Any], violation_info: Dict[str, Any]) -> str:
+    """
+    Lưu ảnh bằng chứng với annotations.
+    
+    Args:
+        frame: Original frame
+        track_info: Vehicle tracking info
+        violation_info: Violation details
+    
+    Returns:
+        Path to saved evidence image
+    """
+    os.makedirs(settings.STATIC_DIR, exist_ok=True)
+    
+    # Draw bounding box
+    x1, y1, x2, y2 = track_info["bbox"]
+    annotated = frame.copy()
+    
+    # Red box for violation
+    cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 0, 255), 3)
+    
+    # Text: Plate + Violation type
+    text = f"{track_info.get('plate', 'UNKNOWN')} - {violation_info['violation_type']}"
+    cv2.putText(
+        annotated,
+        text,
+        (x1, y1 - 10),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (0, 0, 255),
+        2
+    )
+    
+    # Track ID
+    cv2.putText(
+        annotated,
+        f"ID:{track_info['track_id']}",
+        (x1, y2 + 20),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (255, 255, 0),
+        2
+    )
+    
+    # Save
+    evidence_filename = f"evidence_{uuid.uuid4().hex}.jpg"
+    evidence_path = os.path.join(settings.STATIC_DIR, evidence_filename)
+    cv2.imwrite(evidence_path, annotated)
+    
+    return evidence_path
+
+
+# ============================================
+# 🎬 Main Video Processing Pipeline
+# ============================================
+async def process_video(file, session: Session) -> Dict[str, Any]:
+    """
+    Full pipeline: YOLO + ByteTrack + OCR + Violation Detection.
+    
+    Pipeline:
+    1. Save uploaded video
+    2. Create VideoJob in DB
+    3. Open video and get metadata
+    4. Load ROIs (if configured)
+    5. Initialize ByteTrack tracker
+    6. Process each frame:
+       - Detect traffic light
+       - Detect vehicles with YOLO
+       - Track vehicles with ByteTrack (built-in tracker)
+       - For each tracked vehicle:
+         - Detect plate
+         - OCR plate text
+         - Check violations
+         - Save evidence if violation detected
+         - Save to DB (Vehicle + Violation)
+    7. Close video and update job status
+    8. Return summary
+    
+    Args:
+        file: UploadFile from FastAPI
+        session: Database session
+    
+    Returns:
+        Dictionary with processing results
+    """
+    logger.info(f"📹 Starting video processing: {file.filename}")
+    
+    # 1. Save video
+    unique_filename = f"{uuid.uuid4().hex}_{file.filename}"
+    video_path = os.path.join(settings.STATIC_DIR, unique_filename)
+    
+    os.makedirs(settings.STATIC_DIR, exist_ok=True)
+    
+    with open(video_path, "wb") as f:
+        f.write(await file.read())
+    
+    logger.info(f"📁 Video saved: {video_path}")
+    
+    # 2. Create video job
+    video_job = VideoJob(
+        filename=file.filename,
+        file_path=video_path,
+        status=JobStatus.PENDING,
+        created_at=datetime.now()
+    )
+    session.add(video_job)
+    session.commit()
+    session.refresh(video_job)
+    
+    logger.info(f"📊 Video job created: ID={video_job.id}")
+    
+    try:
+        # Update status to PROCESSING
+        video_job.status = JobStatus.PROCESSING
+        video_job.started_at = datetime.now()
+        session.add(video_job)
+        session.commit()
+        
+        # 3. Open video
+        cap = cv2.VideoCapture(video_path)
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        duration = total_frames / fps if fps > 0 else 0
+        
+        video_job.fps = fps
+        video_job.total_frames = total_frames
+        video_job.duration = duration
+        session.add(video_job)
+        session.commit()
+        
+        logger.info(f"📊 Video info: {total_frames} frames, {fps} FPS, {duration:.2f}s")
+        
+        # 4. Load ROIs
+        rois_dict = {}
+        rois = session.exec(
+            select(ROI).where(
+                ROI.video_job_id == video_job.id,
+                ROI.is_active == True
+            )
+        ).all()
+        
+        for roi in rois:
+            coords = roi.coordinates
+            if roi.is_normalized:
+                # Denormalize if needed
+                h, w = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)), int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                coords = denormalize_polygon_coords(coords, w, h)
+            rois_dict[roi.roi_type] = coords
+        
+        logger.info(f"🎯 Loaded {len(rois_dict)} ROIs")
+        
+        # 5. Process frames
+        frame_idx = 0
+        violations_count = 0
+        summary = []
+        
+        # Track history for deduplication (avoid duplicate violations from same track)
+        detected_violations = set()  # Set of (track_id, violation_type)
+        
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            frame_idx += 1
+            
+            # Frame sampling
+            if frame_idx % settings.FRAME_SKIP != 0:
+                continue
+            
+            logger.info(f"🔍 Processing frame {frame_idx}/{total_frames}")
+            
+            # 6.1 Detect traffic light
+            traffic_light_status = detect_traffic_light_status(frame)
+            
+            # 6.2 Detect vehicles with tracking
+            if models is None or models.vehicle is None:
+                continue
+            
+            # Use built-in tracker
+            results = models.vehicle.track(
+                frame,
+                conf=settings.INFERENCE_CONFIDENCE_VEHICLE,
+                device=DEVICE,
+                persist=True,  # Persist tracks across frames
+                verbose=False
+            )
+            
+            if len(results) == 0 or results[0].boxes is None:
+                continue
+            
+            boxes = results[0].boxes
+            
+            # Process each tracked vehicle
+            for box in boxes:
+                # Get bbox and track ID
+                x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                conf = float(box.conf[0])
+                cls_id = int(box.cls[0])
+                cls_name = models.vehicle.names[cls_id]
+                
+                # Get track ID (from built-in tracker)
+                track_id = int(box.id[0]) if box.id is not None else -1
+                
+                if track_id == -1:
+                    continue  # Skip if no track ID
+                
+                # Crop vehicle region
+                vehicle_crop = frame[max(0, y1):max(0, y2), max(0, x1):max(0, x2)]
+                
+                if vehicle_crop.size == 0:
+                    continue
+                
+                # 6.3 Detect plate + OCR
+                plate_text, plate_conf = detect_and_read_plate(vehicle_crop)
+                
+                if plate_text is None:
+                    plate_text = "UNKNOWN"
+                
+                # Track info
+                track_info = {
+                    "track_id": track_id,
+                    "bbox": (x1, y1, x2, y2),
+                    "class": cls_name,
+                    "confidence": conf,
+                    "plate": plate_text
+                }
+                
+                # 6.4 Check violation
+                violation_info = check_violation(
+                    track_info,
+                    traffic_light_status,
+                    rois_dict,
+                    frame_idx
+                )
+                
+                if violation_info:
+                    # Deduplication: only save once per track_id + violation_type
+                    violation_key = (track_id, violation_info["violation_type"])
+                    
+                    if violation_key not in detected_violations:
+                        detected_violations.add(violation_key)
+                        
+                        # 6.5 Save evidence
+                        evidence_path = save_evidence(frame, track_info, violation_info)
+                        
+                        # 6.6 Save to DB
+                        # Upsert vehicle
+                        vehicle_entry = session.exec(
+                            select(Vehicle).where(Vehicle.plate == plate_text)
+                        ).first()
+                        
+                        if not vehicle_entry:
+                            vehicle_entry = Vehicle(
+                                plate=plate_text,
+                                type=cls_name,
+                                track_id=track_id,
+                                first_seen=datetime.now(),
+                                last_seen=datetime.now(),
+                                avg_confidence=conf
+                            )
+                            session.add(vehicle_entry)
+                            session.commit()
+                            session.refresh(vehicle_entry)
+                        else:
+                            vehicle_entry.last_seen = datetime.now()
+                            vehicle_entry.total_detections += 1
+                            session.add(vehicle_entry)
+                            session.commit()
+                        
+                        # Create violation
+                        violation = Violation(
+                            video_job_id=video_job.id,
+                            vehicle_id=vehicle_entry.vehicle_id,
+                            violation_type=violation_info["violation_type"],
+                            plate=plate_text,
+                            timestamp=datetime.now(),
+                            confidence=conf,
+                            evidence_img=evidence_path,
+                            frame_number=frame_idx,
+                            traffic_light_status=traffic_light_status
+                        )
+                        session.add(violation)
+                        session.commit()
+                        
+                        violations_count += 1
+                        
+                        summary.append({
+                            "frame": frame_idx,
+                            "track_id": track_id,
+                            "vehicle": cls_name,
+                            "plate": plate_text,
+                            "light": traffic_light_status,
+                            "violation": violation_info["violation_type"]
+                        })
+                        
+                        logger.info(f"🚨 Violation #{violations_count}: {violation_info['violation_type']} - {plate_text} (Track {track_id})")
+        
+        cap.release()
+        
+        # 7. Update job status
+        video_job.status = JobStatus.COMPLETED
+        video_job.completed_at = datetime.now()
+        video_job.violations_count = violations_count
+        session.add(video_job)
+        session.commit()
+        
+        logger.info(f"✅ Processing completed: {violations_count} violations detected")
+        
+        return {
+            "video_job_id": video_job.id,
+            "filename": file.filename,
+            "total_frames": total_frames,
+            "fps": fps,
+            "duration": duration,
+            "violations_detected": violations_count,
+            "status": "completed",
+            "detections": summary
+        }
+    
+    except Exception as e:
+        logger.error(f"❌ Error processing video: {e}", exc_info=True)
+        
+        # Update job status to FAILED
+        video_job.status = JobStatus.FAILED
+        video_job.error_message = str(e)
+        video_job.completed_at = datetime.now()
+        session.add(video_job)
+        session.commit()
+        
+        raise Exception(f"Lỗi khi xử lý video: {str(e)}")
