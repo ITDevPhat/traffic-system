@@ -1,14 +1,14 @@
 """
 Detection Service - Full Multi-YOLO + ByteTrack + OCR Pipeline
 
-Pipeline:
-1. YOLO Vehicle → Detect vehicles
-2. ByteTrack → Track vehicles across frames (stable track_id)
-3. YOLO Plate → Detect license plates on vehicles
-4. YOLO OCR / EasyOCR → Read plate text (Vietnamese format)
-5. YOLO Traffic Light → Detect traffic light status
-6. Violation Logic → Combine all to detect violations
-7. Save Evidence + DB → Store results
+Pipeline (module-based):
+1. ROI Module → Load ROI from DB/JSON & optional overlay
+2. YOLO Vehicle Module → Detect vehicles (with optional ByteTrack)
+3. Plate Module → Detect & OCR license plates (YOLO + EasyOCR fallback)
+4. Traffic Light Module → Detect traffic light status
+5. Violation Logic → Combine all to detect violations
+6. Drawing Module → Render annotations (optional)
+7. Persistence → Save evidence + DB records
 
 Author: Traffic System Team
 Version: 2.0.0 (ByteTrack Integration)
@@ -30,8 +30,13 @@ from app.core.config import settings
 from app.models.violation import Violation
 from app.models.vehicle import Vehicle
 from app.models.video_job import VideoJob, JobStatus
-from app.models.roi import ROI
 
+from app.modules import (
+    ModuleContext,
+    ROIModule,
+    VehicleYOLOModule,
+    BoundingBoxDrawerModule,
+)
 from app.utils.plate_utils import (
     deskew_and_crop,
     split_two_lines,
@@ -43,10 +48,7 @@ from app.utils.plate_utils import (
 )
 from app.utils.roi_utils import (
     centroid_of_bbox,
-    bottom_center_of_bbox,
     point_in_polygon,
-    draw_polygon_on_frame,
-    denormalize_polygon_coords
 )
 
 logger = logging.getLogger("detection_service")
@@ -538,6 +540,9 @@ async def process_video(file, session: Session) -> Dict[str, Any]:
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         duration = total_frames / fps if fps > 0 else 0
+        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        frame_size = (frame_width, frame_height)
         
         video_job.fps = fps
         video_job.total_frames = total_frames
@@ -547,24 +552,35 @@ async def process_video(file, session: Session) -> Dict[str, Any]:
         
         logger.info(f"📊 Video info: {total_frames} frames, {fps} FPS, {duration:.2f}s")
         
-        # 4. Load ROIs
-        rois_dict = {}
-        rois = session.exec(
-            select(ROI).where(
-                ROI.video_job_id == video_job.id,
-                ROI.is_active == True
-            )
-        ).all()
-        
-        for roi in rois:
-            coords = roi.coordinates
-            if roi.is_normalized:
-                # Denormalize if needed
-                h, w = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)), int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                coords = denormalize_polygon_coords(coords, w, h)
-            rois_dict[roi.roi_type] = coords
-        
-        logger.info(f"🎯 Loaded {len(rois_dict)} ROIs")
+        # 4. Initialize modular pipeline components
+        roi_module = ROIModule(
+            session=session,
+            video_job_id=video_job.id,
+            frame_size=frame_size,
+            enabled=settings.MODULE_ENABLE_ROI,
+            draw_enabled=settings.MODULE_ENABLE_ROI_DRAWING,
+            roi_json_path=settings.ROI_JSON_PATH if settings.MODULE_ENABLE_ROI_JSON else None,
+        )
+        vehicle_module = VehicleYOLOModule(
+            models=models,
+            enabled=settings.MODULE_ENABLE_VEHICLE_YOLO,
+            use_tracking=settings.MODULE_ENABLE_BYTETRACK,
+            confidence=settings.INFERENCE_CONFIDENCE_VEHICLE,
+            device=DEVICE,
+        )
+        bbox_module = BoundingBoxDrawerModule(
+            enabled=settings.MODULE_ENABLE_DRAW_BBOX,
+        )
+
+        # Run setup hooks once before processing frames
+        dummy_frame = np.zeros((max(1, frame_height), max(1, frame_width), 3), dtype=np.uint8)
+        setup_context = ModuleContext(
+            frame=dummy_frame,
+            frame_idx=0,
+            frame_size=frame_size,
+        )
+        roi_module.setup(setup_context)
+        logger.info(f"🎯 Loaded {len(roi_module.rois)} ROIs")
         
         # 5. Process frames
         frame_idx = 0
@@ -587,81 +603,71 @@ async def process_video(file, session: Session) -> Dict[str, Any]:
             
             logger.info(f"🔍 Processing frame {frame_idx}/{total_frames}")
             
-            # 6.1 Detect traffic light
-            traffic_light_status = detect_traffic_light_status(frame)
-            
-            # 6.2 Detect vehicles with tracking
-            if models is None or models.vehicle is None:
-                continue
-            
-            # Use built-in tracker
-            results = models.vehicle.track(
-                frame,
-                conf=settings.INFERENCE_CONFIDENCE_VEHICLE,
-                device=DEVICE,
-                persist=True,  # Persist tracks across frames
-                verbose=False
+            # Prepare modular context for this frame
+            frame_context = ModuleContext(
+                frame=frame,
+                frame_idx=frame_idx,
+                frame_size=frame_size,
+                rois=roi_module.rois,
             )
-            
-            if len(results) == 0 or results[0].boxes is None:
+
+            # 6.1 ROI overlay (optional)
+            roi_module.process(frame_context)
+
+            # 6.2 Detect traffic light
+            traffic_light_status = detect_traffic_light_status(frame)
+
+            # 6.3 Vehicle detection/tracking
+            vehicle_module.process(frame_context)
+
+            if not frame_context.tracks:
                 continue
-            
-            boxes = results[0].boxes
-            
+
             # Process each tracked vehicle
-            for box in boxes:
-                # Get bbox and track ID
-                x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                conf = float(box.conf[0])
-                cls_id = int(box.cls[0])
-                cls_name = models.vehicle.names[cls_id]
-                
-                # Get track ID (from built-in tracker)
-                track_id = int(box.id[0]) if box.id is not None else -1
-                
-                if track_id == -1:
-                    continue  # Skip if no track ID
-                
+            for track in frame_context.tracks:
+                x1, y1, x2, y2 = track["bbox"]
+                track_id = track["track_id"]
+                cls_name = track["class"]
+                conf = track["confidence"]
+
                 # Crop vehicle region
                 vehicle_crop = frame[max(0, y1):max(0, y2), max(0, x1):max(0, x2)]
-                
+
                 if vehicle_crop.size == 0:
                     continue
-                
-                # 6.3 Detect plate + OCR
+
+                # 6.4 Detect plate + OCR
                 plate_text, plate_conf = detect_and_read_plate(vehicle_crop)
-                
+
                 if plate_text is None:
                     plate_text = "UNKNOWN"
-                
-                # Track info
+
                 track_info = {
-                    "track_id": track_id,
-                    "bbox": (x1, y1, x2, y2),
-                    "class": cls_name,
-                    "confidence": conf,
-                    "plate": plate_text
+                    **track,
+                    "plate": plate_text,
+                    "plate_confidence": plate_conf,
                 }
-                
-                # 6.4 Check violation
+
+                # 6.5 Check violation
                 violation_info = check_violation(
                     track_info,
                     traffic_light_status,
-                    rois_dict,
+                    frame_context.rois,
                     frame_idx
                 )
-                
+
                 if violation_info:
+                    frame_context.violating_track_ids.add(track_id)
                     # Deduplication: only save once per track_id + violation_type
                     violation_key = (track_id, violation_info["violation_type"])
-                    
+
                     if violation_key not in detected_violations:
                         detected_violations.add(violation_key)
-                        
-                        # 6.5 Save evidence
+
+                        # 6.6 Save evidence
                         evidence_path = save_evidence(frame, track_info, violation_info)
-                        
-                        # 6.6 Save to DB
+
+                        # 6.7 Save to DB
                         # Upsert vehicle
                         vehicle_entry = session.exec(
                             select(Vehicle).where(Vehicle.plate == plate_text)
@@ -710,8 +716,11 @@ async def process_video(file, session: Session) -> Dict[str, Any]:
                             "light": traffic_light_status,
                             "violation": violation_info["violation_type"]
                         })
-                        
+
                         logger.info(f"🚨 Violation #{violations_count}: {violation_info['violation_type']} - {plate_text} (Track {track_id})")
+
+            # 6.8 Optional annotation rendering
+            bbox_module.process(frame_context)
         
         cap.release()
         

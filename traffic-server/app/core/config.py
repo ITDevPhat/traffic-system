@@ -41,6 +41,17 @@ class Settings(BaseSettings):
     EASYOCR_LANGUAGES: list = ["en"]  # Có thể thêm "vi" nếu cần
     
     # ============================================
+    # 🧩 Modular pipeline toggles
+    # ============================================
+    MODULE_ENABLE_ROI: bool = True
+    MODULE_ENABLE_ROI_DRAWING: bool = True
+    MODULE_ENABLE_ROI_JSON: bool = False
+    ROI_JSON_PATH: Optional[str] = None
+    MODULE_ENABLE_VEHICLE_YOLO: bool = True
+    MODULE_ENABLE_BYTETRACK: bool = True
+    MODULE_ENABLE_DRAW_BBOX: bool = True
+
+    # ============================================
     # 🚦 Violation Detection Settings
     # ============================================
     ENABLE_RED_LIGHT_DETECTION: bool = True
