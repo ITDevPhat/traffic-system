@@ -1,6 +1,6 @@
 import LockScreen from './components/LockScreen';
 export const metadata = {
-  title: 'Lock Screen'
+  title: 'Màn Hình Khóa'
 };
 const LockScreenPage = () => {
   return <LockScreen />;

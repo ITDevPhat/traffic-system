@@ -33,7 +33,10 @@ async def ws_realtime_binary(
     quality: int = Query(55, description="JPEG quality (1-100, lower=faster)"),
     encode_width: int = Query(960, description="Downscale width before encoding"),
     model_path: str = Query("models/yolov8n.pt", description="YOLO model path (nano)"),
-    veh_detect_hz: int = Query(25, description="Vehicle detect frequency for keyframes (Hz)")
+    veh_detect_hz: int = Query(25, description="Vehicle detect frequency for keyframes (Hz)"),
+    enable_yolo: bool = Query(True, description="Enable YOLO detection"),
+    enable_tracking: bool = Query(True, description="Enable ByteTrack tracking"),
+    enable_bbox_drawing: bool = Query(True, description="Enable bbox drawing")
 ):
     """
     Binary WebSocket - 30 FPS optimized
@@ -74,7 +77,10 @@ async def ws_realtime_binary(
             jpeg_quality=quality,
             encode_width=encode_width,
             model_path=model_path,
-            veh_detect_hz=veh_detect_hz
+            veh_detect_hz=veh_detect_hz,
+            enable_yolo=enable_yolo,
+            enable_tracking=enable_tracking,
+            enable_bbox_drawing=enable_bbox_drawing
         )
         
         # Start all threads
@@ -86,17 +92,63 @@ async def ws_realtime_binary(
         logger.info(f"📤 Sent info: {info}")
         
         # Stream loop: header (text) + binary (jpeg)
-        while True:
-            header, jpeg_bytes = stream.next_frame()
+        # Use asyncio to handle both sending frames and receiving commands
+        import asyncio
+        
+        # Create tasks for concurrent execution
+        send_task = None
+        recv_task = None
+        
+        try:
+            async def send_frames():
+                while True:
+                    header, jpeg_bytes = stream.next_frame()
+                    
+                    if header is None or jpeg_bytes is None:
+                        await asyncio.sleep(0.001)
+                        continue
+                    
+                    # 1) Send header (text JSON)
+                    await websocket.send_text(json.dumps(header))
+                    
+                    # 2) Send binary JPEG immediately after
+                    await websocket.send_bytes(jpeg_bytes)
             
-            if header is None or jpeg_bytes is None:
-                continue
+            async def receive_commands():
+                while True:
+                    try:
+                        # Use receive() to get any message type
+                        message = await asyncio.wait_for(websocket.receive(), timeout=0.1)
+                        
+                        # Only process text messages (commands)
+                        if 'text' in message:
+                            data = message['text']
+                            cmd = json.loads(data)
+                            
+                            if cmd.get('command') == 'toggle_bbox':
+                                enabled = cmd.get('enabled', True)
+                                stream.enable_bbox_drawing = enabled
+                                logger.info(f"🎨 BBox drawing toggled to: {enabled}")
+                        
+                    except asyncio.TimeoutError:
+                        # Normal timeout, continue loop
+                        continue
+                    except Exception as e:
+                        logger.warning(f"Command receive error: {e}")
+                        await asyncio.sleep(0.01)
             
-            # 1) Send header (text JSON)
-            await websocket.send_text(json.dumps(header))
+            # Run both tasks concurrently
+            send_task = asyncio.create_task(send_frames())
+            recv_task = asyncio.create_task(receive_commands())
             
-            # 2) Send binary JPEG immediately after
-            await websocket.send_bytes(jpeg_bytes)
+            await asyncio.gather(send_task, recv_task)
+        
+        finally:
+            # Cancel tasks on exit
+            if send_task and not send_task.done():
+                send_task.cancel()
+            if recv_task and not recv_task.done():
+                recv_task.cancel()
         
         logger.info("✅ Stream ended normally")
     
@@ -196,22 +248,14 @@ async def load_models():
 
 @router.get("/models/available")
 async def get_available_models():
-    """Get list of available YOLO models"""
-    # Try multiple possible paths
-    possible_dirs = [
-        "models",
-        "traffic-server/models",
-        os.path.join("traffic-server", "models")
-    ]
+    """Get list of available YOLO models from traffic-server/models/"""
+    # Always use traffic-server/models as the standard location
+    models_dir = "models"
+    if not os.path.exists(models_dir):
+        models_dir = os.path.join("traffic-server", "models")
     
-    models_dir = None
-    for dir_path in possible_dirs:
-        if os.path.exists(dir_path):
-            models_dir = dir_path
-            break
-    
-    if models_dir is None:
-        return {"ok": False, "error": "Models directory not found", "tried": possible_dirs}
+    if not os.path.exists(models_dir):
+        return {"ok": False, "error": "Models directory not found"}
     
     logger.info(f"📂 Scanning models in: {models_dir}")
     pt_files = glob.glob(os.path.join(models_dir, "*.pt"))
@@ -234,7 +278,7 @@ async def get_available_models():
         elif "light" in basename.lower() or "traffic" in basename.lower():
             models["traffic_light"].append(basename)
     
-    return {"ok": True, "models": models, "directory": models_dir}
+    return {"ok": True, "models": models}
 
 
 @router.get("/gpu")

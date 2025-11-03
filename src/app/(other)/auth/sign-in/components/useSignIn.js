@@ -18,8 +18,8 @@ const useSignIn = () => {
   } = useNotificationContext();
   const queryParams = useQueryParams();
   const loginFormSchema = yup.object({
-    email: yup.string().email('Please enter a valid email').required('Please enter your email'),
-    password: yup.string().required('Please enter your password')
+    username: yup.string().required('Vui lòng nhập tên đăng nhập hoặc email'),
+    password: yup.string().required('Vui lòng nhập mật khẩu')
   });
   const {
     control,
@@ -27,26 +27,26 @@ const useSignIn = () => {
   } = useForm({
     resolver: yupResolver(loginFormSchema),
     defaultValues: {
-      email: 'user@demo.com',
-      password: '123456'
+      username: 'admin',
+      password: 'Admin@123'
     }
   });
   const login = handleSubmit(async values => {
     setLoading(true);
     signIn('credentials', {
       redirect: false,
-      email: values?.email,
+      email: values?.username,  // NextAuth expects 'email' field, but we send username
       password: values?.password
     }).then(res => {
       if (res?.ok) {
         push(queryParams['redirectTo'] ?? '/dashboards/analytics');
         showNotification({
-          message: 'Successfully logged in. Redirecting....',
+          message: 'Đăng nhập thành công. Đang chuyển hướng....',
           variant: 'success'
         });
       } else {
         showNotification({
-          message: res?.error ?? '',
+          message: res?.error ?? 'Tên đăng nhập hoặc mật khẩu không đúng',
           variant: 'danger'
         });
       }

@@ -1,7 +1,6 @@
 'use client';
 import React, { useRef, useEffect, useState } from 'react';
 import { Button, Form, Row, Col, Card, Badge } from 'react-bootstrap';
-import { BsPlayFill, BsStopFill, BsCameraVideo, BsUpload } from 'react-icons/bs';
 import { toast } from 'react-toastify';
 import PageTitle from '@/components/PageTitle';
 
@@ -25,8 +24,8 @@ export default function DetectionPageBinary() {
   const [detecting, setDetecting] = useState(false);
   const [fps, setFps] = useState(0);
   const [frameIdx, setFrameIdx] = useState(0);
-  const [source, setSource] = useState('0'); // webcam mặc định
-  const [sourceType, setSourceType] = useState('webcam'); // 'webcam' | 'upload'
+  const [source, setSource] = useState(''); // video file only
+  const [sourceType, setSourceType] = useState('upload'); // only 'upload'
   const [videoLoaded, setVideoLoaded] = useState(false);
   const [modelLoaded, setModelLoaded] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
@@ -46,6 +45,13 @@ export default function DetectionPageBinary() {
   
   const [frameDimensions, setFrameDimensions] = useState({ width: 1280, height: 720 });
   const [expectBinary, setExpectBinary] = useState(false);
+  
+  // Module toggles
+  const [modules, setModules] = useState({
+    yolo: true,
+    tracking: true,
+    bboxDrawing: true
+  });
 
   // Cleanup on unmount
   useEffect(() => {
@@ -82,6 +88,8 @@ export default function DetectionPageBinary() {
         const prev = displayBitmapRef.current;
         displayBitmapRef.current = next;
         try {
+          // Always draw the image (server sends annotated frames)
+          // BBox visibility is controlled by server settings
           ctx.drawImage(displayBitmapRef.current, 0, 0, c.width, c.height);
         } catch {}
         if (prev) {
@@ -134,13 +142,13 @@ export default function DetectionPageBinary() {
         const res = await fetch(`${API_URL}/api/detection/models/available`);
         if (!res.ok) return;
         const data = await res.json();
-        const dir = data?.directory || 'models';
+        // Only get vehicle models, use simple "models/" prefix
         const vehFiles = Array.isArray(data?.models?.vehicle) ? data.models.vehicle : [];
-        const full = vehFiles.map((name) => `${dir}/${name}`);
+        const full = vehFiles.map((name) => `models/${name}`);
         setAvailableModels(full);
         if (full.length > 0) {
-          // Prefer newest/first; or a name contains '11' if present
-          const prefer = full.find(p => /11/i.test(p)) || full[0];
+          // Prefer vehicle_11s or first available
+          const prefer = full.find(p => /vehicle.*11/i.test(p)) || full[0];
           setSelectedModel(prefer);
         }
       } catch {}
@@ -162,6 +170,9 @@ export default function DetectionPageBinary() {
     params.append('encode_width', settings.encode_width);
     params.append('model_path', selectedModel || 'models/yolov8n.pt');
     params.append('veh_detect_hz', settings.veh_detect_hz);
+    params.append('enable_yolo', modules.yolo);
+    params.append('enable_tracking', modules.tracking);
+    params.append('enable_bbox_drawing', modules.bboxDrawing);
 
     const wsUrl = `${API_URL.replace('http', 'ws')}/api/detection/realtime?${params.toString()}`;
     console.log('🔗 Connecting to:', wsUrl);
@@ -215,6 +226,15 @@ export default function DetectionPageBinary() {
             // Update FPS and frame index
             if (typeof pkt.fps === 'number') fpsRef.current = pkt.fps;
             if (typeof pkt.frame_idx === 'number') frameIdxRef.current = pkt.frame_idx;
+            
+            // Store detections metadata (for future violations rendering)
+            if (pkt.detections && Array.isArray(pkt.detections)) {
+              // TODO: Store in state/ref for violations overlay rendering
+              // For now, just log occasionally
+              if (pkt.frame_idx % 30 === 0 && pkt.detections.length > 0) {
+                console.log(`🎯 Frame ${pkt.frame_idx}: ${pkt.detections.length} detections`, pkt.detections[0]);
+              }
+            }
             
             // Next message should be binary JPEG
             setExpectBinary(true);
@@ -303,9 +323,7 @@ export default function DetectionPageBinary() {
     }
     
     let currentSource = source;
-    if (sourceType === 'webcam') {
-      currentSource = '0';
-    } else if (sourceType === 'upload' && !videoLoaded) {
+    if (!videoLoaded) {
       toast.warning('Please upload a video first.');
         return;
       }
@@ -408,6 +426,25 @@ export default function DetectionPageBinary() {
     setSettings(prev => ({ ...prev, [key]: value }));
   };
 
+  const updateModule = (module, enabled) => {
+    const newModules = { ...modules, [module]: enabled };
+    setModules(newModules);
+    
+    // If detecting and BBox toggle changed, send command to server
+    if (detecting && module === 'bboxDrawing' && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      // Send command to toggle bbox drawing
+      const cmd = { command: 'toggle_bbox', enabled: enabled };
+      console.log('📤 Sending command:', cmd);
+      wsRef.current.send(JSON.stringify(cmd));
+      toast.success(`BBox ${enabled ? 'enabled' : 'disabled'}`, { autoClose: 1000 });
+    } else if (detecting && module !== 'bboxDrawing') {
+      // YOLO and Tracking require full restart
+      toast.info(`${module === 'yolo' ? 'YOLO' : 'Tracking'} will apply on next detection start`, {
+        autoClose: 2000
+      });
+    }
+  };
+
   return (
     <>
       <PageTitle title="Realtime Detection (Binary 30 FPS)" />
@@ -415,26 +452,6 @@ export default function DetectionPageBinary() {
         <Card className="mb-3 shadow-sm">
           <Card.Body>
                 <Row className="align-items-center g-2">
-                  <Col xs="auto">
-                      <Button 
-                        variant={sourceType === 'webcam' ? 'primary' : 'outline-primary'}
-                  onClick={() => {setSourceType('webcam'); setSource('0'); setVideoLoaded(false);}}
-                        disabled={detecting}
-                      >
-                        <BsCameraVideo className="me-1" /> Webcam
-                      </Button>
-              </Col>
-              <Col xs="auto">
-                      <Button 
-                        variant={sourceType === 'upload' ? 'primary' : 'outline-primary'}
-                  onClick={() => {setSourceType('upload'); setSource(''); setVideoLoaded(false);}}
-                        disabled={detecting}
-                      >
-                  <BsUpload className="me-1" /> Upload Video
-                      </Button>
-                  </Col>
-                  
-                  {sourceType === 'upload' && (
                     <Col xs="auto">
                       <input
                         ref={fileInputRef}
@@ -444,19 +461,18 @@ export default function DetectionPageBinary() {
                         style={{ display: 'none' }}
                       />
                       <Button 
-                        variant={videoLoaded ? 'success' : 'outline-primary'}
+                      variant={videoLoaded ? 'success' : 'outline-primary'}
                         onClick={() => fileInputRef.current?.click()}
-                        disabled={detecting || isUploadingVideo}
+                      disabled={detecting || isUploadingVideo}
                         className="rounded-pill"
                       >
-                        {isUploadingVideo ? (
-                          <>⏳ Uploading...</>
-                        ) : (
-                          <>📁 {videoLoaded ? '✅ Video Ready' : 'Chọn Video'}</>
-                        )}
+                      {isUploadingVideo ? (
+                        <>⏳ Uploading...</>
+                      ) : (
+                        <>📁 {videoLoaded ? '✅ Video Ready' : 'Choose Video'}</>
+                      )}
                       </Button>
                     </Col>
-                  )}
                   
                   <Col xs="auto">
                     <Button 
@@ -496,14 +512,14 @@ export default function DetectionPageBinary() {
                     ))}
                   </Form.Select>
                 </Form.Group>
-              </Col>
+                  </Col>
                   
                   <Col xs="auto">
                     {!detecting ? (
                       <Button 
                         size="sm"
                         onClick={startDetection}
-                        disabled={!modelLoaded || (sourceType === 'upload' && !videoLoaded)}
+                        disabled={!modelLoaded || !videoLoaded}
                         className="rounded-pill"
                         style={{
                           background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
@@ -513,7 +529,6 @@ export default function DetectionPageBinary() {
                           boxShadow: '0 4px 15px 0 rgba(102, 126, 234, 0.4)'
                         }}
                       >
-                        <BsPlayFill className="me-1" />
                         Start Detection
                       </Button>
                     ) : (
@@ -528,7 +543,6 @@ export default function DetectionPageBinary() {
                           fontWeight: 500
                         }}
                       >
-                        <BsStopFill className="me-1" />
                         Stop
                       </Button>
                     )}
@@ -569,6 +583,43 @@ export default function DetectionPageBinary() {
         <Card className="mb-3 shadow-sm">
                 <Card.Body>
         <Row>
+          <Col md={12}>
+            <h6 className="mb-3">🔧 Detection Modules {detecting && <small className="text-muted">(restart to apply)</small>}</h6>
+            <div className="d-flex gap-3">
+              <Form.Check
+                type="switch"
+                id="yolo-toggle"
+                label="YOLO Detection"
+                checked={modules.yolo}
+                onChange={(e) => updateModule('yolo', e.target.checked)}
+                disabled={false}
+              />
+              <Form.Check
+                type="switch"
+                id="tracking-toggle"
+                label="ByteTrack Tracking"
+                checked={modules.tracking}
+                onChange={(e) => updateModule('tracking', e.target.checked)}
+                disabled={false}
+              />
+              <Form.Check
+                type="switch"
+                id="bbox-toggle"
+                label="BBox Drawing"
+                checked={modules.bboxDrawing}
+                onChange={(e) => updateModule('bboxDrawing', e.target.checked)}
+                disabled={false}
+              />
+            </div>
+            {detecting && (
+              <small className="text-info d-block mt-2">
+                💡 Tip: Stop and restart detection to apply YOLO/Tracking changes
+              </small>
+            )}
+          </Col>
+        </Row>
+        <hr />
+        <Row>
               <Col md={3}>
                 <Form.Group className="mb-2">
                   <Form.Label>Confidence: {settings.conf.toFixed(2)}</Form.Label>
@@ -580,8 +631,8 @@ export default function DetectionPageBinary() {
                     onChange={(e) => updateSettings('conf', parseFloat(e.target.value))}
                     disabled={detecting}
                   />
-                </Form.Group>
-              </Col>
+                      </Form.Group>
+                    </Col>
               <Col md={2}>
                 <Form.Group className="mb-2">
                   <Form.Label>Target FPS: {settings.target_fps}</Form.Label>
@@ -593,8 +644,8 @@ export default function DetectionPageBinary() {
                     onChange={(e) => updateSettings('target_fps', parseInt(e.target.value))}
                     disabled={detecting}
                   />
-                </Form.Group>
-                  </Col>
+                      </Form.Group>
+                    </Col>
               <Col md={2}>
                 <Form.Group className="mb-2">
                   <Form.Label>JPEG Quality: {settings.jpeg_quality}</Form.Label>
@@ -611,7 +662,7 @@ export default function DetectionPageBinary() {
               <Col md={2}>
                 <Form.Group className="mb-2">
                   <Form.Label>Inference Size: {settings.inference_size}</Form.Label>
-                  <Form.Select
+                        <Form.Select 
                     value={settings.inference_size}
                     onChange={(e) => updateSettings('inference_size', parseInt(e.target.value))}
                     disabled={detecting}
@@ -619,13 +670,13 @@ export default function DetectionPageBinary() {
                     <option value="480">480 (Faster)</option>
                     <option value="640">640 (Balanced)</option>
                     <option value="960">960 (Better)</option>
-                  </Form.Select>
-                </Form.Group>
-              </Col>
+                        </Form.Select>
+                      </Form.Group>
+                    </Col>
               <Col md={3}>
                 <Form.Group className="mb-2">
                   <Form.Label>Encode Width: {settings.encode_width}</Form.Label>
-                  <Form.Select
+                        <Form.Select 
                     value={settings.encode_width}
                     onChange={(e) => updateSettings('encode_width', parseInt(e.target.value))}
                     disabled={detecting}
@@ -633,61 +684,49 @@ export default function DetectionPageBinary() {
                     <option value="800">800 (Fastest)</option>
                     <option value="960">960 (Fast)</option>
                     <option value="1280">1280 (Quality)</option>
-                  </Form.Select>
-                </Form.Group>
-                  </Col>
-                </Row>
-              </Card.Body>
-            </Card>
+                        </Form.Select>
+                      </Form.Group>
+                    </Col>
+                  </Row>
+                </Card.Body>
+              </Card>
 
-        <div style={{
-          position:'relative', 
-          width:'100%', 
-          maxWidth: '1280px', 
-          aspectRatio:'16/9', 
-          border:'2px solid #667eea', 
-          background:'#000',
-          borderRadius: '8px',
-          overflow: 'hidden'
-        }}>
-          <canvas 
-            ref={canvasRef} 
-            style={{width:'100%', height:'100%', background:'#000'}} 
-            width={frameDimensions.width} 
-            height={frameDimensions.height} 
-          />
-          {!detecting && (
-            <div style={{
-              position: 'absolute',
-              top: '50%',
-              left: '50%',
-              transform: 'translate(-50%, -50%)',
-              color: '#fff',
-              fontSize: '1.5rem',
-              textAlign: 'center'
+              <div style={{
+              position:'relative', 
+              width:'100%', 
+              maxWidth: '1280px', 
+              aspectRatio:'16/9', 
+              border:'2px solid #667eea', 
+              background:'#000',
+              borderRadius: '8px',
+              overflow: 'hidden'
             }}>
-              🎥 Ready for Binary Stream<br/>
-              <small style={{fontSize: '0.8rem', opacity: 0.7}}>
-                TurboJPEG + Multithreading + createImageBitmap
+                  <canvas
+                    ref={canvasRef}
+                style={{width:'100%', height:'100%', background:'#000'}} 
+                width={frameDimensions.width} 
+                height={frameDimensions.height} 
+              />
+              {!detecting && (
+                  <div style={{
+                    position: 'absolute',
+                  top: '50%',
+                  left: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  color: '#fff',
+                  fontSize: '1.5rem',
+                  textAlign: 'center'
+                }}>
+                  🎥 Ready for Video Detection<br/>
+                  <small style={{fontSize: '0.8rem', opacity: 0.7}}>
+                    Upload video to start detection
                                       </small>
-                                    </div>
-                                  )}
-                                </div>
+                  </div>
+                      )}
+                    </div>
 
-        <Card className="mt-3 shadow-sm">
-          <Card.Body>
-            <h6 className="mb-3">🚀 30 FPS Optimizations Applied:</h6>
-            <ul className="mb-0" style={{fontSize: '0.9rem'}}>
-              <li>✅ <strong>Binary WebSocket</strong>: No base64, direct JPEG transfer</li>
-              <li>✅ <strong>TurboJPEG</strong>: 2-3x faster encoding than cv2</li>
-              <li>✅ <strong>Multithreading</strong>: 4-stage pipeline (capture → infer → encode → send)</li>
-              <li>✅ <strong>createImageBitmap</strong>: Off-main-thread decoding</li>
-              <li>✅ <strong>Latest-wins queues</strong>: Drop old frames automatically</li>
-              <li>✅ <strong>Server-side pacing</strong>: Stable FPS, no client throttle</li>
-            </ul>
-                          </Card.Body>
-                        </Card>
-      </div>
+        
+                                  </div>
     </>
   );
 }

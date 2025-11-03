@@ -96,7 +96,10 @@ class BinaryAnnotStream:
         jpeg_quality: int = 60,
         encode_width: int = 960,
         model_path: Optional[str] = None,
-        veh_detect_hz: int = 25
+        veh_detect_hz: int = 25,
+        enable_yolo: bool = True,
+        enable_tracking: bool = True,
+        enable_bbox_drawing: bool = True
     ):
         """
         Args:
@@ -107,6 +110,9 @@ class BinaryAnnotStream:
             jpeg_quality: JPEG quality (1-100, lower=faster)
             encode_width: Downscale width before encoding
             model_path: Path to YOLO model
+            enable_yolo: Enable YOLO detection
+            enable_tracking: Enable ByteTrack tracking
+            enable_bbox_drawing: Enable bbox drawing on frames
         """
         self.source = int(source) if source.isdigit() else source
         self.conf = float(conf)
@@ -115,6 +121,9 @@ class BinaryAnnotStream:
         self.jpeg_quality = int(jpeg_quality)
         self.encode_width = int(encode_width)
         self.veh_detect_hz = int(veh_detect_hz)
+        self.enable_yolo = bool(enable_yolo)
+        self.enable_tracking = bool(enable_tracking)
+        self.enable_bbox_drawing = bool(enable_bbox_drawing)
         
         # Device setup
         self.device = "cuda" if (torch and torch.cuda.is_available()) else "cpu"
@@ -177,8 +186,13 @@ class BinaryAnnotStream:
         # tid -> {cx, cy, w, h, cid, vx, vy}
         self._track_state: dict[int, dict] = {}
         
+        # Current frame detections (for sending metadata to client)
+        self._current_detections: list[dict] = []
+        
         logger.info(f"⚡ Config: FPS={self.target_fps}, Quality={self.jpeg_quality}, "
                    f"ImgSize={self.imgsz}, EncodeWidth={self.encode_width}")
+        logger.info(f"🔧 Modules: YOLO={self.enable_yolo}, Tracking={self.enable_tracking}, "
+                   f"BBox={self.enable_bbox_drawing}")
     
     def _open(self):
         """Open video source and load YOLO model"""
@@ -455,7 +469,7 @@ class BinaryAnnotStream:
             detect_due = (self.last_detect_ts == 0.0) or ((now - self.last_detect_ts) >= self.detect_interval)
 
             tracks = []
-            if detect_due:
+            if detect_due and self.enable_yolo:
                 # YOLO detect (keyframe)
                 try:
                     results = self.model.predict(
@@ -490,7 +504,7 @@ class BinaryAnnotStream:
                     if self.frame_idx % 30 == 1:
                         logger.info(f"⚠️ Frame {self.frame_idx}: No detections from YOLO")
 
-                if HAVE_BOXMOT and self.tracker is not None:
+                if HAVE_BOXMOT and self.tracker is not None and self.enable_tracking:
                     online_targets = self.tracker.update(
                         dets=xyxy,
                         scores=confs,
@@ -498,7 +512,7 @@ class BinaryAnnotStream:
                         img=frame
                     )
                     tracks = online_targets
-                else:
+                elif self.enable_tracking:
                     # Fallback: run ultralytics tracker (still heavy)
                     if self.stop_ev.is_set() or self.model is None:
                         break
@@ -525,6 +539,12 @@ class BinaryAnnotStream:
                             x1, y1, x2, y2 = map(float, box.xyxy[0].tolist())
                             tid = int(box.id[0]) if box.id is not None else -1
                             tracks.append(np.array([x1, y1, x2, y2, tid, cls_id], dtype=float))
+                else:
+                    # No tracking - just raw detections
+                    if len(xyxy) > 0:
+                        for i, (x1, y1, x2, y2) in enumerate(xyxy):
+                            cls_id = int(clss[i]) if i < len(clss) else 0
+                            tracks.append(np.array([x1, y1, x2, y2, i, cls_id], dtype=float))
 
                 # Update track state and velocities
                 dt = (now - self.last_detect_ts) if self.last_detect_ts else (1.0 / max(self.veh_detect_hz, 1))
@@ -573,21 +593,37 @@ class BinaryAnnotStream:
             except Empty:
                 continue
             
-            # Annotate bbox + track_id on frame
+            # Prepare detections metadata (ALWAYS, for future violations detection)
+            detections = []
             if tracks is not None and len(tracks) > 0:
-                # DEBUG: Log first detection
-                if self.frame_idx % 30 == 1:
-                    logger.info(f"🎯 Frame {self.frame_idx}: {len(tracks)} tracks found")
-                    if len(tracks) > 0:
-                        logger.info(f"🎯 First track: {tracks[0]}")
-                
                 for t in tracks:
                     x1, y1, x2, y2, tid, cls_id = t
-                    x1, y1, x2, y2, tid, cls_id = int(x1), int(y1), int(x2), int(y2), int(tid), int(cls_id)
+                    detections.append({
+                        "bbox": [float(x1), float(y1), float(x2), float(y2)],
+                        "track_id": int(tid),
+                        "class_id": int(cls_id),
+                        "class_name": CLASS_NAMES.get(int(cls_id), "vehicle"),
+                        "confidence": 1.0,  # TODO: add real confidence from YOLO results
+                        "violation": None   # TODO: integrate violation detection logic
+                    })
+            
+            # Store detections for this frame (accessible in send thread)
+            self._current_detections = detections
+            
+            # Optionally draw bbox on frame (backward compatible mode)
+            if self.enable_bbox_drawing and len(detections) > 0:
+                # DEBUG: Log first detection
+                if self.frame_idx % 30 == 1:
+                    logger.info(f"🎯 Frame {self.frame_idx}: {len(detections)} detections")
+                
+                for det in detections:
+                    x1, y1, x2, y2 = [int(v) for v in det["bbox"]]
+                    tid = det["track_id"]
+                    cls_id = det["class_id"]
+                    cls_name = det["class_name"]
                     
-                    # Get color and name for class
+                    # Get color
                     color = CLASS_COLORS.get(cls_id, (0, 255, 0))
-                    cls_name = CLASS_NAMES.get(cls_id, "vehicle")
                     
                     # Draw bbox
                     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
@@ -601,7 +637,7 @@ class BinaryAnnotStream:
             else:
                 # DEBUG: No tracks
                 if self.frame_idx % 30 == 1:
-                    logger.info(f"⚠️ Frame {self.frame_idx}: No tracks found")
+                    logger.info(f"⚠️ Frame {self.frame_idx}: No detections")
             
             # Downscale before encode (faster JPEG compression)
             enc_frame = self._downscale_for_encode(frame)
@@ -682,7 +718,12 @@ class BinaryAnnotStream:
             "tracker": "bytetrack" if HAVE_BOXMOT else "ultralytics_persist",
             "fps_cap": self.target_fps,
             "device": self.device,
-            "turbo_jpeg": HAVE_TURBOJPEG
+            "turbo_jpeg": HAVE_TURBOJPEG,
+            "modules": {
+                "yolo": self.enable_yolo,
+                "tracking": self.enable_tracking,
+                "bbox_drawing": self.enable_bbox_drawing
+            }
         }
     
     def next_frame(self) -> Tuple[Optional[dict], Optional[bytes]]:
@@ -718,7 +759,8 @@ class BinaryAnnotStream:
         header = {
             "type": "frame",
             "frame_idx": self.frame_idx,
-            "fps": fps
+            "fps": fps,
+            "detections": self._current_detections  # Include detections metadata
         }
         
         # Log progress every 30 frames

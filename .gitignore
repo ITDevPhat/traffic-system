@@ -1,4 +1,6 @@
-# Python
+# =============================
+# PYTHON / FASTAPI
+# =============================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -25,11 +27,21 @@ MANIFEST
 *.spec
 pip-log.txt
 pip-delete-this-directory.txt
+
+# Virtual env
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Coverage / Testing
 htmlcov/
 .tox/
 .nox/
-.coverage
-.coverage.*
+.coverage*
 .cache
 nosetests.xml
 coverage.xml
@@ -38,45 +50,34 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
-*.mo
-*.pot
-*.log
-local_settings.py
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
 db.sqlite3
 db.sqlite3-journal
-instance/
-.webassets-cache
-.scrapy
-docs/_build/
-.pybuilder/
-target/
+
+# Logs
+logs/
+*.log
+log.txt
+
+# Jupyter / IPython
 .ipynb_checkpoints
 profile_default/
 ipython_config.py
-.pdm.toml
-__pypackages__/
-celerybeat-schedule
-celerybeat.pid
-*.sage.py
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-.spyderproject
-.spyproject
-.ropeproject
-/site
-.mypy_cache/
-.dmypy.json
-dmypy.json
-.pyre/
-.pytype/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Cython
 cython_debug/
 
-# Node.js
+# =============================
+# NODE / NEXT.JS
+# =============================
 node_modules/
 npm-debug.log*
 yarn-debug.log*
@@ -84,66 +85,41 @@ yarn-error.log*
 lerna-debug.log*
 .pnpm-debug.log*
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
-pids
-*.pid
-*.seed
-*.pid.lock
-lib-cov
-coverage
-*.lcov
-.nyc_output
-.grunt
-bower_components
-.lock-wscript
-build/Release
-node_modules/
-jspm_packages/
-web_modules/
-*.tsbuildinfo
-.npm
-.eslintcache
-.stylelintcache
-.rpt2_cache/
-.rts2_cache_cjs/
-.rts2_cache_es/
-.rts2_cache_umd/
-.node_repl_history
-*.tgz
-.yarn-integrity
-.env
-.env.development.local
-.env.test.local
-.env.production.local
-.env.local
-.cache
-.parcel-cache
-.next
-out
-.nuxt
-dist
-.cache/
-.vuepress/dist
-.temp
-.serverless/
-.fusebox/
-.dynamodb/
-.tern-port
-.vscode-test
+.pnp.*
 .yarn/cache
 .yarn/unplugged
 .yarn/build-state.yml
 .yarn/install-state.gz
-.pnp.*
+.eslintcache
+.stylelintcache
+.rpt2_cache/
+.rts2_cache_*/
 
-# Next.js
+# Build outputs
 .next/
 out/
+dist/
 build/
+.cache/
+.parcel-cache/
+.nyc_output
+coverage/
+web_modules/
 *.tsbuildinfo
-# Keep next config files
-# next-env.d.ts
+.serverless/
+.dynamodb/
+.temp
 
-# IDE
+# Env files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# =============================
+# IDE / OS FILES
+# =============================
 .idea/
 .vscode/
 *.swp
@@ -151,14 +127,16 @@ build/
 *~
 .project
 .classpath
-.c9/
-*.launch
 .settings/
-*.sublime-workspace
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Project specific - temp files
+# =============================
+# PROJECT-SPECIFIC
+# =============================
+
+# Videos and outputs
 /videos/*
 !/videos/.gitkeep
 /outputs/*
@@ -170,60 +148,24 @@ Thumbs.db
 /traffic-server/app/static/uploads/*
 !/traffic-server/app/static/uploads/.gitkeep
 
-# Model files (large files) - KEEP for this project
-# *.pt
-# *.pth
-# *.onnx
-# *.pb
-# *.h5
-# *.tflite
-# *.weights
+# Model files (large)
+*.pt
+*.pth
+*.onnx
+*.pb
+*.h5
+*.tflite
+*.weights
 
-# Database
-*.db
-*.sqlite
-*.sqlite3
+# Media (skip committing big video files)
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.flv
+*.wmv
 
-# Logs
-logs/
-*.log
-log.txt
-
-# OS
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-desktop.ini
-
-# Temporary files
-*.tmp
-*.temp
-# *.bak  # Comment out if you want backups
-# *.backup
-*.swp
-*.swo
-*~
-
-# Lock files (keep package-lock.json and yarn.lock)
-# bun.lockb
-
-# Test coverage
-coverage/
-.coverage
-htmlcov/
-*.cover
-.hypothesis/
-.pytest_cache/
-
-# Documentation build
-docs/_build/
-site/
-
-# Secrets and credentials
+# Secrets
 .env*
 !.env.example
 secrets/
@@ -231,46 +173,3 @@ credentials/
 *.key
 *.pem
 *.crt
-
-# Media files (video outputs) - Keep assets
-*.mp4
-*.avi
-*.mov
-*.mkv
-*.flv
-*.wmv
-# Allow images in assets
-# *.jpg
-# *.jpeg
-# *.png
-# *.gif
-# *.bmp
-!src/assets/images/**
-!public/**
-
-# Cache
-.cache/
-.parcel-cache/
-*.cache
-
-# Compiled files
-*.pyc
-*.pyo
-*.pyd
-*.so
-*.dll
-*.dylib
-*.exe
-*.out
-*.app
-
-# Archives
-*.zip
-*.tar.gz
-*.rar
-*.7z
-
-# Misc
-.python-version
-.ruby-version
-.nvmrc

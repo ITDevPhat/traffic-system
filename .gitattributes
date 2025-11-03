@@ -1,0 +1,52 @@
+# =============================
+# Line endings normalization
+# =============================
+# Luôn commit LF để cross-platform an toàn (Linux server, Windows dev)
+* text=auto
+
+*.py text eol=lf
+*.js text eol=lf
+*.ts text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf
+
+# =============================
+# SQL & PostgreSQL
+# =============================
+*.sql text eol=lf
+*.psql text eol=lf
+*.pgsql text eol=lf
+
+# =============================
+# Binary files (no diff)
+# =============================
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.svg binary
+*.ico binary
+*.mp4 binary
+*.avi binary
+*.mov binary
+*.mkv binary
+*.flv binary
+*.wmv binary
+*.pt binary
+*.pth binary
+*.h5 binary
+*.onnx binary
+*.pb binary
+*.tflite binary
+*.zip binary
+*.tar.gz binary
+*.7z binary
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+

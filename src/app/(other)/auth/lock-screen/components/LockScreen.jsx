@@ -3,7 +3,7 @@
 import logoDark from '@/assets/images/logo-dark.png';
 import LogoLight from '@/assets/images/logo-light.png';
 import avatar1 from '@/assets/images/users/avatar-1.jpg';
-import TextFormInput from '@/components/from/TextFormInput';
+import PasswordFormInput from '@/components/from/PasswordFormInput';
 import { yupResolver } from '@hookform/resolvers/yup';
 import Image from 'next/image';
 import Link from 'next/link';
@@ -19,9 +19,7 @@ const LockScreen = () => {
     };
   }, []);
   const messageSchema = yup.object({
-    name: yup.string().required('Please enter Name'),
-    email: yup.string().email().required('Please enter Email'),
-    password: yup.string().required('Please enter password')
+    password: yup.string().required('Vui lòng nhập mật khẩu')
   });
   const {
     handleSubmit,
@@ -46,16 +44,16 @@ const LockScreen = () => {
                 <div className="text-center mb-2">
                   <Image className="rounded-circle avatar-lg img-thumbnail" src={avatar1} alt="avatar" />
                 </div>
-                <h2 className="fw-bold text-uppercase text-center fs-18">Hi ! Gaston</h2>
-                <p className="text-muted text-center mt-1 mb-4">Enter your password to access the admin.</p>
+                <h2 className="fw-bold text-uppercase text-center fs-18">Xin chào ! Gaston</h2>
+                <p className="text-muted text-center mt-1 mb-4">Nhập mật khẩu để truy cập bảng điều khiển.</p>
                 <div className="px-4">
                   <form onSubmit={handleSubmit(() => {})} className="authentication-form">
                     <div className="mb-3">
-                      <TextFormInput control={control} name="password" placeholder="Enter your password" className="bg-light bg-opacity-50 border-light py-2" />
+                      <PasswordFormInput control={control} name="password" placeholder="Nhập mật khẩu của bạn" className="bg-light bg-opacity-50 border-light py-2" />
                     </div>
                     <div className="mb-1 text-center d-grid">
                       <button className="btn btn-danger py-2" type="submit">
-                        Sign In
+                        Đăng Nhập
                       </button>
                     </div>
                   </form>
@@ -63,9 +61,9 @@ const LockScreen = () => {
               </CardBody>
             </Card>
             <p className="mb-0 text-center text-white">
-              Not you? return{' '}
+              Không phải bạn? quay lại{' '}
               <Link href="/auth/sign-in" className="text-reset text-unline-dashed fw-bold ms-1">
-                Sign In
+                Đăng Nhập
               </Link>
             </p>
           </Col>

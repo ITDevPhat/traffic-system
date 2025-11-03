@@ -97,11 +97,11 @@ def root():
 
 @app.get("/api/auth/me")
 def auth_me(current_user = Depends(auth_router.get_current_user)):
-    return {
-        "user_id": current_user.user_id,
-        "username": current_user.username,
-        "role": getattr(current_user, "role", "user")
-    }
+    """
+    Alias endpoint cho /api/auth/me (để tương thích với frontend)
+    """
+    from app.schemas.auth import UserResponse
+    return UserResponse.model_validate(current_user)
 
 @app.get("/health")
 def health_check():

@@ -3,6 +3,7 @@
 import logoDark from '@/assets/images/logo-dark.png';
 import LogoLight from '@/assets/images/logo-light.png';
 import TextFormInput from '@/components/from/TextFormInput';
+import PasswordFormInput from '@/components/from/PasswordFormInput';
 import IconifyIcon from '@/components/wrappers/IconifyIcon';
 import Image from 'next/image';
 import Link from 'next/link';
@@ -45,34 +46,47 @@ const SignIn = () => {
                     <Image src={LogoLight} height={28} alt="logo light" />
                   </Link>
                 </div>
-                <h2 className="fw-bold text-uppercase text-center fs-18">Sign In</h2>
-                <p className="text-muted text-center mt-1 mb-4">Enter your email address and password to access admin panel.</p>
+                <h2 className="fw-bold text-uppercase text-center fs-18">Đăng Nhập</h2>
+                <p className="text-muted text-center mt-1 mb-4">Nhập tên đăng nhập hoặc email và mật khẩu để truy cập bảng điều khiển.</p>
                 <div className="px-4">
                   <form className="authentication-form" onSubmit={login}>
                     <div className="mb-3">
-                      <TextFormInput control={control} name="email" placeholder="Enter your email" className="bg-light bg-opacity-50 border-light py-2" label="Email" />
+                      <TextFormInput 
+                        control={control} 
+                        name="username" 
+                        type="text"
+                        placeholder="Nhập tên đăng nhập hoặc email" 
+                        className="bg-light bg-opacity-50 border-light py-2" 
+                        label="Tên đăng nhập hoặc Email" 
+                      />
                     </div>
                     <div className="mb-3">
                       <Link href="/auth/reset-password" className="float-end text-muted text-unline-dashed ms-1">
-                        Reset password
+                        Quên mật khẩu
                       </Link>
-                      <TextFormInput control={control} name="password" placeholder="Enter your password" className="bg-light bg-opacity-50 border-light py-2" label="Password" />
+                      <PasswordFormInput 
+                        control={control} 
+                        name="password" 
+                        placeholder="Nhập mật khẩu của bạn" 
+                        className="bg-light bg-opacity-50 border-light py-2" 
+                        label="Mật khẩu" 
+                      />
                     </div>
                     <div className="mb-3">
                       <div className="form-check">
                         <input type="checkbox" className="form-check-input" id="checkbox-signin" />
                         <label className="form-check-label" htmlFor="checkbox-signin">
-                          Remember me
+                          Ghi nhớ đăng nhập
                         </label>
                       </div>
                     </div>
                     <div className="mb-1 text-center d-grid">
                       <button disabled={loading} className="btn btn-danger py-2 fw-medium" type="submit">
-                        Sign In
+                        Đăng Nhập
                       </button>
                     </div>
                   </form>
-                  <p className="mt-3 fw-semibold no-span">OR sign with</p>
+                  <p className="mt-3 fw-semibold no-span">HOẶC đăng nhập bằng</p>
                   <div className="text-center">
                     <Button variant="outline-light" className="shadow-none">
                       <IconifyIcon icon="bxl:google" className="fs-20" />
@@ -90,9 +104,9 @@ const SignIn = () => {
               </CardBody>
             </Card>
             <p className="mb-0 text-center text-white">
-              New here?{' '}
+              Chưa có tài khoản?{' '}
               <Link href="/auth/sign-up" className="text-reset text-unline-dashed fw-bold ms-1">
-                Sign Up
+                Đăng Ký
               </Link>
             </p>
           </Col>
