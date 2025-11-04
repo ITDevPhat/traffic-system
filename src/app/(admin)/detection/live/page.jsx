@@ -280,6 +280,60 @@ function DetectionPageBinaryContent() {
     }
   }, [searchParams, videoLoaded, safeToast]);
 
+  const loadModels = useCallback(async () => {
+    // Skip if already loaded
+    if (modelLoaded || isLoadingModels) return;
+
+    setIsLoadingModels(true);
+    
+    // Longer timeout for model loading (GPU initialization can take time)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout for GPU init
+    
+    const videoParam = searchParams?.get('video');
+    if (!videoParam) {
+      toast.info('Loading models (GPU)...', { autoClose: 2000 });
+    }
+    
+    try {
+      const res = await fetch(`${API_URL}/api/detection/models/load`, { 
+          method: 'POST',
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || 'Failed to load models');
+      }
+      const data = await res.json();
+      if ((data?.device || '').toLowerCase() !== 'cuda') {
+        toast.error('GPU required. CUDA not detected.');
+        return;
+      }
+      setModelLoaded(true);
+      
+      const videoParam = searchParams?.get('video');
+      if (videoParam) {
+        console.log('? Models loaded - ready for auto-start');
+        // Don't show toast if auto-starting (to avoid spam)
+      } else {
+        toast.success('Models ready on GPU (CUDA)', { icon: '??', autoClose: 2000 });
+      }
+    } catch (e) {
+      console.error(e);
+      clearTimeout(timeoutId);
+      
+      if (e.name === 'AbortError') {
+        toast.error('Model loading timeout! Check backend.');
+      } else {
+        toast.error(`Cannot load models: ${e.message}`);
+      }
+    } finally {
+      setIsLoadingModels(false);
+    }
+  }, [modelLoaded, isLoadingModels, searchParams]);
+
   // Auto-load models on mount (non-blocking) - ưu tiên nếu có video param
   useEffect(() => {
     const videoParam = searchParams?.get('video');
@@ -299,6 +353,194 @@ function DetectionPageBinaryContent() {
       return () => clearTimeout(timer);
     }
   }, [searchParams, modelLoaded, isLoadingModels, loadModels, safeToast]);
+
+  const scheduleDecode = useCallback(() => {
+    if (decodingRef.current) return;
+    const buf = lastBufferRef.current;
+    if (!buf) return;
+    // claim buffer
+    lastBufferRef.current = null;
+    decodingRef.current = true;
+    const blob = new Blob([buf], { type: 'image/jpeg' });
+    createImageBitmap(blob)
+      .then((bitmap) => {
+        // Replace any pending next bitmap
+        if (nextBitmapRef.current) {
+          try { nextBitmapRef.current.close(); } catch {}
+        }
+        nextBitmapRef.current = bitmap;
+      })
+      .catch(() => {})
+      .finally(() => {
+        decodingRef.current = false;
+        // If a newer buffer arrived while decoding, process it now
+        if (lastBufferRef.current) scheduleDecode();
+      });
+  }, []);
+
+  const connectWebSocket = useCallback((src) => {
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+
+    // Build WebSocket URL with all optimization parameters
+    const params = new URLSearchParams();
+    params.append('source', src || '0');
+    params.append('conf', settings.conf);
+    params.append('fps', settings.target_fps);
+    params.append('imgsz', settings.inference_size);
+    params.append('quality', settings.jpeg_quality);
+    params.append('encode_width', settings.encode_width);
+    params.append('model_path', selectedModel || 'models/yolov8n.pt');
+    params.append('veh_detect_hz', settings.veh_detect_hz);
+    params.append('enable_yolo', modules.yolo);
+    params.append('enable_tracking', modules.tracking);
+    params.append('enable_bbox_drawing', modules.bboxDrawing);
+    params.append('enable_roi', modules.roi);
+    params.append('enable_roi_drawing', modules.roiDrawing);
+    params.append('force_gpu', settings.force_gpu);
+
+    const wsUrl = `${API_URL.replace('http', 'ws')}/api/detection/realtime?${params.toString()}`;
+    console.log('?? Connecting to:', wsUrl);
+    
+    const ws = new WebSocket(wsUrl);
+    ws.binaryType = 'arraybuffer';  // Critical for binary frames
+    
+    ws.onopen = () => {
+      if (!isMountedRef.current) return;
+      console.log('? Binary WebSocket connected!');
+      lastRoiSignatureRef.current = '';
+      setConnected(true);
+      setExpectBinary(false);
+      safeToast.success('Connected! Waiting for frames...');
+    };
+    
+    ws.onclose = () => {
+      if (!isMountedRef.current) return;
+      console.log('? WebSocket closed');
+      setConnected(false);
+      setDetecting(false);
+      lastRoiSignatureRef.current = '';
+      safeToast.info('WebSocket disconnected');
+    };
+    
+    ws.onerror = (error) => {
+      if (!isMountedRef.current) return;
+      console.error('? WebSocket error:', error);
+      setConnected(false);
+      setDetecting(false);
+      lastRoiSignatureRef.current = '';
+      safeToast.error('WebSocket error! Check backend.');
+    };
+
+    // Handle messages: text (header) and binary (JPEG) alternate
+    ws.onmessage = async (event) => {
+      // Text message (JSON header)
+      if (typeof event.data === 'string') {
+        try {
+          const pkt = JSON.parse(event.data);
+          
+        if (pkt.type === 'info') {
+            // Set canvas size once
+            const c = canvasRef.current;
+            if (c) {
+              const newWidth = pkt.frame_width || 1280;
+              const newHeight = pkt.frame_height || 720;
+              c.width = newWidth;
+              c.height = newHeight;
+              setFrameDimensions({ width: newWidth, height: newHeight });
+              const ctx = c.getContext('2d');
+              if (ctx && ctx.imageSmoothingEnabled) ctx.imageSmoothingEnabled = false;
+                console.log(`?? Canvas: ${newWidth}x${newHeight}`);
+                console.log('?? Info:', pkt);
+                if (pkt.rois && typeof pkt.rois === 'object') {
+                  const entries = Object.entries(pkt.rois);
+                  if (entries.length > 0) {
+                    const width = newWidth || frameDimensions.width || 1;
+                    const height = newHeight || frameDimensions.height || 1;
+                    const imported = entries
+                      .map(([name, raw], idx) => {
+                        const coords = Array.isArray(raw)
+                          ? raw
+                          : (raw?.coordinates || raw?.points || []);
+                        if (!Array.isArray(coords)) return null;
+                        const points = coords
+                          .map((pt) => {
+                            if (!Array.isArray(pt) || pt.length < 2) return null;
+                            return {
+                              x: clamp01(pt[0] / width),
+                              y: clamp01(pt[1] / height)
+                            };
+                          })
+                          .filter(Boolean);
+                        if (points.length < 3) return null;
+                        return {
+                          id: `roi-server-${idx}`,
+                          label: String(name),
+                          color: ROI_COLORS[idx % ROI_COLORS.length],
+                          points,
+                        };
+                      })
+                      .filter(Boolean);
+                    if (imported.length > 0) {
+                      setRoiPolygons((prev) => (prev.length > 0 ? prev : imported));
+                    }
+                  }
+                }
+            }
+          } else if (pkt.type === 'frame') {
+            // Update FPS and frame index
+            if (typeof pkt.fps === 'number') fpsRef.current = pkt.fps;
+            if (typeof pkt.frame_idx === 'number') frameIdxRef.current = pkt.frame_idx;
+            
+            // Store detections metadata (for future violations rendering)
+            if (pkt.detections && Array.isArray(pkt.detections)) {
+              // TODO: Store in state/ref for violations overlay rendering
+              // For now, just log occasionally
+              if (pkt.frame_idx % 30 === 0 && pkt.detections.length > 0) {
+                console.log(`?? Frame ${pkt.frame_idx}: ${pkt.detections.length} detections`, pkt.detections[0]);
+              }
+            }
+            
+            // Next message should be binary JPEG
+            setExpectBinary(true);
+          } else if (pkt.type === 'error') {
+            toast.error(`Server Error: ${pkt.message}`);
+            stopDetection();
+          } else if (pkt.type === 'roi_ack') {
+            const count = typeof pkt.count === 'number' ? pkt.count : 0;
+            safeToast.success(`ROI synced (${count})`, { autoClose: 1500 });
+          } else if (pkt.type === 'roi_cleared') {
+            lastRoiSignatureRef.current = '';
+            safeToast.info('ROI cleared on detector', { autoClose: 1500 });
+          } else if (pkt.type === 'roi_error') {
+            safeToast.error(pkt.message || 'ROI update failed');
+          }
+        } catch (e) {
+          console.error('Failed to parse text message:', e);
+        }
+      return;
+    }
+    
+      // Binary message (JPEG ArrayBuffer)
+      if (event.data instanceof ArrayBuffer) {
+        // Latest-wins: keep only the newest buffer, decode off-main-thread
+        lastBufferRef.current = event.data;
+        scheduleDecode();
+        setExpectBinary(false);
+      }
+    };
+
+    wsRef.current = ws;
+  }, [
+    settings,
+    modules,
+    selectedModel,
+    safeToast,
+    frameDimensions.height,
+    frameDimensions.width,
+    scheduleDecode,
+  ]);
 
   // Warmup phase: 5 seconds before starting detection
   const warmupIntervalRef = useRef(null);
@@ -400,30 +642,6 @@ function DetectionPageBinaryContent() {
     return () => clearInterval(id);
   }, []);
 
-  const scheduleDecode = useCallback(() => {
-    if (decodingRef.current) return;
-    const buf = lastBufferRef.current;
-    if (!buf) return;
-    // claim buffer
-    lastBufferRef.current = null;
-    decodingRef.current = true;
-    const blob = new Blob([buf], { type: 'image/jpeg' });
-    createImageBitmap(blob)
-      .then((bitmap) => {
-        // Replace any pending next bitmap
-        if (nextBitmapRef.current) {
-          try { nextBitmapRef.current.close(); } catch {}
-        }
-        nextBitmapRef.current = bitmap;
-      })
-      .catch(() => {})
-      .finally(() => {
-        decodingRef.current = false;
-        // If a newer buffer arrived while decoding, process it now
-        if (lastBufferRef.current) scheduleDecode();
-      });
-  }, []);
-
   // Fetch available vehicle models for selection
   useEffect(() => {
     (async () => {
@@ -443,224 +661,6 @@ function DetectionPageBinaryContent() {
       } catch {}
     })();
   }, []);
-
-  const connectWebSocket = useCallback((src) => {
-    if (wsRef.current) {
-      wsRef.current.close();
-    }
-
-    // Build WebSocket URL with all optimization parameters
-    const params = new URLSearchParams();
-    params.append('source', src || '0');
-    params.append('conf', settings.conf);
-    params.append('fps', settings.target_fps);
-    params.append('imgsz', settings.inference_size);
-    params.append('quality', settings.jpeg_quality);
-    params.append('encode_width', settings.encode_width);
-    params.append('model_path', selectedModel || 'models/yolov8n.pt');
-    params.append('veh_detect_hz', settings.veh_detect_hz);
-    params.append('enable_yolo', modules.yolo);
-    params.append('enable_tracking', modules.tracking);
-    params.append('enable_bbox_drawing', modules.bboxDrawing);
-    params.append('enable_roi', modules.roi);
-    params.append('enable_roi_drawing', modules.roiDrawing);
-    params.append('force_gpu', settings.force_gpu);
-
-    const wsUrl = `${API_URL.replace('http', 'ws')}/api/detection/realtime?${params.toString()}`;
-    console.log('🔗 Connecting to:', wsUrl);
-    
-    const ws = new WebSocket(wsUrl);
-    ws.binaryType = 'arraybuffer';  // Critical for binary frames
-    
-    ws.onopen = () => {
-      if (!isMountedRef.current) return;
-      console.log('✅ Binary WebSocket connected!');
-      lastRoiSignatureRef.current = '';
-      setConnected(true);
-      setExpectBinary(false);
-      safeToast.success('Connected! Waiting for frames...');
-    };
-    
-    ws.onclose = () => {
-      if (!isMountedRef.current) return;
-      console.log('❌ WebSocket closed');
-      setConnected(false);
-      setDetecting(false);
-      lastRoiSignatureRef.current = '';
-      safeToast.info('WebSocket disconnected');
-    };
-    
-    ws.onerror = (error) => {
-      if (!isMountedRef.current) return;
-      console.error('❌ WebSocket error:', error);
-      setConnected(false);
-      setDetecting(false);
-      lastRoiSignatureRef.current = '';
-      safeToast.error('WebSocket error! Check backend.');
-    };
-
-    // Handle messages: text (header) and binary (JPEG) alternate
-    ws.onmessage = async (event) => {
-      // Text message (JSON header)
-      if (typeof event.data === 'string') {
-        try {
-          const pkt = JSON.parse(event.data);
-          
-        if (pkt.type === 'info') {
-            // Set canvas size once
-            const c = canvasRef.current;
-            if (c) {
-              const newWidth = pkt.frame_width || 1280;
-              const newHeight = pkt.frame_height || 720;
-              c.width = newWidth;
-              c.height = newHeight;
-              setFrameDimensions({ width: newWidth, height: newHeight });
-              const ctx = c.getContext('2d');
-              if (ctx && ctx.imageSmoothingEnabled) ctx.imageSmoothingEnabled = false;
-                console.log(`📐 Canvas: ${newWidth}x${newHeight}`);
-                console.log('📦 Info:', pkt);
-                if (pkt.rois && typeof pkt.rois === 'object') {
-                  const entries = Object.entries(pkt.rois);
-                  if (entries.length > 0) {
-                    const width = newWidth || frameDimensions.width || 1;
-                    const height = newHeight || frameDimensions.height || 1;
-                    const imported = entries
-                      .map(([name, raw], idx) => {
-                        const coords = Array.isArray(raw)
-                          ? raw
-                          : (raw?.coordinates || raw?.points || []);
-                        if (!Array.isArray(coords)) return null;
-                        const points = coords
-                          .map((pt) => {
-                            if (!Array.isArray(pt) || pt.length < 2) return null;
-                            return {
-                              x: clamp01(pt[0] / width),
-                              y: clamp01(pt[1] / height)
-                            };
-                          })
-                          .filter(Boolean);
-                        if (points.length < 3) return null;
-                        return {
-                          id: `roi-server-${idx}`,
-                          label: String(name),
-                          color: ROI_COLORS[idx % ROI_COLORS.length],
-                          points,
-                        };
-                      })
-                      .filter(Boolean);
-                    if (imported.length > 0) {
-                      setRoiPolygons((prev) => (prev.length > 0 ? prev : imported));
-                    }
-                  }
-                }
-            }
-          } else if (pkt.type === 'frame') {
-            // Update FPS and frame index
-            if (typeof pkt.fps === 'number') fpsRef.current = pkt.fps;
-            if (typeof pkt.frame_idx === 'number') frameIdxRef.current = pkt.frame_idx;
-            
-            // Store detections metadata (for future violations rendering)
-            if (pkt.detections && Array.isArray(pkt.detections)) {
-              // TODO: Store in state/ref for violations overlay rendering
-              // For now, just log occasionally
-              if (pkt.frame_idx % 30 === 0 && pkt.detections.length > 0) {
-                console.log(`🎯 Frame ${pkt.frame_idx}: ${pkt.detections.length} detections`, pkt.detections[0]);
-              }
-            }
-            
-            // Next message should be binary JPEG
-            setExpectBinary(true);
-          } else if (pkt.type === 'error') {
-            toast.error(`Server Error: ${pkt.message}`);
-            stopDetection();
-          } else if (pkt.type === 'roi_ack') {
-            const count = typeof pkt.count === 'number' ? pkt.count : 0;
-            safeToast.success(`ROI synced (${count})`, { autoClose: 1500 });
-          } else if (pkt.type === 'roi_cleared') {
-            lastRoiSignatureRef.current = '';
-            safeToast.info('ROI cleared on detector', { autoClose: 1500 });
-          } else if (pkt.type === 'roi_error') {
-            safeToast.error(pkt.message || 'ROI update failed');
-          }
-        } catch (e) {
-          console.error('Failed to parse text message:', e);
-        }
-      return;
-    }
-    
-      // Binary message (JPEG ArrayBuffer)
-      if (event.data instanceof ArrayBuffer) {
-        // Latest-wins: keep only the newest buffer, decode off-main-thread
-        lastBufferRef.current = event.data;
-        scheduleDecode();
-        setExpectBinary(false);
-      }
-    };
-
-    wsRef.current = ws;
-  }, [
-    settings,
-    modules,
-    selectedModel,
-    safeToast,
-    frameDimensions.height,
-    frameDimensions.width,
-    scheduleDecode,
-  ]);
-
-  const loadModels = useCallback(async () => {
-    // Skip if already loaded
-    if (modelLoaded || isLoadingModels) return;
-
-    setIsLoadingModels(true);
-    
-    // Longer timeout for model loading (GPU initialization can take time)
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout for GPU init
-    
-    const videoParam = searchParams?.get('video');
-    if (!videoParam) {
-      toast.info('Loading models (GPU)...', { autoClose: 2000 });
-    }
-    
-    try {
-      const res = await fetch(`${API_URL}/api/detection/models/load`, { 
-          method: 'POST',
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-      
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || 'Failed to load models');
-      }
-      const data = await res.json();
-      if ((data?.device || '').toLowerCase() !== 'cuda') {
-        toast.error('GPU required. CUDA not detected.');
-        return;
-      }
-      setModelLoaded(true);
-      
-      const videoParam = searchParams?.get('video');
-      if (videoParam) {
-        console.log('✅ Models loaded - ready for auto-start');
-        // Don't show toast if auto-starting (to avoid spam)
-      } else {
-        toast.success('Models ready on GPU (CUDA)', { icon: '🚀', autoClose: 2000 });
-      }
-    } catch (e) {
-      console.error(e);
-      clearTimeout(timeoutId);
-      
-      if (e.name === 'AbortError') {
-        toast.error('Model loading timeout! Check backend.');
-      } else {
-        toast.error(`Cannot load models: ${e.message}`);
-      }
-    } finally {
-      setIsLoadingModels(false);
-    }
-  }, [modelLoaded, isLoadingModels, searchParams]);
 
   const startDetection = async () => {
     // If models not loaded yet, try to load them first

@@ -37,6 +37,7 @@ from app.modules import (
     VehicleYOLOModule,
     BoundingBoxDrawerModule,
 )
+from app.utils.model_loader import load_yolo_model, get_model_info
 from app.utils.plate_utils import (
     deskew_and_crop,
     split_two_lines,
@@ -62,12 +63,14 @@ logger.info(f"🖥️  Using device: {DEVICE}")
 
 # ============================================
 # 🧠 Load YOLO Models (Singleton Pattern)
+# Unified loader: .engine > .onnx > .pt
 # ============================================
 class YOLOModelsV2:
     """
     Singleton class để load tất cả YOLO models + ByteTrack tracker.
     
-    V2: Thêm ByteTrack tracking cho vehicles.
+    V3: Unified loader hỗ trợ .engine (TensorRT) > .onnx > .pt
+    Tối ưu cho RTX 3050 4GB VRAM, đảm bảo >30fps
     """
     _instance = None
     
@@ -81,50 +84,91 @@ class YOLOModelsV2:
         if self._initialized:
             return
         
-        logger.info("📦 Loading YOLO models + ByteTrack...")
+        logger.info("📦 Loading YOLO models (auto-detect: .engine > .onnx > .pt)...")
         
         try:
             # Vehicle detection
-            vehicle_path = settings.YOLO_VEHICLE_MODEL
-            if os.path.exists(vehicle_path):
-                self.vehicle = YOLO(vehicle_path).to(DEVICE)
-                logger.info(f"✅ Vehicle model loaded: {vehicle_path}")
+            vehicle_info = get_model_info(settings.YOLO_VEHICLE_MODEL)
+            if vehicle_info["found"]:
+                self.vehicle = load_yolo_model(
+                    vehicle_info["path"],
+                    device=DEVICE,
+                    imgsz=640,
+                    half=True,
+                    verbose=False
+                )
+                logger.info(f"✅ Vehicle model loaded: {vehicle_info['path']} ({vehicle_info['type']}, {vehicle_info['size_mb']}MB)")
             else:
-                logger.warning(f"⚠️  Vehicle model not found: {vehicle_path}")
+                logger.warning(f"⚠️  Vehicle model not found: {settings.YOLO_VEHICLE_MODEL}")
                 self.vehicle = None
             
             # Plate detection
-            plate_path = settings.YOLO_PLATE_MODEL
-            if os.path.exists(plate_path):
-                self.plate = YOLO(plate_path).to(DEVICE)
-                logger.info(f"✅ Plate model loaded: {plate_path}")
+            plate_info = get_model_info(settings.YOLO_PLATE_MODEL)
+            if plate_info["found"]:
+                self.plate = load_yolo_model(
+                    plate_info["path"],
+                    device=DEVICE,
+                    imgsz=640,
+                    half=True,
+                    verbose=False
+                )
+                logger.info(f"✅ Plate model loaded: {plate_info['path']} ({plate_info['type']}, {plate_info['size_mb']}MB)")
             else:
-                logger.warning(f"⚠️  Plate model not found: {plate_path}")
+                logger.warning(f"⚠️  Plate model not found: {settings.YOLO_PLATE_MODEL}")
                 self.plate = None
             
             # OCR detection
-            ocr_path = settings.YOLO_OCR_MODEL
-            if os.path.exists(ocr_path):
-                self.ocr = YOLO(ocr_path).to(DEVICE)
-                logger.info(f"✅ OCR model loaded: {ocr_path}")
+            ocr_info = get_model_info(settings.YOLO_OCR_MODEL)
+            if ocr_info["found"]:
+                self.ocr = load_yolo_model(
+                    ocr_info["path"],
+                    device=DEVICE,
+                    imgsz=640,
+                    half=True,
+                    verbose=False
+                )
+                logger.info(f"✅ OCR model loaded: {ocr_info['path']} ({ocr_info['type']}, {ocr_info['size_mb']}MB)")
             else:
-                logger.warning(f"⚠️  OCR model not found: {ocr_path}")
+                logger.warning(f"⚠️  OCR model not found: {settings.YOLO_OCR_MODEL}")
                 self.ocr = None
             
             # Traffic light detection
-            light_path = settings.YOLO_TRAFFIC_LIGHT_MODEL
-            if os.path.exists(light_path):
-                self.traffic_light = YOLO(light_path).to(DEVICE)
-                logger.info(f"✅ Traffic light model loaded: {light_path}")
+            light_info = get_model_info(settings.YOLO_TRAFFIC_LIGHT_MODEL)
+            if light_info["found"]:
+                self.traffic_light = load_yolo_model(
+                    light_info["path"],
+                    device=DEVICE,
+                    imgsz=640,
+                    half=True,
+                    verbose=False
+                )
+                logger.info(f"✅ Traffic light model loaded: {light_info['path']} ({light_info['type']}, {light_info['size_mb']}MB)")
             else:
-                logger.warning(f"⚠️  Traffic light model not found: {light_path}")
+                logger.warning(f"⚠️  Traffic light model not found: {settings.YOLO_TRAFFIC_LIGHT_MODEL}")
                 self.traffic_light = None
             
             self._initialized = True
-            logger.info("🎉 All models loaded successfully!")
+            
+            # Summary
+            loaded = sum([
+                self.vehicle is not None,
+                self.plate is not None,
+                self.ocr is not None,
+                self.traffic_light is not None
+            ])
+            logger.info(f"🎉 {loaded}/4 models loaded successfully!")
+            
+            # GPU memory check
+            if torch.cuda.is_available():
+                try:
+                    vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+                    allocated_gb = torch.cuda.memory_allocated(0) / (1024 ** 3)
+                    logger.info(f"💾 GPU VRAM: {allocated_gb:.2f}GB / {vram_gb:.2f}GB allocated")
+                except Exception as e:
+                    logger.debug(f"GPU memory check failed: {e}")
             
         except Exception as e:
-            logger.error(f"❌ Error loading models: {e}")
+            logger.error(f"❌ Error loading models: {e}", exc_info=True)
             raise
 
 # Global models instance

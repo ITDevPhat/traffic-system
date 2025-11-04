@@ -14,11 +14,14 @@ class Settings(BaseSettings):
     
     # ============================================
     # 🧠 Multiple YOLO Models Configuration
+    # Auto-detect format: .engine > .onnx > .pt
     # ============================================
-    YOLO_VEHICLE_MODEL: str = os.path.join(os.path.dirname(__file__), "..", "..", "models", "yolo_vehicle_v10m.pt")
-    YOLO_PLATE_MODEL: str = os.path.join(os.path.dirname(__file__), "..", "..", "models", "yolo_plate_v10n.pt")
-    YOLO_OCR_MODEL: str = os.path.join(os.path.dirname(__file__), "..", "..", "models", "yolo_ocr_chars_v8n.pt")
-    YOLO_TRAFFIC_LIGHT_MODEL: str = os.path.join(os.path.dirname(__file__), "..", "..", "models", "yolo_trafficlight_v10n.pt")
+    # Base paths (without extension) - sẽ auto-detect .engine/.onnx/.pt
+    MODELS_DIR: str = os.path.join(os.path.dirname(__file__), "..", "..", "models")
+    YOLO_VEHICLE_MODEL: str = os.path.join(MODELS_DIR, "vehicle", "v10m", "yolo_vehicle_v10m")
+    YOLO_PLATE_MODEL: str = os.path.join(MODELS_DIR, "license_plate", "yolo_plate_v10n")
+    YOLO_OCR_MODEL: str = os.path.join(MODELS_DIR, "ocr", "yolo_ocr_chars_v8n")
+    YOLO_TRAFFIC_LIGHT_MODEL: str = os.path.join(MODELS_DIR, "traffic_light", "yolo_trafficlight_v10n")
     
     # ============================================
     # ⚙️ Inference Configuration

@@ -55,6 +55,7 @@ except Exception:
     logger.warning("⚠️  TurboJPEG not available, falling back to cv2.imencode (slower)")
 
 from app.utils.roi_utils import draw_polygon_on_frame, point_in_polygon
+from app.utils.model_loader import load_yolo_model, get_model_info
 
 # Custom YOLO model class IDs (0-indexed, not COCO)
 VEHICLE_IDS = {0, 1, 2, 3}  # bus, car, motorbike, truck
@@ -160,13 +161,21 @@ class BinaryAnnotStream:
                 )
             logger.warning("⚠️  CUDA not available, falling back to CPU mode")
 
-        # CUDA optimizations
+        # CUDA optimizations cho RTX 3050 4GB
         if torch and self.device.startswith("cuda"):
             torch.backends.cudnn.benchmark = True
             try:
                 torch.backends.cuda.matmul.allow_tf32 = True
                 torch.backends.cudnn.allow_tf32 = True
-                logger.info("✅ CUDA optimizations enabled")
+                # Tối ưu memory allocation cho 4GB VRAM
+                torch.cuda.empty_cache()
+                # Set memory fraction để tránh OOM (reserve 20% cho hệ thống)
+                if hasattr(torch.cuda, "set_per_process_memory_fraction"):
+                    try:
+                        torch.cuda.set_per_process_memory_fraction(0.8, device=0)
+                    except Exception:
+                        pass  # Ignore if not supported
+                logger.info("✅ CUDA optimizations enabled (RTX 3050 4GB optimized)")
             except Exception as e:
                 logger.warning(f"⚠️  CUDA optimization failed: {e}")
         
@@ -323,57 +332,20 @@ class BinaryAnnotStream:
         
         logger.info(f"📊 Video: {self.w}x{self.h} @ {self.fps_cap} FPS, {self.total} frames")
         
-        # Model path auto-detection
-        possible_paths = [
-            self.model_path,
-            os.path.join("traffic-server", self.model_path),
-            os.path.join("models", os.path.basename(self.model_path))
-        ]
+        # Unified model loader: auto-detect .engine > .onnx > .pt
+        model_info = get_model_info(self.model_path)
         
-        actual_path = None
-        for path in possible_paths:
-            if os.path.exists(path):
-                actual_path = path
-                break
-        
-        if actual_path is None:
-            # Fallback: scan models directory and pick a reasonable default
-            search_dirs = [
-                "models",
-                os.path.join("traffic-server", "models")
-            ]
-            found_files = []
-            for d in search_dirs:
-                try:
-                    if os.path.exists(d):
-                        for name in os.listdir(d):
-                            if name.lower().endswith(".pt"):
-                                found_files.append(os.path.join(d, name))
-                except Exception:
-                    continue
-
-            # Selection priority
-            def score(path: str) -> int:
-                name = os.path.basename(path).lower()
-                s = 0
-                if "vehicle" in name:
-                    s += 100
-                if any(k in name for k in ["v8n", "v10n", "yolov8n", "yolo_vehicle_v10n"]):
-                    s += 50  # prefer nano
-                if any(k in name for k in ["v8m", "v10m", "m.pt"]):
-                    s += 10  # medium as fallback
-                return s
-
-            if found_files:
-                found_files.sort(key=score, reverse=True)
-                actual_path = found_files[0]
-                logger.warning(
-                    f"⚠️  Model '{self.model_path}' not found. Using fallback: {actual_path}"
-                )
+        if not model_info["found"]:
+            # Fallback: try to find any vehicle model
+            from app.core.config import settings
+            fallback_info = get_model_info(settings.YOLO_VEHICLE_MODEL)
+            if fallback_info["found"]:
+                model_info = fallback_info
+                logger.warning(f"⚠️  Model '{self.model_path}' not found. Using fallback: {fallback_info['path']}")
             else:
-                raise RuntimeError(
-                    f"❌ Model not found. Tried: {possible_paths} and no *.pt found in {search_dirs}"
-                )
+                raise RuntimeError(f"❌ Model not found: {self.model_path}")
+        
+        actual_path = model_info["path"]
         
         # Load YOLO with global cache
         global GLOBAL_YOLO_MODEL, GLOBAL_YOLO_DEVICE, GLOBAL_YOLO_PATH
@@ -406,33 +378,25 @@ class BinaryAnnotStream:
                 globals()["GLOBAL_YOLO_PATH"] = None
                 globals()["GLOBAL_YOLO_DEVICE"] = None
 
-            logger.info(f"⚙️  Loading YOLO from: {actual_path}")
-            self.model = YOLO(actual_path)
-            self.model.to(self.device)
+            logger.info(f"⚙️  Loading YOLO ({model_info['type']}): {actual_path} ({model_info['size_mb']}MB)")
+            self.model = load_yolo_model(
+                actual_path,
+                device=self.device,
+                imgsz=self.imgsz,
+                half=True,
+                verbose=False
+            )
+            
             if torch and self.device.startswith("cuda"):
                 try:
                     dev_index = torch.cuda.current_device()
                     props = torch.cuda.get_device_properties(dev_index)
                     vram_gb = props.total_memory / (1024 ** 3)
-                    logger.info("🧠 CUDA device: %s (%.1f GB VRAM)", props.name, vram_gb)
+                    allocated_gb = torch.cuda.memory_allocated(dev_index) / (1024 ** 3)
+                    logger.info("🧠 CUDA device: %s (%.1f GB VRAM, %.2f GB allocated)", 
+                              props.name, vram_gb, allocated_gb)
                 except Exception as exc:
                     logger.debug("Unable to query CUDA device properties: %s", exc)
-
-        # Performance optimizations
-        try:
-            self.model.fuse()
-        except:
-            pass
-        
-        # Enable FP16 for GPU (2x faster)
-        if self.device == "cuda":
-            try:
-                # Some models may already be half; call guardedly
-                if hasattr(self.model, "half"):
-                    self.model.half()
-                logger.info("✅ FP16 enabled")
-            except Exception as e:
-                logger.warning(f"⚠️  FP16 failed: {e}")
 
         # Update global cache
         GLOBAL_YOLO_MODEL = self.model
@@ -736,8 +700,12 @@ class BinaryAnnotStream:
             tracks = []
             if detect_due and self.enable_yolo:
                 detect_start = time.perf_counter()
-                # YOLO detect (keyframe)
+                # YOLO detect (keyframe) - tối ưu cho RTX 3050
                 try:
+                    # Clear cache trước inference để tránh memory leak
+                    if torch and torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    
                     results = self.model.predict(
                         frame,
                         conf=self.conf,
@@ -745,7 +713,9 @@ class BinaryAnnotStream:
                         verbose=False,
                         classes=list(VEHICLE_IDS),
                         device=self.device,
-                        half=True
+                        half=True,  # FP16 bắt buộc cho 4GB VRAM
+                        agnostic_nms=False,  # Disable để tăng tốc
+                        max_det=300,  # Giới hạn detections để tăng tốc
                     )[0]
                 except Exception as e:
                     if self.stop_ev.is_set() or self.model is None:
