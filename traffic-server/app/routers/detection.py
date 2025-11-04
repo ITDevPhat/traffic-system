@@ -1,4 +1,5 @@
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form, Query
+from typing import Optional
 from sqlmodel import Session
 from app.core.database import get_session
 from app.services.detection_service import process_video
@@ -9,7 +10,17 @@ router = APIRouter()
 @router.post("/video")
 async def detect_violation(
     file: UploadFile = File(..., description="Video file để phát hiện vi phạm"),
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
+    # Module configuration flags
+    module_enable_roi: bool = Form(True, description="Enable ROI module"),
+    module_enable_roi_drawing: bool = Form(True, description="Enable ROI drawing"),
+    module_enable_roi_json: bool = Form(False, description="Enable ROI from JSON"),
+    roi_json_path: Optional[str] = Form(None, description="Path to ROI JSON file"),
+    module_enable_vehicle_yolo: bool = Form(True, description="Enable vehicle YOLO detection"),
+    module_enable_bytetrack: bool = Form(True, description="Enable ByteTrack tracking"),
+    module_enable_draw_bbox: bool = Form(True, description="Enable bounding box drawing"),
+    # Inference settings
+    inference_confidence_vehicle: Optional[float] = Form(None, description="Vehicle detection confidence threshold"),
 ):
     """
     Upload video và phát hiện vi phạm giao thông.
@@ -32,7 +43,19 @@ async def detect_violation(
         )
     
     try:
-        result = await process_video(file, session)
+        # Build module configuration from form data
+        module_config = {
+            "enable_roi": module_enable_roi,
+            "enable_roi_drawing": module_enable_roi_drawing,
+            "enable_roi_json": module_enable_roi_json,
+            "roi_json_path": roi_json_path if module_enable_roi_json else None,
+            "enable_vehicle_yolo": module_enable_vehicle_yolo,
+            "enable_bytetrack": module_enable_bytetrack,
+            "enable_draw_bbox": module_enable_draw_bbox,
+            "inference_confidence_vehicle": inference_confidence_vehicle,
+        }
+        
+        result = await process_video(file, session, module_config=module_config)
         return {
             "status": "success",
             "message": "Video đã được xử lý thành công",

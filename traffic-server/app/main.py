@@ -65,6 +65,33 @@ app.add_middleware(
 # Mount static files để serve ảnh và video outputs
 app.mount("/static", StaticFiles(directory=settings.STATIC_DIR), name="static")
 
+# Mount videos directory để serve video files
+# FastAPI chạy từ traffic-server/, videos nằm ở traffic-server/videos/
+from pathlib import Path
+
+# Try multiple possible video directory paths (relative to traffic-server/)
+possible_video_dirs = [
+    Path(__file__).parent.parent / "videos",  # traffic-server/app/main.py -> traffic-server/videos/
+    Path("videos"),  # Relative to current working directory
+    Path("traffic-server/videos"),  # If running from parent directory
+]
+
+videos_dir = None
+for video_dir in possible_video_dirs:
+    if video_dir.exists() and video_dir.is_dir():
+        videos_dir = str(video_dir.resolve())
+        logger.info(f"📹 Found videos directory: {videos_dir}")
+        break
+
+if videos_dir:
+    try:
+        app.mount("/videos", StaticFiles(directory=videos_dir), name="videos")
+        logger.info(f"✅ Mounted /videos endpoint to {videos_dir}")
+    except Exception as e:
+        logger.error(f"❌ Failed to mount /videos: {e}")
+else:
+    logger.warning("⚠️ Videos directory not found, /videos endpoint will not work")
+
 # Register routers
 app.include_router(detection.router, prefix=f"{settings.API_V1_PREFIX}/detection", tags=["Detection"])
 app.include_router(violations.router, prefix=f"{settings.API_V1_PREFIX}/violations", tags=["Violations"])

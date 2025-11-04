@@ -99,7 +99,9 @@ class BinaryAnnotStream:
         veh_detect_hz: int = 25,
         enable_yolo: bool = True,
         enable_tracking: bool = True,
-        enable_bbox_drawing: bool = True
+        enable_bbox_drawing: bool = True,
+        enable_roi: bool = True,
+        enable_roi_drawing: bool = True
     ):
         """
         Args:
@@ -113,6 +115,8 @@ class BinaryAnnotStream:
             enable_yolo: Enable YOLO detection
             enable_tracking: Enable ByteTrack tracking
             enable_bbox_drawing: Enable bbox drawing on frames
+            enable_roi: Enable ROI module (for future use)
+            enable_roi_drawing: Enable ROI drawing on frames (for future use)
         """
         self.source = int(source) if source.isdigit() else source
         self.conf = float(conf)
@@ -124,6 +128,8 @@ class BinaryAnnotStream:
         self.enable_yolo = bool(enable_yolo)
         self.enable_tracking = bool(enable_tracking)
         self.enable_bbox_drawing = bool(enable_bbox_drawing)
+        self.enable_roi = bool(enable_roi)
+        self.enable_roi_drawing = bool(enable_roi_drawing)
         
         # Device setup
         self.device = "cuda" if (torch and torch.cuda.is_available()) else "cpu"
@@ -196,12 +202,83 @@ class BinaryAnnotStream:
     
     def _open(self):
         """Open video source and load YOLO model"""
-        # Open video
-        logger.info(f"📹 Opening source: {self.source}")
-        self.cap = cv2.VideoCapture(self.source)
+        # Resolve video path - try multiple possible locations
+        source_str = str(self.source) if not isinstance(self.source, int) else str(self.source)
         
-        if not self.cap.isOpened():
-            raise RuntimeError(f"❌ Cannot open source: {self.source}")
+        # If it's a webcam (integer), use it directly
+        if isinstance(self.source, int) or (isinstance(self.source, str) and source_str.isdigit()):
+            logger.info(f"📹 Opening webcam: {self.source}")
+            self.cap = cv2.VideoCapture(int(self.source))
+            if not self.cap.isOpened():
+                raise RuntimeError(f"❌ Cannot open webcam: {self.source}")
+        else:
+            # It's a video file path - try multiple locations
+            possible_paths = []
+            
+            # Add original path if it's absolute
+            if os.path.isabs(source_str):
+                possible_paths.append(source_str)
+            
+            # Add relative paths
+            if source_str.startswith('/'):
+                # Remove leading slash and try relative paths
+                source_str_clean = source_str.lstrip('/')
+                possible_paths.extend([
+                    source_str_clean,  # videos/video4.mp4
+                    os.path.join("traffic-server", source_str_clean),  # traffic-server/videos/video4.mp4
+                    os.path.join("videos", os.path.basename(source_str)),  # videos/video4.mp4
+                    os.path.join("traffic-server", "videos", os.path.basename(source_str)),  # traffic-server/videos/video4.mp4
+                ])
+            else:
+                # Already relative path
+                possible_paths.extend([
+                    source_str,  # videos/video4.mp4
+                    os.path.join("traffic-server", source_str),  # traffic-server/videos/video4.mp4
+                    os.path.join("videos", os.path.basename(source_str)),  # videos/video4.mp4
+                    os.path.join("traffic-server", "videos", os.path.basename(source_str)),  # traffic-server/videos/video4.mp4
+                ])
+            
+            # Try to find the video file
+            # Get current working directory and project root
+            cwd = os.getcwd()
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(os.path.dirname(script_dir))  # traffic-server/app/services -> traffic-server
+            
+            video_path = None
+            for path in possible_paths:
+                # Try from current working directory
+                abs_path_cwd = os.path.join(cwd, path) if not os.path.isabs(path) else path
+                if os.path.exists(abs_path_cwd) and os.path.isfile(abs_path_cwd):
+                    video_path = abs_path_cwd
+                    logger.info(f"✅ Found video at: {video_path}")
+                    break
+                
+                # Try from project root (traffic-server/)
+                abs_path_root = os.path.join(project_root, path) if not os.path.isabs(path) else path
+                if os.path.exists(abs_path_root) and os.path.isfile(abs_path_root):
+                    video_path = abs_path_root
+                    logger.info(f"✅ Found video at: {video_path}")
+                    break
+                
+                # Try absolute path
+                abs_path = os.path.abspath(path)
+                if os.path.exists(abs_path) and os.path.isfile(abs_path):
+                    video_path = abs_path
+                    logger.info(f"✅ Found video at: {video_path}")
+                    break
+            
+            if not video_path:
+                # Last attempt: try with original path
+                logger.info(f"📹 Opening source: {self.source}")
+                self.cap = cv2.VideoCapture(self.source)
+                if not self.cap.isOpened():
+                    logger.error(f"❌ Tried paths: {possible_paths}")
+                    raise RuntimeError(f"❌ Cannot open source: {self.source}. Tried: {possible_paths[:3]}")
+            else:
+                logger.info(f"📹 Opening video: {video_path}")
+                self.cap = cv2.VideoCapture(video_path)
+                if not self.cap.isOpened():
+                    raise RuntimeError(f"❌ Cannot open video file: {video_path}")
         
         # Get video info
         self.w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
@@ -466,7 +543,13 @@ class BinaryAnnotStream:
             frame_count += 1
             self.frame_idx = frame_count  # Update frame index
             now = time.perf_counter()
+            
+            # Skip frames if detect interval hasn't passed (for better FPS)
+            # Only run detection every detect_interval seconds
             detect_due = (self.last_detect_ts == 0.0) or ((now - self.last_detect_ts) >= self.detect_interval)
+            
+            # If not due for detection, skip YOLO and use previous tracks
+            # This allows pipeline to run at full FPS while detection runs at detect_hz
 
             tracks = []
             if detect_due and self.enable_yolo:

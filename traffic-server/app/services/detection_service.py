@@ -472,7 +472,7 @@ def save_evidence(frame: np.ndarray, track_info: Dict[str, Any], violation_info:
 # ============================================
 # 🎬 Main Video Processing Pipeline
 # ============================================
-async def process_video(file, session: Session) -> Dict[str, Any]:
+async def process_video(file, session: Session, module_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Full pipeline: YOLO + ByteTrack + OCR + Violation Detection.
     
@@ -517,21 +517,20 @@ async def process_video(file, session: Session) -> Dict[str, Any]:
     
     # 2. Create video job
     video_job = VideoJob(
-        filename=file.filename,
-        file_path=video_path,
-        status=JobStatus.PENDING,
-        created_at=datetime.now()
+        file_name=file.filename,
+        output_path=video_path,
+        status="pending",  # Match db.sql (TEXT, not enum)
+        upload_time=datetime.now()
     )
     session.add(video_job)
     session.commit()
     session.refresh(video_job)
     
-    logger.info(f"📊 Video job created: ID={video_job.id}")
+    logger.info(f"📊 Video job created: ID={video_job.video_job_id}")
     
     try:
         # Update status to PROCESSING
-        video_job.status = JobStatus.PROCESSING
-        video_job.started_at = datetime.now()
+        video_job.status = "processing"  # Match db.sql (TEXT, not enum)
         session.add(video_job)
         session.commit()
         
@@ -545,31 +544,35 @@ async def process_video(file, session: Session) -> Dict[str, Any]:
         frame_size = (frame_width, frame_height)
         
         video_job.fps = fps
-        video_job.total_frames = total_frames
         video_job.duration = duration
+        # Note: total_frames doesn't exist in DB schema
         session.add(video_job)
         session.commit()
         
         logger.info(f"📊 Video info: {total_frames} frames, {fps} FPS, {duration:.2f}s")
         
+        # Use module_config if provided, otherwise fallback to settings
+        if module_config is None:
+            module_config = {}
+        
         # 4. Initialize modular pipeline components
         roi_module = ROIModule(
             session=session,
-            video_job_id=video_job.id,
+            video_job_id=video_job.video_job_id,
             frame_size=frame_size,
-            enabled=settings.MODULE_ENABLE_ROI,
-            draw_enabled=settings.MODULE_ENABLE_ROI_DRAWING,
-            roi_json_path=settings.ROI_JSON_PATH if settings.MODULE_ENABLE_ROI_JSON else None,
+            enabled=module_config.get("enable_roi", settings.MODULE_ENABLE_ROI),
+            draw_enabled=module_config.get("enable_roi_drawing", settings.MODULE_ENABLE_ROI_DRAWING),
+            roi_json_path=module_config.get("roi_json_path") if module_config.get("enable_roi_json", settings.MODULE_ENABLE_ROI_JSON) else None,
         )
         vehicle_module = VehicleYOLOModule(
             models=models,
-            enabled=settings.MODULE_ENABLE_VEHICLE_YOLO,
-            use_tracking=settings.MODULE_ENABLE_BYTETRACK,
-            confidence=settings.INFERENCE_CONFIDENCE_VEHICLE,
+            enabled=module_config.get("enable_vehicle_yolo", settings.MODULE_ENABLE_VEHICLE_YOLO),
+            use_tracking=module_config.get("enable_bytetrack", settings.MODULE_ENABLE_BYTETRACK),
+            confidence=module_config.get("inference_confidence_vehicle", settings.INFERENCE_CONFIDENCE_VEHICLE),
             device=DEVICE,
         )
         bbox_module = BoundingBoxDrawerModule(
-            enabled=settings.MODULE_ENABLE_DRAW_BBOX,
+            enabled=module_config.get("enable_draw_bbox", settings.MODULE_ENABLE_DRAW_BBOX),
         )
 
         # Run setup hooks once before processing frames
@@ -677,31 +680,31 @@ async def process_video(file, session: Session) -> Dict[str, Any]:
                             vehicle_entry = Vehicle(
                                 plate=plate_text,
                                 type=cls_name,
-                                track_id=track_id,
+                                # Remove track_id, avg_confidence - not in db.sql schema
                                 first_seen=datetime.now(),
                                 last_seen=datetime.now(),
-                                avg_confidence=conf
+                                total_violations=1
                             )
                             session.add(vehicle_entry)
                             session.commit()
                             session.refresh(vehicle_entry)
                         else:
                             vehicle_entry.last_seen = datetime.now()
-                            vehicle_entry.total_detections += 1
+                            vehicle_entry.total_violations += 1  # Changed from total_detections to match db.sql
                             session.add(vehicle_entry)
                             session.commit()
                         
                         # Create violation
                         violation = Violation(
-                            video_job_id=video_job.id,
+                            video_job_id=video_job.video_job_id,
                             vehicle_id=vehicle_entry.vehicle_id,
-                            violation_type=violation_info["violation_type"],
+                            violation_type_code=violation_info.get("violation_type"),  # Changed to violation_type_code to match db.sql
                             plate=plate_text,
                             timestamp=datetime.now(),
                             confidence=conf,
                             evidence_img=evidence_path,
-                            frame_number=frame_idx,
-                            traffic_light_status=traffic_light_status
+                            frame=frame_idx,  # Changed from frame_number to frame to match db.sql
+                            roi_type=None  # Can be set based on ROI detection
                         )
                         session.add(violation)
                         session.commit()
@@ -725,16 +728,16 @@ async def process_video(file, session: Session) -> Dict[str, Any]:
         cap.release()
         
         # 7. Update job status
-        video_job.status = JobStatus.COMPLETED
-        video_job.completed_at = datetime.now()
-        video_job.violations_count = violations_count
+        video_job.status = "done"  # Changed from JobStatus.COMPLETED to match db.sql
+        video_job.processed_at = datetime.now()
+        # Note: violations_count doesn't exist in DB schema, stored separately in violations table
         session.add(video_job)
         session.commit()
         
         logger.info(f"✅ Processing completed: {violations_count} violations detected")
         
         return {
-            "video_job_id": video_job.id,
+            "video_job_id": video_job.video_job_id,
             "filename": file.filename,
             "total_frames": total_frames,
             "fps": fps,
@@ -748,9 +751,9 @@ async def process_video(file, session: Session) -> Dict[str, Any]:
         logger.error(f"❌ Error processing video: {e}", exc_info=True)
         
         # Update job status to FAILED
-        video_job.status = JobStatus.FAILED
-        video_job.error_message = str(e)
-        video_job.completed_at = datetime.now()
+        video_job.status = "failed"  # Match db.sql (TEXT, not enum)
+        video_job.processed_at = datetime.now()
+        video_job.notes = f"Error: {str(e)}"  # Use notes field instead of error_message
         session.add(video_job)
         session.commit()
         

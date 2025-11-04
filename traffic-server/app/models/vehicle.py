@@ -1,59 +1,47 @@
 """
 Model Vehicle - Thông tin phương tiện được phát hiện.
+Schema theo db.sql v1.6
 
 Lưu trữ thông tin về từng phương tiện bao gồm:
-- Biển số xe
+- Biển số xe (UNIQUE)
 - Loại phương tiện (xe máy, ô tô, xe tải...)
+- Màu sắc, thương hiệu
+- Tổng số vi phạm
 - Thời gian phát hiện lần đầu và cuối cùng
-- Track ID (từ ByteTrack nếu có)
 """
 
 from datetime import datetime
 from typing import Optional
-from sqlmodel import Field, SQLModel, Relationship
+from sqlmodel import Field, SQLModel
 
 
 class Vehicle(SQLModel, table=True):
     """
-    Bảng lưu thông tin phương tiện.
+    Bảng lưu thông tin phương tiện theo db.sql v1.6.
     
-    Mỗi vehicle được identify bởi biển số (plate).
+    Mỗi vehicle được identify bởi biển số (plate) - UNIQUE.
     Có thể có nhiều violations từ cùng 1 vehicle.
     """
     __tablename__ = "vehicles"
     
     vehicle_id: Optional[int] = Field(default=None, primary_key=True)
-    
-    # Thông tin nhận dạng
-    plate: str = Field(index=True)  # Biển số xe (có thể "UNKNOWN")
-    type: str = Field(default="unknown")  # car, motorbike, truck, bus
-    
-    # Tracking info
-    track_id: Optional[int] = Field(default=None)  # ByteTrack ID nếu có
-    
-    # Timestamps
-    first_seen: datetime = Field(default_factory=datetime.now)
-    last_seen: datetime = Field(default_factory=datetime.now)
-    
-    # Confidence
-    avg_confidence: float = Field(default=0.0)  # Độ tin cậy trung bình
-    
-    # Metadata
-    total_detections: int = Field(default=1)  # Số lần được phát hiện
-    notes: Optional[str] = Field(default=None)  # Ghi chú
-    
-    # Relationship: 1 vehicle → nhiều violations
-    # violations: list["Violation"] = Relationship(back_populates="vehicle")
+    plate: Optional[str] = Field(default=None, unique=True, max_length=20)  # UNIQUE in db.sql
+    type: Optional[str] = Field(default=None, max_length=20)  # car, motorbike, truck, bus
+    color: Optional[str] = Field(default=None, max_length=50)
+    brand: Optional[str] = Field(default=None, max_length=100)
+    total_violations: int = Field(default=0)  # Changed from total_detections
+    first_seen: Optional[datetime] = Field(default=None)
+    last_seen: Optional[datetime] = Field(default=None)
 
 
 class VehicleCreate(SQLModel):
     """
     Schema để tạo vehicle mới.
     """
-    plate: str
-    type: str = "unknown"
-    track_id: Optional[int] = None
-    avg_confidence: float = 0.0
+    plate: Optional[str] = None
+    type: Optional[str] = None
+    color: Optional[str] = None
+    brand: Optional[str] = None
 
 
 class VehicleRead(SQLModel):
@@ -61,12 +49,10 @@ class VehicleRead(SQLModel):
     Schema để đọc thông tin vehicle.
     """
     vehicle_id: int
-    plate: str
-    type: str
-    track_id: Optional[int]
-    first_seen: datetime
-    last_seen: datetime
-    avg_confidence: float
-    total_detections: int
-    notes: Optional[str]
-
+    plate: Optional[str]
+    type: Optional[str]
+    color: Optional[str]
+    brand: Optional[str]
+    total_violations: int
+    first_seen: Optional[datetime]
+    last_seen: Optional[datetime]

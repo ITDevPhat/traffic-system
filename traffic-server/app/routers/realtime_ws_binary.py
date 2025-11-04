@@ -36,7 +36,9 @@ async def ws_realtime_binary(
     veh_detect_hz: int = Query(25, description="Vehicle detect frequency for keyframes (Hz)"),
     enable_yolo: bool = Query(True, description="Enable YOLO detection"),
     enable_tracking: bool = Query(True, description="Enable ByteTrack tracking"),
-    enable_bbox_drawing: bool = Query(True, description="Enable bbox drawing")
+    enable_bbox_drawing: bool = Query(True, description="Enable bbox drawing"),
+    enable_roi: bool = Query(True, description="Enable ROI module"),
+    enable_roi_drawing: bool = Query(True, description="Enable ROI drawing")
 ):
     """
     Binary WebSocket - 30 FPS optimized
@@ -80,7 +82,9 @@ async def ws_realtime_binary(
             veh_detect_hz=veh_detect_hz,
             enable_yolo=enable_yolo,
             enable_tracking=enable_tracking,
-            enable_bbox_drawing=enable_bbox_drawing
+            enable_bbox_drawing=enable_bbox_drawing,
+            enable_roi=enable_roi,
+            enable_roi_drawing=enable_roi_drawing
         )
         
         # Start all threads
@@ -115,8 +119,14 @@ async def ws_realtime_binary(
                     await websocket.send_bytes(jpeg_bytes)
             
             async def receive_commands():
-                while True:
+                disconnected = False
+                while not disconnected:
                     try:
+                        # Check if websocket is still connected before receiving
+                        if websocket.client_state.name == 'DISCONNECTED':
+                            disconnected = True
+                            break
+                        
                         # Use receive() to get any message type
                         message = await asyncio.wait_for(websocket.receive(), timeout=0.1)
                         
@@ -133,7 +143,15 @@ async def ws_realtime_binary(
                     except asyncio.TimeoutError:
                         # Normal timeout, continue loop
                         continue
+                    except WebSocketDisconnect:
+                        disconnected = True
+                        break
                     except Exception as e:
+                        # Check if it's a disconnect-related error
+                        error_str = str(e)
+                        if "disconnect" in error_str.lower() or "Cannot call" in error_str:
+                            disconnected = True
+                            break
                         logger.warning(f"Command receive error: {e}")
                         await asyncio.sleep(0.01)
             

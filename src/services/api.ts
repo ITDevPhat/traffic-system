@@ -89,9 +89,37 @@ export async function fetchVideoDetail(videoId: number) {
 /**
  * Upload video để phát hiện vi phạm
  */
-export async function uploadVideoForDetection(file: File) {
+export async function uploadVideoForDetection(
+  file: File,
+  moduleConfig?: {
+    enableRoi?: boolean;
+    enableRoiDrawing?: boolean;
+    enableRoiJson?: boolean;
+    roiJsonPath?: string;
+    enableVehicleYolo?: boolean;
+    enableByteTrack?: boolean;
+    enableDrawBbox?: boolean;
+    inferenceConfidenceVehicle?: number;
+  }
+) {
   const formData = new FormData();
   formData.append('file', file);
+  
+  // Add module configuration flags
+  if (moduleConfig) {
+    formData.append('module_enable_roi', String(moduleConfig.enableRoi ?? true));
+    formData.append('module_enable_roi_drawing', String(moduleConfig.enableRoiDrawing ?? true));
+    formData.append('module_enable_roi_json', String(moduleConfig.enableRoiJson ?? false));
+    if (moduleConfig.roiJsonPath) {
+      formData.append('roi_json_path', moduleConfig.roiJsonPath);
+    }
+    formData.append('module_enable_vehicle_yolo', String(moduleConfig.enableVehicleYolo ?? true));
+    formData.append('module_enable_bytetrack', String(moduleConfig.enableByteTrack ?? true));
+    formData.append('module_enable_draw_bbox', String(moduleConfig.enableDrawBbox ?? true));
+    if (moduleConfig.inferenceConfidenceVehicle !== undefined) {
+      formData.append('inference_confidence_vehicle', String(moduleConfig.inferenceConfidenceVehicle));
+    }
+  }
   
   const url = `${API_URL}${API_PREFIX}/detection/video`;
   const res = await fetch(url, {

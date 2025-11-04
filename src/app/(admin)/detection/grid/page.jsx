@@ -1,11 +1,17 @@
 'use client';
-import React from 'react';
-import { Button, Card } from 'react-bootstrap';
+import React, { useState } from 'react';
+import { Button, Card, Tabs, Tab } from 'react-bootstrap';
 import PageTitle from '@/components/PageTitle';
 import { DetectionGrid } from '@/components/DetectionGrid';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
-export default function DetectionPage() {
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
+export default function DetectionGridPage() {
+  const router = useRouter();
+  const [activeTab, setActiveTab] = useState('grid');
+
   return (
     <>
       <PageTitle title="Traffic Violation Detection Dashboard" />
