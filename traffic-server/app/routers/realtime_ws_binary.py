@@ -38,7 +38,8 @@ async def ws_realtime_binary(
     enable_tracking: bool = Query(True, description="Enable ByteTrack tracking"),
     enable_bbox_drawing: bool = Query(True, description="Enable bbox drawing"),
     enable_roi: bool = Query(True, description="Enable ROI module"),
-    enable_roi_drawing: bool = Query(True, description="Enable ROI drawing")
+    enable_roi_drawing: bool = Query(True, description="Enable ROI drawing"),
+    force_gpu: bool = Query(True, description="Require CUDA GPU (disable for CPU fallback)")
 ):
     """
     Binary WebSocket - 30 FPS optimized
@@ -62,7 +63,7 @@ async def ws_realtime_binary(
     """
     logger.info(f"🔔 Binary WS connection from: {websocket.client}")
     logger.info(f"📹 Source: {source}, Conf: {conf}, FPS: {fps}, ImgSize: {imgsz}, "
-               f"Quality: {quality}, EncodeWidth: {encode_width}")
+               f"Quality: {quality}, EncodeWidth: {encode_width}, ForceGPU: {force_gpu}")
     
     await websocket.accept()
     logger.info("✅ WebSocket accepted")
@@ -84,7 +85,8 @@ async def ws_realtime_binary(
             enable_tracking=enable_tracking,
             enable_bbox_drawing=enable_bbox_drawing,
             enable_roi=enable_roi,
-            enable_roi_drawing=enable_roi_drawing
+            enable_roi_drawing=enable_roi_drawing,
+            force_gpu=force_gpu
         )
         
         # Start all threads
@@ -139,7 +141,34 @@ async def ws_realtime_binary(
                                 enabled = cmd.get('enabled', True)
                                 stream.enable_bbox_drawing = enabled
                                 logger.info(f"🎨 BBox drawing toggled to: {enabled}")
-                        
+                            elif cmd.get('command') == 'set_roi':
+                                rois_payload = cmd.get('rois')
+                                if isinstance(rois_payload, list):
+                                    rois_payload = {
+                                        f"roi_{idx + 1}": item for idx, item in enumerate(rois_payload)
+                                    }
+                                if not isinstance(rois_payload, dict):
+                                    await websocket.send_text(json.dumps({
+                                        "type": "roi_error",
+                                        "message": "Invalid ROI payload"
+                                    }))
+                                    continue
+                                count = 0
+                                if stream:
+                                    count = stream.set_roi_polygons(rois_payload)
+                                logger.info(f"🗺️  ROI polygons updated ({count})")
+                                await websocket.send_text(json.dumps({
+                                    "type": "roi_ack",
+                                    "count": count
+                                }))
+                            elif cmd.get('command') == 'clear_roi':
+                                if stream:
+                                    stream.clear_roi_polygons()
+                                logger.info("🧹 ROI polygons cleared via command")
+                                await websocket.send_text(json.dumps({
+                                    "type": "roi_cleared"
+                                }))
+
                     except asyncio.TimeoutError:
                         # Normal timeout, continue loop
                         continue
