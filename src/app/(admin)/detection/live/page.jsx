@@ -1,5 +1,5 @@
 'use client';
-import React, { useRef, useEffect, useState, Suspense } from 'react';
+import React, { useRef, useEffect, useState, Suspense, useMemo, useCallback } from 'react';
 import { Button, Form, Row, Col, Card, Badge } from 'react-bootstrap';
 import { toast } from 'react-toastify';
 import { useSearchParams } from 'next/navigation';
@@ -7,16 +7,131 @@ import PageTitle from '@/components/PageTitle';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
+const ROI_COLORS = [
+  { stroke: '#34d399', fill: 'rgba(52, 211, 153, 0.2)' },
+  { stroke: '#60a5fa', fill: 'rgba(96, 165, 250, 0.2)' },
+  { stroke: '#fbbf24', fill: 'rgba(251, 191, 36, 0.2)' },
+  { stroke: '#f472b6', fill: 'rgba(244, 114, 182, 0.2)' },
+  { stroke: '#f87171', fill: 'rgba(248, 113, 113, 0.2)' },
+  { stroke: '#a855f7', fill: 'rgba(168, 85, 247, 0.2)' },
+];
+
+const RoiOverlay = React.forwardRef(({ frameDimensions, rois, draftPoints, isDrawing, onPointerDown }, ref) => {
+  const width = frameDimensions?.width || 1;
+  const height = frameDimensions?.height || 1;
+  const hasFrame = width > 0 && height > 0;
+
+  const toSvgPoints = (points = []) => {
+    if (!hasFrame) return '';
+    return points
+      .map((pt) => {
+        const nx = Math.min(Math.max(pt?.x ?? 0, 0), 1);
+        const ny = Math.min(Math.max(pt?.y ?? 0, 0), 1);
+        return `${nx * width},${ny * height}`;
+      })
+      .join(' ');
+  };
+
+  const renderLabel = (roi) => {
+    if (!roi?.points || roi.points.length === 0 || !hasFrame) return null;
+    const sum = roi.points.reduce(
+      (acc, pt) => {
+        const nx = Math.min(Math.max(pt?.x ?? 0, 0), 1);
+        const ny = Math.min(Math.max(pt?.y ?? 0, 0), 1);
+        return { x: acc.x + nx, y: acc.y + ny };
+      },
+      { x: 0, y: 0 }
+    );
+    const cx = (sum.x / roi.points.length) * width;
+    const cy = (sum.y / roi.points.length) * height;
+
+    return (
+      <text
+        key={`${roi.id}-label`}
+        x={cx}
+        y={cy}
+        fill="#111827"
+        fontSize={14}
+        fontWeight={600}
+        textAnchor="middle"
+        alignmentBaseline="middle"
+        style={{ paintOrder: 'stroke', stroke: 'rgba(255,255,255,0.85)', strokeWidth: 3 }}
+      >
+        {roi.label || 'ROI'}
+      </text>
+    );
+  };
+
+  return (
+    <svg
+      ref={ref}
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      onPointerDown={isDrawing ? onPointerDown : undefined}
+      style={{
+        position: 'absolute',
+        inset: 0,
+        zIndex: 6,
+        pointerEvents: isDrawing ? 'auto' : 'none',
+        cursor: isDrawing ? 'crosshair' : 'default'
+      }}
+    >
+      {rois.map((roi) => (
+        <React.Fragment key={roi.id}>
+          <polygon
+            points={toSvgPoints(roi.points)}
+            fill={roi.color?.fill || 'rgba(59, 130, 246, 0.2)'}
+            stroke={roi.color?.stroke || '#2563eb'}
+            strokeWidth={2}
+            strokeLinejoin="round"
+          />
+          {renderLabel(roi)}
+        </React.Fragment>
+      ))}
+      {draftPoints.length > 0 && (
+        <>
+          <polyline
+            points={toSvgPoints(draftPoints)}
+            fill="none"
+            stroke="#f97316"
+            strokeWidth={2}
+            strokeDasharray="6 4"
+          />
+          {draftPoints.map((pt, idx) => {
+            const nx = Math.min(Math.max(pt?.x ?? 0, 0), 1);
+            const ny = Math.min(Math.max(pt?.y ?? 0, 0), 1);
+            return (
+              <circle
+                key={`draft-${idx}`}
+                cx={nx * width}
+                cy={ny * height}
+                r={5}
+                fill="#f97316"
+                stroke="#ffffff"
+                strokeWidth={2}
+              />
+            );
+          })}
+        </>
+      )}
+    </svg>
+  );
+});
+
+RoiOverlay.displayName = 'RoiOverlay';
+
 function DetectionPageBinaryContent() {
   const searchParams = useSearchParams();
   const canvasRef = useRef(null);
   const wsRef = useRef(null);
   const fileInputRef = useRef(null);
   const isMountedRef = useRef(true);
+  const overlayRef = useRef(null);
+  const lastRoiSignatureRef = useRef('');
   
   // Safe toast wrapper - only show toast if component is mounted
   // Use try-catch to prevent errors if toast is unavailable
-  const safeToast = {
+  const safeToast = useMemo(() => ({
     success: (msg, opts) => {
       if (!isMountedRef.current) return;
       try {
@@ -67,7 +182,7 @@ function DetectionPageBinaryContent() {
         console.warn('Toast dismiss error:', e);
       }
     },
-  };
+  }), []);
   
   // Rendering pipeline refs
   const lastBufferRef = useRef(null);
@@ -98,11 +213,12 @@ function DetectionPageBinaryContent() {
   // Optimized settings defaults
   const [settings, setSettings] = useState({
     conf: 0.35,
-    target_fps: 30,
+    target_fps: 45,
     jpeg_quality: 55,
     inference_size: 480,
     encode_width: 960,
-    veh_detect_hz: 25
+    veh_detect_hz: 25,
+    force_gpu: true
   });
   
   const [frameDimensions, setFrameDimensions] = useState({ width: 1280, height: 720 });
@@ -116,6 +232,12 @@ function DetectionPageBinaryContent() {
     roi: true,
     roiDrawing: true
   });
+
+  const [roiPolygons, setRoiPolygons] = useState([]);
+  const [isDrawingRoi, setIsDrawingRoi] = useState(false);
+  const [draftRoiPoints, setDraftRoiPoints] = useState([]);
+  const [draftRoiName, setDraftRoiName] = useState('');
+  const [activeRoiId, setActiveRoiId] = useState(null);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -156,34 +278,35 @@ function DetectionPageBinaryContent() {
       
       safeToast.info(`📹 Video loaded: ${videoPath.split('/').pop()}`, { autoClose: 2000 });
     }
-  }, [searchParams, videoLoaded]);
+  }, [searchParams, videoLoaded, safeToast]);
 
   // Auto-load models on mount (non-blocking) - ưu tiên nếu có video param
   useEffect(() => {
     const videoParam = searchParams?.get('video');
-    
+
     // If video param exists, load models immediately (no delay)
     // Otherwise, small delay for better UX
     const delay = videoParam ? 100 : 500;
-    
+
     if (!modelLoaded && !isLoadingModels) {
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         if (videoParam) {
           console.log('🚀 Auto-loading models (video detected from URL)...');
           safeToast.info('Loading AI models...', { autoClose: 3000 });
         }
         loadModels();
       }, delay);
+      return () => clearTimeout(timer);
     }
-  }, [searchParams]); // Run when searchParams change
+  }, [searchParams, modelLoaded, isLoadingModels, loadModels, safeToast]);
 
   // Warmup phase: 5 seconds before starting detection
   const warmupIntervalRef = useRef(null);
   
-  const startWarmup = () => {
+  const startWarmup = useCallback(() => {
     setIsWarmingUp(true);
     setWarmupProgress(0);
-    
+
     const warmupDuration = 5000; // 5 seconds
     const updateInterval = 50; // Update every 50ms for smooth progress (100 updates total)
     const progressStep = (100 / warmupDuration) * updateInterval;
@@ -212,7 +335,7 @@ function DetectionPageBinaryContent() {
         setWarmupProgress(currentProgress);
       }
     }, updateInterval);
-  };
+  }, [connectWebSocket, safeToast, source]);
   
   // Cleanup warmup on unmount
   useEffect(() => {
@@ -237,7 +360,7 @@ function DetectionPageBinaryContent() {
       
       return () => clearTimeout(timer);
     }
-  }, [autoStart, videoLoaded, modelLoaded, detecting, isLoadingModels, isWarmingUp, source]);
+  }, [autoStart, videoLoaded, modelLoaded, detecting, isLoadingModels, isWarmingUp, source, safeToast, startWarmup]);
 
   // Start RAF render loop once (draw latest decoded frame to avoid stutter)
   useEffect(() => {
@@ -277,7 +400,7 @@ function DetectionPageBinaryContent() {
     return () => clearInterval(id);
   }, []);
 
-  const scheduleDecode = () => {
+  const scheduleDecode = useCallback(() => {
     if (decodingRef.current) return;
     const buf = lastBufferRef.current;
     if (!buf) return;
@@ -299,7 +422,7 @@ function DetectionPageBinaryContent() {
         // If a newer buffer arrived while decoding, process it now
         if (lastBufferRef.current) scheduleDecode();
       });
-  };
+  }, []);
 
   // Fetch available vehicle models for selection
   useEffect(() => {
@@ -321,7 +444,7 @@ function DetectionPageBinaryContent() {
     })();
   }, []);
 
-  const connectWebSocket = (src) => {
+  const connectWebSocket = useCallback((src) => {
     if (wsRef.current) {
       wsRef.current.close();
     }
@@ -341,6 +464,7 @@ function DetectionPageBinaryContent() {
     params.append('enable_bbox_drawing', modules.bboxDrawing);
     params.append('enable_roi', modules.roi);
     params.append('enable_roi_drawing', modules.roiDrawing);
+    params.append('force_gpu', settings.force_gpu);
 
     const wsUrl = `${API_URL.replace('http', 'ws')}/api/detection/realtime?${params.toString()}`;
     console.log('🔗 Connecting to:', wsUrl);
@@ -351,6 +475,7 @@ function DetectionPageBinaryContent() {
     ws.onopen = () => {
       if (!isMountedRef.current) return;
       console.log('✅ Binary WebSocket connected!');
+      lastRoiSignatureRef.current = '';
       setConnected(true);
       setExpectBinary(false);
       safeToast.success('Connected! Waiting for frames...');
@@ -361,6 +486,7 @@ function DetectionPageBinaryContent() {
       console.log('❌ WebSocket closed');
       setConnected(false);
       setDetecting(false);
+      lastRoiSignatureRef.current = '';
       safeToast.info('WebSocket disconnected');
     };
     
@@ -369,6 +495,7 @@ function DetectionPageBinaryContent() {
       console.error('❌ WebSocket error:', error);
       setConnected(false);
       setDetecting(false);
+      lastRoiSignatureRef.current = '';
       safeToast.error('WebSocket error! Check backend.');
     };
 
@@ -390,10 +517,44 @@ function DetectionPageBinaryContent() {
               setFrameDimensions({ width: newWidth, height: newHeight });
               const ctx = c.getContext('2d');
               if (ctx && ctx.imageSmoothingEnabled) ctx.imageSmoothingEnabled = false;
-              console.log(`📐 Canvas: ${newWidth}x${newHeight}`);
-              console.log('📦 Info:', pkt);
-          }
-        } else if (pkt.type === 'frame') {
+                console.log(`📐 Canvas: ${newWidth}x${newHeight}`);
+                console.log('📦 Info:', pkt);
+                if (pkt.rois && typeof pkt.rois === 'object') {
+                  const entries = Object.entries(pkt.rois);
+                  if (entries.length > 0) {
+                    const width = newWidth || frameDimensions.width || 1;
+                    const height = newHeight || frameDimensions.height || 1;
+                    const imported = entries
+                      .map(([name, raw], idx) => {
+                        const coords = Array.isArray(raw)
+                          ? raw
+                          : (raw?.coordinates || raw?.points || []);
+                        if (!Array.isArray(coords)) return null;
+                        const points = coords
+                          .map((pt) => {
+                            if (!Array.isArray(pt) || pt.length < 2) return null;
+                            return {
+                              x: clamp01(pt[0] / width),
+                              y: clamp01(pt[1] / height)
+                            };
+                          })
+                          .filter(Boolean);
+                        if (points.length < 3) return null;
+                        return {
+                          id: `roi-server-${idx}`,
+                          label: String(name),
+                          color: ROI_COLORS[idx % ROI_COLORS.length],
+                          points,
+                        };
+                      })
+                      .filter(Boolean);
+                    if (imported.length > 0) {
+                      setRoiPolygons((prev) => (prev.length > 0 ? prev : imported));
+                    }
+                  }
+                }
+            }
+          } else if (pkt.type === 'frame') {
             // Update FPS and frame index
             if (typeof pkt.fps === 'number') fpsRef.current = pkt.fps;
             if (typeof pkt.frame_idx === 'number') frameIdxRef.current = pkt.frame_idx;
@@ -412,6 +573,14 @@ function DetectionPageBinaryContent() {
           } else if (pkt.type === 'error') {
             toast.error(`Server Error: ${pkt.message}`);
             stopDetection();
+          } else if (pkt.type === 'roi_ack') {
+            const count = typeof pkt.count === 'number' ? pkt.count : 0;
+            safeToast.success(`ROI synced (${count})`, { autoClose: 1500 });
+          } else if (pkt.type === 'roi_cleared') {
+            lastRoiSignatureRef.current = '';
+            safeToast.info('ROI cleared on detector', { autoClose: 1500 });
+          } else if (pkt.type === 'roi_error') {
+            safeToast.error(pkt.message || 'ROI update failed');
           }
         } catch (e) {
           console.error('Failed to parse text message:', e);
@@ -429,12 +598,20 @@ function DetectionPageBinaryContent() {
     };
 
     wsRef.current = ws;
-  };
+  }, [
+    settings,
+    modules,
+    selectedModel,
+    safeToast,
+    frameDimensions.height,
+    frameDimensions.width,
+    scheduleDecode,
+  ]);
 
-  const loadModels = async () => {
+  const loadModels = useCallback(async () => {
     // Skip if already loaded
     if (modelLoaded || isLoadingModels) return;
-    
+
     setIsLoadingModels(true);
     
     // Longer timeout for model loading (GPU initialization can take time)
@@ -483,7 +660,7 @@ function DetectionPageBinaryContent() {
     } finally {
       setIsLoadingModels(false);
     }
-  };
+  }, [modelLoaded, isLoadingModels, searchParams]);
 
   const startDetection = async () => {
     // If models not loaded yet, try to load them first
@@ -531,6 +708,7 @@ function DetectionPageBinaryContent() {
     }
     setDetecting(false);
     setConnected(false);
+    lastRoiSignatureRef.current = '';
     toast.info('Detection stopped.');
   };
 
@@ -610,7 +788,7 @@ function DetectionPageBinaryContent() {
   const updateModule = (module, enabled) => {
     const newModules = { ...modules, [module]: enabled };
     setModules(newModules);
-    
+
     // If detecting and BBox toggle changed, send command to server
     if (detecting && module === 'bboxDrawing' && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       // Send command to toggle bbox drawing
@@ -626,9 +804,155 @@ function DetectionPageBinaryContent() {
     }
   };
 
+  const clamp01 = (value) => Math.min(Math.max(value ?? 0, 0), 1);
+
+  const startDrawingRoi = () => {
+    if (isDrawingRoi) {
+      safeToast.info('Finish the current ROI before starting a new one.');
+      return;
+    }
+    const id = `roi-${Date.now()}`;
+    setActiveRoiId(id);
+    setDraftRoiName(`ROI ${roiPolygons.length + 1}`);
+    setDraftRoiPoints([]);
+    setIsDrawingRoi(true);
+  };
+
+  const cancelRoiDrawing = () => {
+    setIsDrawingRoi(false);
+    setDraftRoiPoints([]);
+    setDraftRoiName('');
+    setActiveRoiId(null);
+  };
+
+  const undoLastRoiPoint = () => {
+    setDraftRoiPoints((prev) => prev.slice(0, -1));
+  };
+
+  const completeRoi = () => {
+    if (draftRoiPoints.length < 3) {
+      safeToast.error('ROI polygon needs at least 3 points.');
+      return;
+    }
+    const idx = roiPolygons.length;
+    const color = ROI_COLORS[idx % ROI_COLORS.length];
+    const sanitizedPoints = draftRoiPoints.map((pt) => ({
+      x: clamp01(pt?.x),
+      y: clamp01(pt?.y),
+    }));
+    const label = (draftRoiName || '').trim() || `ROI ${idx + 1}`;
+    const newRoi = {
+      id: activeRoiId || `roi-${Date.now()}`,
+      label,
+      color,
+      points: sanitizedPoints,
+    };
+    setRoiPolygons((prev) => [...prev, newRoi]);
+    cancelRoiDrawing();
+    safeToast.success(`Added ${label}`);
+  };
+
+  const removeRoi = (id) => {
+    setRoiPolygons((prev) => prev.filter((roi) => roi.id !== id));
+  };
+
+  const updateRoiLabel = (id, label) => {
+    setRoiPolygons((prev) => prev.map((roi) => (roi.id === id ? { ...roi, label } : roi)));
+  };
+
+  const handleRoiOverlayPointer = (event) => {
+    if (!isDrawingRoi) return;
+    const rect = overlayRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0 || rect.height === 0) return;
+    const nx = clamp01((event.clientX - rect.left) / rect.width);
+    const ny = clamp01((event.clientY - rect.top) / rect.height);
+    event.preventDefault();
+    event.stopPropagation();
+    setDraftRoiPoints((prev) => [...prev, { x: nx, y: ny }]);
+  };
+
+  const clearAllRois = (notify = true) => {
+    setRoiPolygons([]);
+    cancelRoiDrawing();
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      clearRoiOnServer(false);
+    }
+    lastRoiSignatureRef.current = '';
+    if (notify) {
+      safeToast.info('ROI list cleared.');
+    }
+  };
+
+  const roiPayload = useMemo(() => {
+    if (!roiPolygons || roiPolygons.length === 0) return {};
+    const width = frameDimensions.width || 1;
+    const height = frameDimensions.height || 1;
+    const payload = {};
+    roiPolygons.forEach((roi, idx) => {
+      if (!roi.points || roi.points.length < 3) return;
+      const key = (roi.label || '').trim() || `roi_${idx + 1}`;
+      payload[key] = roi.points.map((pt) => [
+        Math.round(clamp01(pt?.x) * width * 100) / 100,
+        Math.round(clamp01(pt?.y) * height * 100) / 100,
+      ]);
+    });
+    return payload;
+  }, [roiPolygons, frameDimensions.width, frameDimensions.height]);
+
+  const roiPayloadSignature = useMemo(() => JSON.stringify(roiPayload), [roiPayload]);
+
+  const sendRoisToServer = (notify = true) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      if (notify) safeToast.warning('Start detection to send ROI polygons.');
+      return false;
+    }
+    if (!roiPayload || Object.keys(roiPayload).length === 0) {
+      if (notify) safeToast.info('No ROI polygons to send.');
+      clearRoiOnServer(false);
+      return false;
+    }
+    wsRef.current.send(JSON.stringify({ command: 'set_roi', rois: roiPayload }));
+    lastRoiSignatureRef.current = roiPayloadSignature;
+    if (notify) {
+      const count = Object.keys(roiPayload).length;
+      safeToast.success(`Applied ${count} ROI polygon${count > 1 ? 's' : ''}`);
+    }
+    return true;
+  };
+
+  const clearRoiOnServer = useCallback((notify = true) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      if (notify) safeToast.warning('Detector not connected.');
+      return false;
+    }
+    wsRef.current.send(JSON.stringify({ command: 'clear_roi' }));
+    lastRoiSignatureRef.current = '';
+    if (notify) safeToast.info('ROI cleared on detector.');
+    return true;
+  }, [safeToast]);
+
+  useEffect(() => {
+    if (!connected) return;
+    if (!modules.roi) return;
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (isDrawingRoi) return;
+
+    if (!roiPayload || Object.keys(roiPayload).length === 0) {
+      if (lastRoiSignatureRef.current !== '') {
+        clearRoiOnServer(false);
+      }
+      return;
+    }
+
+    if (roiPayloadSignature === lastRoiSignatureRef.current) return;
+
+    wsRef.current.send(JSON.stringify({ command: 'set_roi', rois: roiPayload }));
+    lastRoiSignatureRef.current = roiPayloadSignature;
+  }, [connected, modules.roi, roiPayload, roiPayloadSignature, isDrawingRoi, clearRoiOnServer]);
+
   return (
     <>
-      <PageTitle title="Realtime Detection (Binary 30 FPS)" />
+      <PageTitle title="Realtime Detection (Binary Turbo Stream)" />
       <div className="container-fluid mt-3">
         <Card className="mb-3 shadow-sm">
           <Card.Body>
@@ -745,8 +1069,8 @@ function DetectionPageBinaryContent() {
                   
               <Col className="ms-auto">
                 <div className="d-flex align-items-center gap-2 justify-content-end">
-                      <Badge 
-                    bg={fps > 25 ? 'success' : fps > 15 ? 'warning' : 'danger'}
+                      <Badge
+                    bg={fps >= 30 ? 'success' : fps >= 20 ? 'warning' : 'danger'}
                         className="px-2 py-1"
                         style={{fontSize: '0.85rem', fontWeight: 600}}
                       >
@@ -807,6 +1131,14 @@ function DetectionPageBinaryContent() {
                 onChange={(e) => updateModule('roiDrawing', e.target.checked)}
                 disabled={false}
               />
+              <Form.Check
+                type="switch"
+                id="force-gpu-toggle"
+                label="Force GPU (CUDA)"
+                checked={settings.force_gpu}
+                onChange={(e) => updateSettings('force_gpu', e.target.checked)}
+                disabled={detecting}
+              />
             </div>
             {detecting && (
               <small className="text-info d-block mt-2">
@@ -832,11 +1164,11 @@ function DetectionPageBinaryContent() {
                     </Col>
               <Col md={2}>
                 <Form.Group className="mb-2">
-                  <Form.Label>Target FPS: {settings.target_fps}</Form.Label>
+                  <Form.Label>Target FPS (max 60): {settings.target_fps}</Form.Label>
                   <Form.Range
                     value={settings.target_fps}
                     min={15}
-                    max={30}
+                    max={60}
                     step={5}
                     onChange={(e) => updateSettings('target_fps', parseInt(e.target.value))}
                     disabled={detecting}
@@ -889,20 +1221,28 @@ function DetectionPageBinaryContent() {
               </Card>
 
               <div style={{
-              position:'relative', 
-              width:'100%', 
-              maxWidth: '1280px', 
-              aspectRatio:'16/9', 
-              border:'2px solid #667eea', 
+              position:'relative',
+              width:'100%',
+              maxWidth: '1280px',
+              aspectRatio:'16/9',
+              border:'2px solid #667eea',
               background:'#000',
               borderRadius: '8px',
               overflow: 'hidden'
             }}>
                   <canvas
                     ref={canvasRef}
-                style={{width:'100%', height:'100%', background:'#000'}} 
-                width={frameDimensions.width} 
-                height={frameDimensions.height} 
+                style={{width:'100%', height:'100%', background:'#000'}}
+                width={frameDimensions.width}
+                height={frameDimensions.height}
+              />
+              <RoiOverlay
+                ref={overlayRef}
+                frameDimensions={frameDimensions}
+                rois={roiPolygons}
+                draftPoints={draftRoiPoints}
+                isDrawing={isDrawingRoi}
+                onPointerDown={handleRoiOverlayPointer}
               />
               {!detecting && !isWarmingUp && (
                   <div style={{
@@ -972,7 +1312,77 @@ function DetectionPageBinaryContent() {
               )}
                     </div>
 
-        
+            <Card className="mt-4 shadow-sm">
+              <Card.Body>
+                <div className="d-flex flex-column flex-lg-row justify-content-between align-items-start align-items-lg-center gap-2 mb-3">
+                  <div>
+                    <h6 className="mb-1">🗺️ ROI Designer</h6>
+                    <p className="text-muted small mb-0">
+                      Draw polygon regions to constrain YOLO detections. ROI updates sync automatically when the detector is running.
+                    </p>
+                  </div>
+                  <Badge bg={connected ? 'success' : 'secondary'} className="px-3 py-2 fw-semibold">
+                    {connected ? 'Detector Connected' : 'Detector Offline'}
+                  </Badge>
+                </div>
+                <div className="d-flex flex-wrap gap-2 mb-3">
+                  <Button variant="primary" onClick={startDrawingRoi} disabled={isDrawingRoi}>
+                    ✏️ Start Drawing ROI
+                  </Button>
+                  <Button variant="outline-secondary" onClick={undoLastRoiPoint} disabled={!isDrawingRoi || draftRoiPoints.length === 0}>
+                    ↩️ Undo Point
+                  </Button>
+                  <Button variant="success" onClick={completeRoi} disabled={!isDrawingRoi || draftRoiPoints.length < 3}>
+                    ✅ Complete ROI
+                  </Button>
+                  <Button variant="outline-secondary" onClick={cancelRoiDrawing} disabled={!isDrawingRoi}>
+                    ✖️ Cancel
+                  </Button>
+                  <Button variant="outline-primary" onClick={() => sendRoisToServer(true)} disabled={roiPolygons.length === 0}>
+                    🚀 Apply to Detector
+                  </Button>
+                  <Button variant="outline-danger" onClick={() => clearAllRois(true)} disabled={roiPolygons.length === 0 && draftRoiPoints.length === 0}>
+                    🧹 Clear All
+                  </Button>
+                </div>
+                {isDrawingRoi && (
+                  <div className="alert alert-warning py-2 px-3 mb-3">
+                    Click on the video to add polygon points. Finish with ‘Complete ROI’ once you have at least 3 points.
+                  </div>
+                )}
+                {roiPolygons.length > 0 ? (
+                  <div className="d-flex flex-column gap-2">
+                    {roiPolygons.map((roi, idx) => (
+                      <div key={roi.id} className="d-flex align-items-center gap-2 flex-wrap">
+                        <span
+                          style={{
+                            width: 16,
+                            height: 16,
+                            borderRadius: '50%',
+                            background: roi.color?.fill || 'rgba(59,130,246,0.2)',
+                            border: `2px solid ${roi.color?.stroke || '#2563eb'}`,
+                          }}
+                        />
+                        <Form.Control
+                          value={roi.label}
+                          onChange={(e) => updateRoiLabel(roi.id, e.target.value)}
+                          size="sm"
+                          style={{ maxWidth: 220 }}
+                        />
+                        <span className="text-muted small">{roi.points.length} pts</span>
+                        <Button variant="outline-danger" size="sm" onClick={() => removeRoi(roi.id)}>
+                          Remove
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-muted mb-0">No ROI polygons yet. Click ‘Start Drawing ROI’ to begin.</p>
+                )}
+              </Card.Body>
+            </Card>
+
+
                                   </div>
     </>
   );

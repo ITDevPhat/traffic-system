@@ -9,7 +9,7 @@ import numpy as np
 import logging
 from typing import Optional, Tuple, List
 from queue import Queue, Empty
-from threading import Thread, Event
+from threading import Thread, Event, Lock
 import os
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,8 @@ except Exception:
     HAVE_TURBOJPEG = False
     logger.warning("⚠️  TurboJPEG not available, falling back to cv2.imencode (slower)")
 
+from app.utils.roi_utils import draw_polygon_on_frame, point_in_polygon
+
 # Custom YOLO model class IDs (0-indexed, not COCO)
 VEHICLE_IDS = {0, 1, 2, 3}  # bus, car, motorbike, truck
 
@@ -72,6 +74,14 @@ CLASS_COLORS = {
     2: (0, 255, 255),    # motorbike - yellow
     3: (255, 165, 0)     # truck - orange
 }
+
+ROI_COLORS = [
+    (50, 205, 50),
+    (60, 180, 255),
+    (255, 165, 0),
+    (147, 112, 219),
+    (255, 99, 71),
+]
 
 
 class BinaryAnnotStream:
@@ -101,7 +111,8 @@ class BinaryAnnotStream:
         enable_tracking: bool = True,
         enable_bbox_drawing: bool = True,
         enable_roi: bool = True,
-        enable_roi_drawing: bool = True
+        enable_roi_drawing: bool = True,
+        force_gpu: bool = True
     ):
         """
         Args:
@@ -117,6 +128,7 @@ class BinaryAnnotStream:
             enable_bbox_drawing: Enable bbox drawing on frames
             enable_roi: Enable ROI module (for future use)
             enable_roi_drawing: Enable ROI drawing on frames (for future use)
+            force_gpu: Require CUDA-capable GPU (raises if unavailable when True)
         """
         self.source = int(source) if source.isdigit() else source
         self.conf = float(conf)
@@ -130,13 +142,26 @@ class BinaryAnnotStream:
         self.enable_bbox_drawing = bool(enable_bbox_drawing)
         self.enable_roi = bool(enable_roi)
         self.enable_roi_drawing = bool(enable_roi_drawing)
-        
+
         # Device setup
-        self.device = "cuda" if (torch and torch.cuda.is_available()) else "cpu"
-        logger.info(f"🖥️  Device: {self.device}")
-        
+        self.force_gpu = bool(force_gpu)
+        if torch and torch.cuda.is_available():
+            try:
+                torch.cuda.set_device(0)
+            except Exception:
+                pass
+            self.device = "cuda:0"
+            logger.info("🖥️  Device: cuda:0")
+        else:
+            self.device = "cpu"
+            if self.force_gpu:
+                raise RuntimeError(
+                    "GPU (CUDA) is required but not available. Set force_gpu=false to allow CPU fallback."
+                )
+            logger.warning("⚠️  CUDA not available, falling back to CPU mode")
+
         # CUDA optimizations
-        if torch and self.device == "cuda":
+        if torch and self.device.startswith("cuda"):
             torch.backends.cudnn.benchmark = True
             try:
                 torch.backends.cuda.matmul.allow_tf32 = True
@@ -168,6 +193,10 @@ class BinaryAnnotStream:
         self.fps_cap = 0.0
         self.capture_interval = None  # computed after opening source
         
+        # ROI configuration (runtime adjustable)
+        self._roi_lock = Lock()
+        self._roi_polygons: dict[str, List[List[float]]] = {}
+
         # Queues (bounded, latest-wins)
         self.q_cap = Queue(maxsize=3)   # Raw frames
         self.q_det = Queue(maxsize=3)   # (frame, tracks)
@@ -185,8 +214,10 @@ class BinaryAnnotStream:
         self.frame_idx = 0
         self.last_sent_ts = time.perf_counter()
         self.interval = 1.0 / max(self.target_fps, 1)
-        self.detect_interval = 1.0 / max(self.veh_detect_hz, 1)
+        self._base_detect_interval = 1.0 / max(self.veh_detect_hz, 1)
+        self.detect_interval = self._base_detect_interval
         self.last_detect_ts = 0.0
+        self._last_detect_duration = 0.0
 
         # Track state for prediction between keyframes
         # tid -> {cx, cy, w, h, cid, vx, vy}
@@ -378,7 +409,15 @@ class BinaryAnnotStream:
             logger.info(f"⚙️  Loading YOLO from: {actual_path}")
             self.model = YOLO(actual_path)
             self.model.to(self.device)
-        
+            if torch and self.device.startswith("cuda"):
+                try:
+                    dev_index = torch.cuda.current_device()
+                    props = torch.cuda.get_device_properties(dev_index)
+                    vram_gb = props.total_memory / (1024 ** 3)
+                    logger.info("🧠 CUDA device: %s (%.1f GB VRAM)", props.name, vram_gb)
+                except Exception as exc:
+                    logger.debug("Unable to query CUDA device properties: %s", exc)
+
         # Performance optimizations
         try:
             self.model.fuse()
@@ -414,8 +453,9 @@ class BinaryAnnotStream:
             logger.info("⚠️  ByteTrack not available - using ultralytics built-in tracker")
             # Fall back: lower detect rate to avoid overload
             self.veh_detect_hz = min(self.veh_detect_hz, 10)
-            self.detect_interval = 1.0 / max(self.veh_detect_hz, 1)
-        
+            self._base_detect_interval = 1.0 / max(self.veh_detect_hz, 1)
+            self.detect_interval = self._base_detect_interval
+
         logger.info("✅ Stream initialized")
     
     def _release(self):
@@ -447,6 +487,148 @@ class BinaryAnnotStream:
             except Empty:
                 pass
             q.put(item)
+
+    # ----------------------- ROI Helpers -----------------------
+
+    def _copy_roi_polygons(self) -> dict[str, List[List[float]]]:
+        with self._roi_lock:
+            return {
+                str(name): [
+                    [float(pt[0]), float(pt[1])] for pt in points if isinstance(pt, (list, tuple)) and len(pt) >= 2
+                ]
+                for name, points in self._roi_polygons.items()
+            }
+
+    def set_roi_polygons(self, polygons: dict) -> int:
+        """Update ROI polygons at runtime."""
+        if not isinstance(polygons, dict):
+            return 0
+
+        cleaned: dict[str, List[List[float]]] = {}
+        for raw_name, raw_points in polygons.items():
+            if raw_points is None:
+                continue
+            points: List[List[float]] = []
+            if isinstance(raw_points, dict) and "coordinates" in raw_points:
+                raw_points = raw_points.get("coordinates")
+            for pt in raw_points:
+                if not isinstance(pt, (list, tuple)) or len(pt) < 2:
+                    continue
+                try:
+                    x = float(pt[0])
+                    y = float(pt[1])
+                except (TypeError, ValueError):
+                    continue
+                points.append([x, y])
+            if len(points) >= 3:
+                cleaned[str(raw_name)] = points
+
+        with self._roi_lock:
+            self._roi_polygons = cleaned
+
+        logger.info("🎯 Updated ROI polygons: %s", list(cleaned.keys()))
+        return len(cleaned)
+
+    def clear_roi_polygons(self) -> None:
+        with self._roi_lock:
+            self._roi_polygons = {}
+        logger.info("🧹 Cleared ROI polygons")
+
+    def _roi_polygons_list(self) -> List[List[List[float]]]:
+        with self._roi_lock:
+            return [
+                [
+                    [float(pt[0]), float(pt[1])] for pt in polygon if isinstance(pt, (list, tuple)) and len(pt) >= 2
+                ]
+                for polygon in self._roi_polygons.values()
+            ]
+
+    def _update_detect_interval(self, duration: float) -> None:
+        if duration <= 0:
+            return
+
+        # Keep detection cadence within hardware limits
+        target = max(self._base_detect_interval, duration * 1.05)
+        target = min(target, 0.5)
+
+        if self.detect_interval <= 0:
+            self.detect_interval = target
+        else:
+            self.detect_interval = (0.7 * self.detect_interval) + (0.3 * target)
+
+        self._last_detect_duration = duration
+
+    def _filter_keyframe_detections(
+        self,
+        xyxy: np.ndarray,
+        confs: np.ndarray,
+        clss: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        if not self.enable_roi:
+            return xyxy, confs, clss
+
+        rois = self._roi_polygons_list()
+        if not rois or xyxy is None or len(xyxy) == 0:
+            return xyxy, confs, clss
+
+        keep_indices: List[int] = []
+        for idx, (x1, y1, x2, y2) in enumerate(xyxy):
+            cx = 0.5 * (float(x1) + float(x2))
+            cy = 0.5 * (float(y1) + float(y2))
+            if any(point_in_polygon((cx, cy), roi) for roi in rois):
+                keep_indices.append(idx)
+
+        if not keep_indices:
+            empty_xy = np.empty((0, 4), dtype=float)
+            empty_conf = np.empty((0,), dtype=float)
+            empty_cls = np.empty((0,), dtype=int)
+            return empty_xy, empty_conf, empty_cls
+
+        keep_idx = np.array(keep_indices, dtype=int)
+        return xyxy[keep_idx], confs[keep_idx], clss[keep_idx]
+
+    def _filter_tracks_by_roi(self, tracks):
+        if not self.enable_roi:
+            return tracks
+
+        rois = self._roi_polygons_list()
+        if not rois or tracks is None:
+            return tracks
+
+        filtered = []
+        for tr in tracks:
+            try:
+                x1, y1, x2, y2 = map(float, tr[:4])
+            except Exception:
+                continue
+            cx = 0.5 * (x1 + x2)
+            cy = 0.5 * (y1 + y2)
+            if any(point_in_polygon((cx, cy), roi) for roi in rois):
+                filtered.append(np.array(tr, dtype=float))
+
+        if isinstance(tracks, np.ndarray):
+            if not filtered:
+                return np.empty((0, tracks.shape[1] if tracks.ndim == 2 else 6), dtype=float)
+            return np.vstack(filtered)
+
+        return filtered
+
+    def _draw_rois_on_frame(self, frame: np.ndarray) -> None:
+        if not self.enable_roi or not self.enable_roi_drawing:
+            return
+
+        rois = self._copy_roi_polygons()
+        if not rois:
+            return
+
+        for idx, (name, polygon) in enumerate(rois.items()):
+            if len(polygon) < 3:
+                continue
+            color = ROI_COLORS[idx % len(ROI_COLORS)]
+            try:
+                draw_polygon_on_frame(frame, polygon, color=color, alpha=0.18)
+            except Exception as exc:
+                logger.debug("ROI draw failed for %s: %s", name, exc)
     
     def _downscale_for_encode(self, frame):
         """Downscale frame before encoding for faster JPEG compression"""
@@ -553,6 +735,7 @@ class BinaryAnnotStream:
 
             tracks = []
             if detect_due and self.enable_yolo:
+                detect_start = time.perf_counter()
                 # YOLO detect (keyframe)
                 try:
                     results = self.model.predict(
@@ -586,6 +769,8 @@ class BinaryAnnotStream:
                     clss = np.empty((0,), dtype=int)
                     if self.frame_idx % 30 == 1:
                         logger.info(f"⚠️ Frame {self.frame_idx}: No detections from YOLO")
+
+                xyxy, confs, clss = self._filter_keyframe_detections(xyxy, confs, clss)
 
                 if HAVE_BOXMOT and self.tracker is not None and self.enable_tracking:
                     online_targets = self.tracker.update(
@@ -629,6 +814,8 @@ class BinaryAnnotStream:
                             cls_id = int(clss[i]) if i < len(clss) else 0
                             tracks.append(np.array([x1, y1, x2, y2, i, cls_id], dtype=float))
 
+                tracks = self._filter_tracks_by_roi(tracks)
+
                 # Update track state and velocities
                 dt = (now - self.last_detect_ts) if self.last_detect_ts else (1.0 / max(self.veh_detect_hz, 1))
                 new_state: dict[int, dict] = {}
@@ -646,6 +833,8 @@ class BinaryAnnotStream:
                     new_state[tid] = {"cx": cx, "cy": cy, "w": w, "h": h, "cid": int(cid), "vx": vx, "vy": vy}
                 self._track_state = new_state
                 self.last_detect_ts = now
+                detect_duration = time.perf_counter() - detect_start
+                self._update_detect_interval(detect_duration)
             else:
                 # Predict tracks between keyframes for perceived 60 fps
                 dt = min(now - self.last_detect_ts, 0.5)
@@ -675,7 +864,13 @@ class BinaryAnnotStream:
                 frame, tracks = self.q_det.get(timeout=0.5)
             except Empty:
                 continue
-            
+
+            if frame is None:
+                continue
+
+            # Draw ROI overlays first so detections appear above
+            self._draw_rois_on_frame(frame)
+
             # Prepare detections metadata (ALWAYS, for future violations detection)
             detections = []
             if tracks is not None and len(tracks) > 0:
@@ -802,10 +997,17 @@ class BinaryAnnotStream:
             "fps_cap": self.target_fps,
             "device": self.device,
             "turbo_jpeg": HAVE_TURBOJPEG,
+            "force_gpu": self.force_gpu,
+            "detect_interval": round(self.detect_interval, 4),
+            "last_detect_duration": round(self._last_detect_duration, 4),
+            "roi_enabled": self.enable_roi,
+            "roi_count": len(self._roi_polygons),
+            "rois": self._copy_roi_polygons(),
             "modules": {
                 "yolo": self.enable_yolo,
                 "tracking": self.enable_tracking,
-                "bbox_drawing": self.enable_bbox_drawing
+                "bbox_drawing": self.enable_bbox_drawing,
+                "roi_drawing": self.enable_roi_drawing
             }
         }
     
