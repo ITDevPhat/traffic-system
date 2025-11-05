@@ -128,6 +128,8 @@ function DetectionPageBinaryContent() {
   const isMountedRef = useRef(true);
   const overlayRef = useRef(null);
   const lastRoiSignatureRef = useRef('');
+  const bboxPreviewRef = useRef(null);
+  const hasBBoxPreviewRef = useRef(false);
   
   // Safe toast wrapper - only show toast if component is mounted
   // Use try-catch to prevent errors if toast is unavailable
@@ -222,7 +224,11 @@ function DetectionPageBinaryContent() {
   });
   
   const [frameDimensions, setFrameDimensions] = useState({ width: 1280, height: 720 });
+  const [sourceDimensions, setSourceDimensions] = useState({ width: 1280, height: 720 });
   const [expectBinary, setExpectBinary] = useState(false);
+  const [bboxPreviewSize, setBBoxPreviewSize] = useState({ width: 0, height: 0 });
+  const [bboxStats, setBBoxStats] = useState({ count: 0, updatedAt: 0 });
+  const [hasBBoxPreview, setHasBBoxPreview] = useState(false);
   
   // Module toggles
   const [modules, setModules] = useState({
@@ -383,6 +389,16 @@ function DetectionPageBinaryContent() {
       wsRef.current.close();
     }
 
+    if (bboxPreviewRef.current) {
+      try {
+        bboxPreviewRef.current.src = '';
+      } catch (e) {}
+    }
+    hasBBoxPreviewRef.current = false;
+    setHasBBoxPreview(false);
+    setBBoxStats({ count: 0, updatedAt: 0 });
+    setBBoxPreviewSize({ width: 0, height: 0 });
+
     // Build WebSocket URL with all optimization parameters
     const params = new URLSearchParams();
     params.append('source', src || '0');
@@ -417,19 +433,25 @@ function DetectionPageBinaryContent() {
     
     ws.onclose = () => {
       if (!isMountedRef.current) return;
-      console.log('? WebSocket closed');
+      console.log('⚠️ WebSocket closed');
       setConnected(false);
       setDetecting(false);
       lastRoiSignatureRef.current = '';
+      hasBBoxPreviewRef.current = false;
+      setHasBBoxPreview(false);
+      setBBoxStats({ count: 0, updatedAt: 0 });
       safeToast.info('WebSocket disconnected');
     };
-    
+
     ws.onerror = (error) => {
       if (!isMountedRef.current) return;
-      console.error('? WebSocket error:', error);
+      console.error('⚠️ WebSocket error:', error);
       setConnected(false);
       setDetecting(false);
       lastRoiSignatureRef.current = '';
+      hasBBoxPreviewRef.current = false;
+      setHasBBoxPreview(false);
+      setBBoxStats({ count: 0, updatedAt: 0 });
       safeToast.error('WebSocket error! Check backend.');
     };
 
@@ -440,68 +462,138 @@ function DetectionPageBinaryContent() {
         try {
           const pkt = JSON.parse(event.data);
           
-        if (pkt.type === 'info') {
-            // Set canvas size once
+          if (pkt.type === 'info') {
             const c = canvasRef.current;
+            const sourceWidth = Number(pkt.frame_width) || Number(pkt.source_width) || 1280;
+            const sourceHeight = Number(pkt.frame_height) || Number(pkt.source_height) || 720;
+            const encodedWidth = Number(pkt.encoded_frame_width) || sourceWidth;
+            const encodedHeight = Number(pkt.encoded_frame_height) || sourceHeight;
+
+            setSourceDimensions((prev) => (
+              prev.width === sourceWidth && prev.height === sourceHeight
+                ? prev
+                : { width: sourceWidth, height: sourceHeight }
+            ));
+
             if (c) {
-              const newWidth = pkt.frame_width || 1280;
-              const newHeight = pkt.frame_height || 720;
-              c.width = newWidth;
-              c.height = newHeight;
-              setFrameDimensions({ width: newWidth, height: newHeight });
+              if (c.width !== encodedWidth) c.width = encodedWidth;
+              if (c.height !== encodedHeight) c.height = encodedHeight;
               const ctx = c.getContext('2d');
               if (ctx && ctx.imageSmoothingEnabled) ctx.imageSmoothingEnabled = false;
-                console.log(`?? Canvas: ${newWidth}x${newHeight}`);
-                console.log('?? Info:', pkt);
-                if (pkt.rois && typeof pkt.rois === 'object') {
-                  const entries = Object.entries(pkt.rois);
-                  if (entries.length > 0) {
-                    const width = newWidth || frameDimensions.width || 1;
-                    const height = newHeight || frameDimensions.height || 1;
-                    const imported = entries
-                      .map(([name, raw], idx) => {
-                        const coords = Array.isArray(raw)
-                          ? raw
-                          : (raw?.coordinates || raw?.points || []);
-                        if (!Array.isArray(coords)) return null;
-                        const points = coords
-                          .map((pt) => {
-                            if (!Array.isArray(pt) || pt.length < 2) return null;
-                            return {
-                              x: clamp01(pt[0] / width),
-                              y: clamp01(pt[1] / height)
-                            };
-                          })
-                          .filter(Boolean);
-                        if (points.length < 3) return null;
+            }
+
+            setFrameDimensions((prev) => (
+              prev.width === encodedWidth && prev.height === encodedHeight
+                ? prev
+                : { width: encodedWidth, height: encodedHeight }
+            ));
+
+            console.log(`🎥 Canvas: ${encodedWidth}x${encodedHeight} (source ${sourceWidth}x${sourceHeight})`);
+            console.log('ℹ️ Info:', pkt);
+
+            if (pkt.bbox_preview && typeof pkt.bbox_preview === 'object') {
+              const previewWidth = Number(pkt.bbox_preview.width) || 0;
+              const previewHeight = Number(pkt.bbox_preview.height) || 0;
+              if (previewWidth > 0 && previewHeight > 0) {
+                setBBoxPreviewSize({ width: previewWidth, height: previewHeight });
+              }
+            }
+
+            if (pkt.rois && typeof pkt.rois === 'object') {
+              const entries = Object.entries(pkt.rois);
+              if (entries.length > 0) {
+                const width = sourceWidth || 1;
+                const height = sourceHeight || 1;
+                const imported = entries
+                  .map(([name, raw], idx) => {
+                    const coords = Array.isArray(raw)
+                      ? raw
+                      : (raw?.coordinates || raw?.points || []);
+                    if (!Array.isArray(coords)) return null;
+                    const points = coords
+                      .map((pt) => {
+                        if (!Array.isArray(pt) || pt.length < 2) return null;
                         return {
-                          id: `roi-server-${idx}`,
-                          label: String(name),
-                          color: ROI_COLORS[idx % ROI_COLORS.length],
-                          points,
+                          x: clamp01(pt[0] / width),
+                          y: clamp01(pt[1] / height)
                         };
                       })
                       .filter(Boolean);
-                    if (imported.length > 0) {
-                      setRoiPolygons((prev) => (prev.length > 0 ? prev : imported));
-                    }
-                  }
+                    if (points.length < 3) return null;
+                    return {
+                      id: `roi-server-${idx}`,
+                      label: String(name),
+                      color: ROI_COLORS[idx % ROI_COLORS.length],
+                      points,
+                    };
+                  })
+                  .filter(Boolean);
+                if (imported.length > 0) {
+                  setRoiPolygons((prev) => (prev.length > 0 ? prev : imported));
                 }
+              }
             }
           } else if (pkt.type === 'frame') {
             // Update FPS and frame index
             if (typeof pkt.fps === 'number') fpsRef.current = pkt.fps;
             if (typeof pkt.frame_idx === 'number') frameIdxRef.current = pkt.frame_idx;
-            
+
+            if (pkt.bbox_preview && bboxPreviewRef.current) {
+              const dataUrl = `data:image/jpeg;base64,${pkt.bbox_preview}`;
+              if (bboxPreviewRef.current.src !== dataUrl) {
+                bboxPreviewRef.current.src = dataUrl;
+              }
+              if (!hasBBoxPreviewRef.current) {
+                hasBBoxPreviewRef.current = true;
+                setHasBBoxPreview(true);
+              }
+            }
+
+            if (Array.isArray(pkt.bbox_preview_resolution) && pkt.bbox_preview_resolution.length === 2) {
+              const [pw, ph] = pkt.bbox_preview_resolution.map((v) => Number(v) || 0);
+              if (pw > 0 && ph > 0) {
+                setBBoxPreviewSize((prev) => (prev.width === pw && prev.height === ph ? prev : { width: pw, height: ph }));
+              }
+            }
+
+            if (Array.isArray(pkt.encoded_size) && pkt.encoded_size.length === 2) {
+              const [ew, eh] = pkt.encoded_size.map((v) => Number(v) || 0);
+              if (ew > 0 && eh > 0) {
+                const c = canvasRef.current;
+                if (c) {
+                  if (c.width !== ew) c.width = ew;
+                  if (c.height !== eh) c.height = eh;
+                }
+                setFrameDimensions((prev) => (
+                  prev.width === ew && prev.height === eh ? prev : { width: ew, height: eh }
+                ));
+              }
+            }
+
+            if (Array.isArray(pkt.frame_size) && pkt.frame_size.length === 2) {
+              const [sw, sh] = pkt.frame_size.map((v) => Number(v) || 0);
+              if (sw > 0 && sh > 0) {
+                setSourceDimensions((prev) => (
+                  prev.width === sw && prev.height === sh ? prev : { width: sw, height: sh }
+                ));
+              }
+            }
+
             // Store detections metadata (for future violations rendering)
+            let detectionCount = 0;
             if (pkt.detections && Array.isArray(pkt.detections)) {
+              detectionCount = pkt.detections.length;
               // TODO: Store in state/ref for violations overlay rendering
               // For now, just log occasionally
               if (pkt.frame_idx % 30 === 0 && pkt.detections.length > 0) {
-                console.log(`?? Frame ${pkt.frame_idx}: ${pkt.detections.length} detections`, pkt.detections[0]);
+                console.log(`🚗 Frame ${pkt.frame_idx}: ${pkt.detections.length} detections`, pkt.detections[0]);
               }
             }
-            
+
+            if (typeof pkt.frame_idx === 'number' && pkt.frame_idx % 15 === 0) {
+              setBBoxStats({ count: detectionCount, updatedAt: Date.now() });
+            }
+
             // Next message should be binary JPEG
             setExpectBinary(true);
           } else if (pkt.type === 'error') {
@@ -537,8 +629,6 @@ function DetectionPageBinaryContent() {
     modules,
     selectedModel,
     safeToast,
-    frameDimensions.height,
-    frameDimensions.width,
     scheduleDecode,
   ]);
 
@@ -706,6 +796,13 @@ function DetectionPageBinaryContent() {
       const ctx = c.getContext('2d');
       try { ctx.clearRect(0, 0, c.width, c.height); } catch {}
     }
+    if (bboxPreviewRef.current) {
+      try { bboxPreviewRef.current.src = ''; } catch {}
+    }
+    hasBBoxPreviewRef.current = false;
+    setHasBBoxPreview(false);
+    setBBoxStats({ count: 0, updatedAt: 0 });
+    setBBoxPreviewSize({ width: 0, height: 0 });
     setDetecting(false);
     setConnected(false);
     lastRoiSignatureRef.current = '';
@@ -885,8 +982,8 @@ function DetectionPageBinaryContent() {
 
   const roiPayload = useMemo(() => {
     if (!roiPolygons || roiPolygons.length === 0) return {};
-    const width = frameDimensions.width || 1;
-    const height = frameDimensions.height || 1;
+    const width = sourceDimensions.width || frameDimensions.width || 1;
+    const height = sourceDimensions.height || frameDimensions.height || 1;
     const payload = {};
     roiPolygons.forEach((roi, idx) => {
       if (!roi.points || roi.points.length < 3) return;
@@ -897,7 +994,7 @@ function DetectionPageBinaryContent() {
       ]);
     });
     return payload;
-  }, [roiPolygons, frameDimensions.width, frameDimensions.height]);
+  }, [roiPolygons, frameDimensions.width, frameDimensions.height, sourceDimensions.width, sourceDimensions.height]);
 
   const roiPayloadSignature = useMemo(() => JSON.stringify(roiPayload), [roiPayload]);
 
@@ -1220,97 +1317,180 @@ function DetectionPageBinaryContent() {
                 </Card.Body>
               </Card>
 
-              <div style={{
-              position:'relative',
-              width:'100%',
-              maxWidth: '1280px',
-              aspectRatio:'16/9',
-              border:'2px solid #667eea',
-              background:'#000',
-              borderRadius: '8px',
-              overflow: 'hidden'
-            }}>
+              <div
+                style={{
+                  display: 'flex',
+                  width: '100%',
+                  maxWidth: '1280px',
+                  border: '2px solid #667eea',
+                  background: '#020617',
+                  borderRadius: '12px',
+                  overflow: 'hidden',
+                  aspectRatio: '16/9',
+                  boxShadow: '0 16px 32px rgba(15, 23, 42, 0.45)'
+                }}
+              >
+                <div
+                  style={{
+                    position: 'relative',
+                    flex: '3 1 0',
+                    background: '#000'
+                  }}
+                >
                   <canvas
                     ref={canvasRef}
-                style={{width:'100%', height:'100%', background:'#000'}}
-                width={frameDimensions.width}
-                height={frameDimensions.height}
-              />
-              <RoiOverlay
-                ref={overlayRef}
-                frameDimensions={frameDimensions}
-                rois={roiPolygons}
-                draftPoints={draftRoiPoints}
-                isDrawing={isDrawingRoi}
-                onPointerDown={handleRoiOverlayPointer}
-              />
-              {!detecting && !isWarmingUp && (
-                  <div style={{
-                    position: 'absolute',
-                  top: '50%',
-                  left: '50%',
-                  transform: 'translate(-50%, -50%)',
-                  color: '#fff',
-                  fontSize: '1.5rem',
-                  textAlign: 'center'
-                }}>
-                  🎥 Ready for Video Detection<br/>
-                  <small style={{fontSize: '0.8rem', opacity: 0.7}}>
-                    {videoLoaded ? 'Click Start Detection' : 'Upload video to start detection'}
-                                      </small>
+                    style={{ width: '100%', height: '100%', background: '#000' }}
+                    width={frameDimensions.width}
+                    height={frameDimensions.height}
+                  />
+                  <RoiOverlay
+                    ref={overlayRef}
+                    frameDimensions={frameDimensions}
+                    rois={roiPolygons}
+                    draftPoints={draftRoiPoints}
+                    isDrawing={isDrawingRoi}
+                    onPointerDown={handleRoiOverlayPointer}
+                  />
+                  {!detecting && !isWarmingUp && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '0.5rem',
+                        color: '#f8fafc',
+                        background: 'rgba(2, 6, 23, 0.55)',
+                        textAlign: 'center'
+                      }}
+                    >
+                      <div style={{ fontSize: '1.4rem', fontWeight: 600 }}>🎥 Ready for Video Detection</div>
+                      <div style={{ fontSize: '0.85rem', opacity: 0.8 }}>
+                        {videoLoaded ? 'Click Start Detection' : 'Upload video to start detection'}
+                      </div>
+                    </div>
+                  )}
+
+                  {isWarmingUp && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '1rem',
+                        background: 'rgba(2, 6, 23, 0.85)',
+                        color: '#fff',
+                        textAlign: 'center',
+                        padding: '2rem',
+                        zIndex: 10
+                      }}
+                    >
+                      <div style={{ fontSize: '3rem', animation: 'pulse 2s infinite' }}>🔥</div>
+                      <div style={{ fontSize: '1.3rem', fontWeight: 600 }}>Warming Up Models</div>
+                      <div style={{ fontSize: '0.95rem', opacity: 0.8 }}>
+                        Preparing for optimal performance...
+                      </div>
+                      <div
+                        style={{
+                          width: '100%',
+                          maxWidth: '360px',
+                          height: '10px',
+                          background: 'rgba(255, 255, 255, 0.2)',
+                          borderRadius: '6px',
+                          overflow: 'hidden'
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: `${warmupProgress}%`,
+                            height: '100%',
+                            background: 'linear-gradient(90deg, #667eea 0%, #764ba2 100%)',
+                            transition: 'width 0.12s ease',
+                            borderRadius: '6px'
+                          }}
+                        />
+                      </div>
+                      <div style={{ fontSize: '0.9rem', opacity: 0.75 }}>
+                        {Math.round(warmupProgress)}% • {Math.max(0, Math.ceil((100 - warmupProgress) / 20))}s remaining
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div
+                  style={{
+                    flex: '1 1 0',
+                    background: 'linear-gradient(180deg, #0f172a 0%, #111827 100%)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    padding: '0.75rem',
+                    gap: '0.6rem',
+                    borderLeft: '1px solid rgba(148, 163, 184, 0.25)'
+                  }}
+                >
+                  <div style={{ fontSize: '1rem', fontWeight: 600, color: '#38bdf8', letterSpacing: '0.02em' }}>
+                    BBox Preview
                   </div>
-                      )}
-              
-              {/* Warmup Progress Overlay */}
-              {isWarmingUp && (
-                <div style={{
-                  position: 'absolute',
-                  top: '50%',
-                  left: '50%',
-                  transform: 'translate(-50%, -50%)',
-                  color: '#fff',
-                  textAlign: 'center',
-                  zIndex: 10,
-                  background: 'rgba(0, 0, 0, 0.85)',
-                  padding: '2rem 3rem',
-                  borderRadius: '16px',
-                  minWidth: '350px',
-                  boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
-                  border: '2px solid rgba(102, 126, 234, 0.3)'
-                }}>
-                  <div style={{ fontSize: '3rem', marginBottom: '1rem', animation: 'pulse 2s infinite' }}>
-                    🔥
+                  <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+                    {bboxPreviewSize.width > 0 && bboxPreviewSize.height > 0
+                      ? `${bboxPreviewSize.width}×${bboxPreviewSize.height}px`
+                      : 'Waiting for stream info'}
                   </div>
-                  <div style={{ fontSize: '1.3rem', fontWeight: 'bold', marginBottom: '0.5rem' }}>
-                    Warming Up Models
+                  <div
+                    style={{
+                      position: 'relative',
+                      flex: '1 1 auto',
+                      borderRadius: '10px',
+                      border: '1px solid rgba(30, 41, 59, 0.7)',
+                      background: '#020617',
+                      overflow: 'hidden',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    <img
+                      ref={bboxPreviewRef}
+                      alt="Vehicle crops preview"
+                      style={{ width: '100%', height: '100%', objectFit: 'contain', transition: 'opacity 0.2s ease' }}
+                    />
+                    {!hasBBoxPreview && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          inset: 0,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          color: '#94a3b8',
+                          fontSize: '0.85rem',
+                          padding: '0.5rem',
+                          textAlign: 'center'
+                        }}
+                      >
+                        Waiting for detections…
+                      </div>
+                    )}
                   </div>
-                  <div style={{ fontSize: '0.95rem', opacity: 0.8, marginBottom: '1.5rem' }}>
-                    Preparing for optimal performance...
-                  </div>
-                  {/* Progress Bar */}
-                  <div style={{
-                    width: '100%',
-                    height: '10px',
-                    background: 'rgba(255, 255, 255, 0.2)',
-                    borderRadius: '5px',
-                    overflow: 'hidden',
-                    marginBottom: '0.8rem'
-                  }}>
-                    <div style={{
-                      width: `${warmupProgress}%`,
-                      height: '100%',
-                      background: 'linear-gradient(90deg, #667eea 0%, #764ba2 100%)',
-                      transition: 'width 0.1s ease',
-                      borderRadius: '5px',
-                      boxShadow: '0 0 10px rgba(102, 126, 234, 0.5)'
-                    }} />
-                  </div>
-                  <div style={{ fontSize: '0.9rem', opacity: 0.7, fontWeight: 500 }}>
-                    {Math.round(warmupProgress)}% • {Math.max(0, Math.ceil((100 - warmupProgress) / 20))}s remaining
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      fontSize: '0.85rem',
+                      color: '#e2e8f0'
+                    }}
+                  >
+                    <span>Tracked vehicles</span>
+                    <span style={{ fontWeight: 700, color: '#facc15' }}>{bboxStats.count}</span>
                   </div>
                 </div>
-              )}
-                    </div>
+              </div>
 
             <Card className="mt-4 shadow-sm">
               <Card.Body>

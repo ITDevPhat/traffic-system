@@ -3,11 +3,12 @@ Binary Annotation Stream - 30 FPS với TurboJPEG + Multithreading
 Pipeline: Capture → Infer/Track → Annotate+Encode → Send
 Queues: Latest-wins (drop old frames when full)
 """
+import base64
 import cv2
 import time
 import numpy as np
 import logging
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict, Any
 from queue import Queue, Empty
 from threading import Thread, Event, Lock
 import os
@@ -36,6 +37,42 @@ except Exception:
     BYTETracker = None
     HAVE_BOXMOT = False
     logger.info("⚠️  boxmot not available, using ultralytics built-in tracker")
+
+
+def _load_bytetrack_config() -> Dict[str, Any]:
+    """Load ByteTrack configuration overrides from the bundled YAML file."""
+
+    cfg_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "trackers", "bytetrack.yaml")
+    )
+
+    if not os.path.exists(cfg_path):
+        return {}
+
+    try:
+        import yaml  # type: ignore
+
+        with open(cfg_path, "r", encoding="utf-8") as fp:
+            data = yaml.safe_load(fp) or {}
+        if isinstance(data, dict):
+            return {str(k): v for k, v in data.items()}
+        return {}
+    except ModuleNotFoundError:
+        parsed: Dict[str, Any] = {}
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as fp:
+                for line in fp:
+                    line = line.strip()
+                    if not line or line.startswith("#") or ":" not in line:
+                        continue
+                    key, value = line.split(":", 1)
+                    parsed[key.strip()] = value.strip()
+        except Exception as exc:
+            logger.debug("Unable to parse ByteTrack config without PyYAML: %s", exc)
+        return parsed
+    except Exception as exc:
+        logger.warning("⚠️  Failed to load ByteTrack config: %s", exc)
+        return {}
 
 # TurboJPEG - required for 30 FPS
 try:
@@ -183,6 +220,7 @@ class BinaryAnnotStream:
         self.cap = None
         self.model = None
         self.tracker = None
+        self._tracker_config = _load_bytetrack_config() if HAVE_BOXMOT else {}
         
         # TurboJPEG encoder
         if HAVE_TURBOJPEG:
@@ -205,6 +243,10 @@ class BinaryAnnotStream:
         # ROI configuration (runtime adjustable)
         self._roi_lock = Lock()
         self._roi_polygons: dict[str, List[List[float]]] = {}
+        self._current_bbox_preview_b64: Optional[str] = None
+        self._bbox_preview_resolution: Optional[Tuple[int, int]] = None
+        self._encoded_width: int = 0
+        self._encoded_height: int = 0
 
         # Queues (bounded, latest-wins)
         self.q_cap = Queue(maxsize=3)   # Raw frames
@@ -331,7 +373,15 @@ class BinaryAnnotStream:
         self.capture_interval = 1.0 / effective_capture_fps
         
         logger.info(f"📊 Video: {self.w}x{self.h} @ {self.fps_cap} FPS, {self.total} frames")
-        
+
+        if self.encode_width > 0 and self.w > self.encode_width:
+            scale = self.encode_width / float(self.w)
+            self._encoded_width = int(self.encode_width)
+            self._encoded_height = int(round(self.h * scale))
+        else:
+            self._encoded_width = self.w
+            self._encoded_height = self.h
+
         # Unified model loader: auto-detect .engine > .onnx > .pt
         model_info = get_model_info(self.model_path)
         
@@ -405,13 +455,23 @@ class BinaryAnnotStream:
         
         # Initialize tracker
         if HAVE_BOXMOT:
-            self.tracker = BYTETracker(
-                track_thresh=0.25,
-                track_buffer=30,
-                match_thresh=0.8,
-                frame_rate=self.fps_cap
-            )
-            logger.info("✅ Initialized boxmot BYTETracker")
+            tracker_kwargs: Dict[str, Any] = {}
+
+            def _cfg_number(key: str, default: float, cast=float) -> float:
+                value = self._tracker_config.get(key, default) if self._tracker_config else default
+                try:
+                    return cast(value)
+                except (TypeError, ValueError):
+                    return cast(default)
+
+            tracker_kwargs["track_thresh"] = _cfg_number("track_high_thresh", 0.5, float)
+            tracker_kwargs["min_conf"] = _cfg_number("track_low_thresh", 0.1, float)
+            tracker_kwargs["match_thresh"] = _cfg_number("match_thresh", 0.8, float)
+            tracker_kwargs["track_buffer"] = int(round(_cfg_number("track_buffer", 30, float)))
+            tracker_kwargs["frame_rate"] = int(max(self.fps_cap, 1))
+
+            self.tracker = BYTETracker(**tracker_kwargs)
+            logger.info("✅ Initialized boxmot BYTETracker with %s", tracker_kwargs)
         else:
             self.tracker = None
             logger.info("⚠️  ByteTrack not available - using ultralytics built-in tracker")
@@ -593,16 +653,149 @@ class BinaryAnnotStream:
                 draw_polygon_on_frame(frame, polygon, color=color, alpha=0.18)
             except Exception as exc:
                 logger.debug("ROI draw failed for %s: %s", name, exc)
-    
+
+    def _render_bbox_log(self, frame: np.ndarray, detections: List[Dict[str, Any]]) -> np.ndarray:
+        """Create a compact collage of detection crops for the log panel."""
+
+        base_width = self.encode_width if self.encode_width > 0 else frame.shape[1]
+        log_width = max(160, int(base_width / 3))
+
+        if self.w > 0 and self.encode_width > 0:
+            scale = self.encode_width / float(self.w)
+            log_height = max(120, int(self.h * scale))
+        else:
+            log_height = frame.shape[0]
+
+        log_img = np.zeros((log_height, log_width, 3), dtype=np.uint8)
+        log_img[:] = (18, 18, 18)
+
+        header_h = max(28, log_height // 12)
+        cv2.rectangle(log_img, (0, 0), (log_width - 1, header_h), (32, 32, 32), -1)
+        cv2.putText(
+            log_img,
+            "BBOX LOG",
+            (10, header_h - 8),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
+
+        if not detections:
+            cv2.putText(
+                log_img,
+                "No vehicles",
+                (12, header_h + 32),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (200, 200, 200),
+                1,
+                cv2.LINE_AA,
+            )
+            return log_img
+
+        content_h = max(1, log_height - header_h)
+        sorted_dets = sorted(
+            detections,
+            key=lambda d: max(1.0, (d["bbox"][2] - d["bbox"][0]) * (d["bbox"][3] - d["bbox"][1])),
+            reverse=True,
+        )
+        slots = min(6, len(sorted_dets))
+        slot_h = max(70, content_h // slots) if slots > 0 else content_h
+        y_cursor = header_h
+
+        for det in sorted_dets[:slots]:
+            x1, y1, x2, y2 = [int(round(v)) for v in det["bbox"]]
+            x1 = max(0, min(x1, frame.shape[1] - 1))
+            y1 = max(0, min(y1, frame.shape[0] - 1))
+            x2 = max(x1 + 1, min(x2, frame.shape[1]))
+            y2 = max(y1 + 1, min(y2, frame.shape[0]))
+
+            crop = frame[y1:y2, x1:x2]
+            if crop.size == 0:
+                continue
+
+            crop_h, crop_w = crop.shape[:2]
+            if crop_h <= 0 or crop_w <= 0:
+                continue
+
+            max_w = log_width - 16
+            max_h = slot_h - 24
+            if max_w <= 0 or max_h <= 0:
+                continue
+
+            scale = min(max_w / float(crop_w), max_h / float(crop_h))
+            scale = min(scale, 3.0)
+            new_w = max(1, int(crop_w * scale))
+            new_h = max(1, int(crop_h * scale))
+            resized = cv2.resize(
+                crop,
+                (new_w, new_h),
+                interpolation=cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR,
+            )
+
+            x_off = (log_width - new_w) // 2
+            y_off = y_cursor + (slot_h - new_h) // 2
+            y_end = min(log_height, y_off + new_h)
+            x_end = min(log_width, x_off + new_w)
+
+            log_img[y_off:y_end, x_off:x_end] = resized[: y_end - y_off, : x_end - x_off]
+
+            label = f"#{det['track_id']} {det['class_name']}"
+            cv2.putText(
+                log_img,
+                label,
+                (10, min(log_height - 8, y_cursor + slot_h - 6)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                CLASS_COLORS.get(det["class_id"], (220, 220, 220)),
+                1,
+                cv2.LINE_AA,
+            )
+
+            y_cursor += slot_h
+            if y_cursor >= log_height:
+                break
+
+        return log_img
+
+    def _estimate_bbox_preview_resolution(self) -> Tuple[int, int]:
+        """Estimate bbox log resolution before the first frame is encoded."""
+
+        base_width = self._encoded_width or (
+            self.encode_width if self.encode_width > 0 else max(1, self.w)
+        )
+        width = max(160, int(base_width / 3))
+
+        if self._encoded_height:
+            height = max(120, self._encoded_height)
+        elif self.w > 0 and self.encode_width > 0:
+            height = max(120, int(self.h * (self.encode_width / float(self.w))))
+        else:
+            height = max(120, self.h if self.h > 0 else 240)
+        return width, height
+
     def _downscale_for_encode(self, frame):
         """Downscale frame before encoding for faster JPEG compression"""
-        if self.encode_width <= 0 or self.w <= self.encode_width:
+        if frame is None:
             return frame
-        scale = self.encode_width / float(self.w)
+
+        frame_h, frame_w = frame.shape[:2]
+
+        if self.encode_width <= 0 or frame_w <= self.encode_width:
+            self._encoded_width = frame_w
+            self._encoded_height = frame_h
+            return frame
+
+        scale = self.encode_width / float(frame_w)
         new_w = self.encode_width
-        new_h = int(self.h * scale)
-        # INTER_LINEAR is faster than INTER_AREA
-        return cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        new_h = int(round(frame_h * scale))
+
+        resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        self._encoded_width = new_w
+        self._encoded_height = new_h
+        return resized
     
     def _encode_jpeg_bytes(self, bgr) -> bytes:
         """Encode BGR frame to JPEG bytes using TurboJPEG (fast) or cv2 (fallback).
@@ -627,6 +820,26 @@ class BinaryAnnotStream:
             if not ok:
                 raise RuntimeError("JPEG encode failed")
             return buf.tobytes()
+
+    def _encode_preview_jpeg(self, bgr: np.ndarray, quality: int = 70) -> bytes:
+        """Encode JPEG for the bbox preview panel."""
+        q = max(30, min(quality, 95))
+        if HAVE_TURBOJPEG and self.jpeg:
+            kwargs = {"quality": q}
+            if 'subsampling' in self.jpeg.encode.__code__.co_varnames and TJSAMP_420 is not None:
+                kwargs["subsampling"] = TJSAMP_420
+            if 'flags' in self.jpeg.encode.__code__.co_varnames and TJFLAG_FASTDCT:
+                kwargs["flags"] = TJFLAG_FASTDCT
+            return self.jpeg.encode(bgr, **kwargs)
+
+        ok, buf = cv2.imencode(
+            '.jpg',
+            bgr,
+            [int(cv2.IMWRITE_JPEG_QUALITY), q]
+        )
+        if not ok:
+            raise RuntimeError("Preview JPEG encode failed")
+        return buf.tobytes()
     
     # ----------------------- Pipeline Threads -----------------------
     
@@ -842,22 +1055,87 @@ class BinaryAnnotStream:
             self._draw_rois_on_frame(frame)
 
             # Prepare detections metadata (ALWAYS, for future violations detection)
-            detections = []
+            detections: List[Dict[str, Any]] = []
+            frame_h, frame_w = frame.shape[:2]
+            frame_w = max(1, int(frame_w))
+            frame_h = max(1, int(frame_h))
+
+            if self.encode_width > 0 and frame_w > self.encode_width:
+                scale = self.encode_width / float(frame_w)
+                target_enc_w = self.encode_width
+                target_enc_h = int(round(frame_h * scale))
+            else:
+                target_enc_w = frame_w
+                target_enc_h = frame_h
+
+            target_enc_w = max(1, int(target_enc_w))
+            target_enc_h = max(1, int(target_enc_h))
+
+            scale_x = target_enc_w / float(frame_w)
+            scale_y = target_enc_h / float(frame_h)
+
             if tracks is not None and len(tracks) > 0:
                 for t in tracks:
-                    x1, y1, x2, y2, tid, cls_id = t
+                    try:
+                        x1, y1, x2, y2, tid, cls_id = map(float, t[:6])
+                    except Exception:
+                        continue
+
+                    # Clamp to frame boundaries
+                    x1 = max(0.0, min(x1, frame_w - 1.0))
+                    y1 = max(0.0, min(y1, frame_h - 1.0))
+                    x2 = max(x1 + 1.0, min(x2, frame_w * 1.0))
+                    y2 = max(y1 + 1.0, min(y2, frame_h * 1.0))
+
+                    norm = [
+                        max(0.0, min(x1 / frame_w, 1.0)),
+                        max(0.0, min(y1 / frame_h, 1.0)),
+                        max(0.0, min(x2 / frame_w, 1.0)),
+                        max(0.0, min(y2 / frame_h, 1.0)),
+                    ]
+
+                    bbox_encoded = [
+                        x1 * scale_x,
+                        y1 * scale_y,
+                        x2 * scale_x,
+                        y2 * scale_y,
+                    ]
+
+                    confidence = 1.0
+                    if isinstance(t, (list, tuple, np.ndarray)) and len(t) >= 7:
+                        try:
+                            confidence = float(t[6])
+                        except (TypeError, ValueError):
+                            confidence = 1.0
+
                     detections.append({
                         "bbox": [float(x1), float(y1), float(x2), float(y2)],
-                        "track_id": int(tid),
-                        "class_id": int(cls_id),
-                        "class_name": CLASS_NAMES.get(int(cls_id), "vehicle"),
-                        "confidence": 1.0,  # TODO: add real confidence from YOLO results
+                        "bbox_norm": [float(round(v, 6)) for v in norm],
+                        "bbox_encoded": [float(round(v, 2)) for v in bbox_encoded],
+                        "frame_size": [frame_w, frame_h],
+                        "encoded_size": [target_enc_w, target_enc_h],
+                        "track_id": int(round(tid)),
+                        "class_id": int(round(cls_id)),
+                        "class_name": CLASS_NAMES.get(int(round(cls_id)), "vehicle"),
+                        "confidence": float(confidence),
                         "violation": None   # TODO: integrate violation detection logic
                     })
-            
+
             # Store detections for this frame (accessible in send thread)
             self._current_detections = detections
-            
+
+            # Build bbox preview panel (3/4 video + 1/4 preview layout handled on frontend)
+            try:
+                bbox_preview = self._render_bbox_log(frame, detections)
+                preview_quality = max(40, self.jpeg_quality - 10)
+                preview_bytes = self._encode_preview_jpeg(bbox_preview, quality=preview_quality)
+                self._current_bbox_preview_b64 = base64.b64encode(preview_bytes).decode("ascii")
+                self._bbox_preview_resolution = (bbox_preview.shape[1], bbox_preview.shape[0])
+            except Exception as exc:
+                logger.debug("BBox preview generation failed: %s", exc)
+                self._current_bbox_preview_b64 = None
+                self._bbox_preview_resolution = None
+
             # Optionally draw bbox on frame (backward compatible mode)
             if self.enable_bbox_drawing and len(detections) > 0:
                 # DEBUG: Log first detection
@@ -957,10 +1235,17 @@ class BinaryAnnotStream:
     
     def info_packet(self) -> dict:
         """Get stream info packet (send once at start)"""
+        preview_w, preview_h = (
+            self._bbox_preview_resolution
+            if self._bbox_preview_resolution
+            else self._estimate_bbox_preview_resolution()
+        )
         return {
             "type": "info",
             "frame_width": self.w,
             "frame_height": self.h,
+            "encoded_frame_width": self._encoded_width or self.w,
+            "encoded_frame_height": self._encoded_height or self.h,
             "total_frames": self.total,
             "model": "yolo",
             "tracker": "bytetrack" if HAVE_BOXMOT else "ultralytics_persist",
@@ -973,6 +1258,11 @@ class BinaryAnnotStream:
             "roi_enabled": self.enable_roi,
             "roi_count": len(self._roi_polygons),
             "rois": self._copy_roi_polygons(),
+            "bbox_preview": {
+                "available": self._current_bbox_preview_b64 is not None,
+                "width": preview_w,
+                "height": preview_h,
+            },
             "modules": {
                 "yolo": self.enable_yolo,
                 "tracking": self.enable_tracking,
@@ -1015,7 +1305,18 @@ class BinaryAnnotStream:
             "type": "frame",
             "frame_idx": self.frame_idx,
             "fps": fps,
-            "detections": self._current_detections  # Include detections metadata
+            "detections": self._current_detections,  # Include detections metadata
+            "bbox_preview": self._current_bbox_preview_b64,
+            "bbox_preview_resolution": (
+                list(self._bbox_preview_resolution)
+                if self._bbox_preview_resolution
+                else None
+            ),
+            "encoded_size": [
+                int(self._encoded_width or 0),
+                int(self._encoded_height or 0)
+            ],
+            "frame_size": [self.w, self.h],
         }
         
         # Log progress every 30 frames
