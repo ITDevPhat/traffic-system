@@ -292,7 +292,7 @@ function DetectionPageBinaryContent() {
     
     const videoParam = searchParams?.get('video');
     if (!videoParam) {
-      toast.info('Loading models (GPU)...', { autoClose: 2000 });
+      safeToast.info('Loading models (GPU)...', { autoClose: 2000 });
     }
     
     try {
@@ -303,36 +303,51 @@ function DetectionPageBinaryContent() {
       clearTimeout(timeoutId);
       
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || 'Failed to load models');
+        // Try to parse JSON error response
+        let errorMessage = 'Failed to load models';
+        try {
+          const errorData = await res.json();
+          errorMessage = errorData?.detail?.error || errorData?.error || errorData?.detail || errorMessage;
+        } catch {
+          // If not JSON, try text
+          try {
+            const text = await res.text();
+            errorMessage = text || errorMessage;
+          } catch {
+            errorMessage = `HTTP ${res.status}: ${res.statusText}`;
+          }
+        }
+        throw new Error(errorMessage);
       }
+      
       const data = await res.json();
       if ((data?.device || '').toLowerCase() !== 'cuda') {
-        toast.error('GPU required. CUDA not detected.');
+        safeToast.error('GPU required. CUDA not detected.');
         return;
       }
       setModelLoaded(true);
       
       const videoParam = searchParams?.get('video');
       if (videoParam) {
-        console.log('? Models loaded - ready for auto-start');
+        console.log('✅ Models loaded - ready for auto-start');
         // Don't show toast if auto-starting (to avoid spam)
       } else {
-        toast.success('Models ready on GPU (CUDA)', { icon: '??', autoClose: 2000 });
+        safeToast.success('Models ready on GPU (CUDA)', { autoClose: 2000 });
       }
     } catch (e) {
-      console.error(e);
+      console.error('Model loading error:', e);
       clearTimeout(timeoutId);
       
       if (e.name === 'AbortError') {
-        toast.error('Model loading timeout! Check backend.');
+        safeToast.error('Model loading timeout! Check backend.');
       } else {
-        toast.error(`Cannot load models: ${e.message}`);
+        const errorMsg = e.message || 'Unknown error';
+        safeToast.error(`Cannot load models: ${errorMsg}`);
       }
     } finally {
       setIsLoadingModels(false);
     }
-  }, [modelLoaded, isLoadingModels, searchParams]);
+  }, [modelLoaded, isLoadingModels, searchParams, safeToast]);
 
   // Auto-load models on mount (non-blocking) - ưu tiên nếu có video param
   useEffect(() => {
@@ -505,7 +520,7 @@ function DetectionPageBinaryContent() {
             // Next message should be binary JPEG
             setExpectBinary(true);
           } else if (pkt.type === 'error') {
-            toast.error(`Server Error: ${pkt.message}`);
+            safeToast.error(`Server Error: ${pkt.message}`);
             stopDetection();
           } else if (pkt.type === 'roi_ack') {
             const count = typeof pkt.count === 'number' ? pkt.count : 0;
@@ -666,29 +681,29 @@ function DetectionPageBinaryContent() {
     // If models not loaded yet, try to load them first
       if (!modelLoaded) {
       if (!isLoadingModels) {
-        toast.info('Loading models first...', { autoClose: 1500 });
+        safeToast.info('Loading models first...', { autoClose: 1500 });
         await loadModels();
       } else {
-        toast.warning('Models still loading, please wait...');
+        safeToast.warning('Models still loading, please wait...');
         return;
       }
       
       // Check again after loading
       if (!modelLoaded) {
-        toast.error('Failed to load models. Check GPU.');
+        safeToast.error('Failed to load models. Check GPU.');
           return;
         }
     }
     
     let currentSource = source;
     if (!videoLoaded) {
-      toast.warning('Please upload a video first.');
+      safeToast.warning('Please upload a video first.');
         return;
       }
       
       setDetecting(true);
     connectWebSocket(currentSource);
-    toast.info('Detection started!');
+    safeToast.info('Detection started!');
   };
 
   const stopDetection = () => {
@@ -696,6 +711,7 @@ function DetectionPageBinaryContent() {
       wsRef.current.close();
       wsRef.current = null;
     }
+    safeToast.info('Detection stopped.');
     // Clear decode/display buffers
     lastBufferRef.current = null;
     decodingRef.current = false;
@@ -709,7 +725,6 @@ function DetectionPageBinaryContent() {
     setDetecting(false);
     setConnected(false);
     lastRoiSignatureRef.current = '';
-    toast.info('Detection stopped.');
   };
 
   const handleVideoUpload = async (e) => {
@@ -719,7 +734,7 @@ function DetectionPageBinaryContent() {
     // Check file size (limit 500MB)
     const maxSize = 500 * 1024 * 1024; // 500MB
     if (file.size > maxSize) {
-      toast.error('Video too large! Max 500MB.');
+      safeToast.error('Video too large! Max 500MB.');
       return;
     }
 
@@ -728,7 +743,7 @@ function DetectionPageBinaryContent() {
     // Show progress only for large files
     let toastId = null;
     if (file.size > 10 * 1024 * 1024) { // > 10MB
-      toastId = toast.info(`Uploading ${file.name}... (${(file.size / 1024 / 1024).toFixed(1)}MB)`, {
+      toastId = safeToast.info(`Uploading ${file.name}... (${(file.size / 1024 / 1024).toFixed(1)}MB)`, {
         autoClose: false,
         closeButton: false
       });
@@ -750,7 +765,7 @@ function DetectionPageBinaryContent() {
       });
       
       clearTimeout(timeoutId);
-      if (toastId) toast.dismiss(toastId);
+      if (toastId) safeToast.dismiss(toastId);
       
       if (!response.ok) {
         const errorText = await response.text();
@@ -761,20 +776,20 @@ function DetectionPageBinaryContent() {
       if (data.ok) {
         setSource(data.temp_path);
         setVideoLoaded(true);
-        toast.success(`Video ready: ${file.name}`, { autoClose: 2000 });
+        safeToast.success(`Video ready: ${file.name}`, { autoClose: 2000 });
       } else {
         throw new Error(data.error || 'Upload failed');
       }
     } catch (error) {
       clearTimeout(timeoutId);
-      toast.dismiss(toastId);
+      safeToast.dismiss(toastId);
       
       console.error('Upload error:', error);
       
       if (error.name === 'AbortError') {
-        toast.error('Upload timeout! Try smaller video.');
+        safeToast.error('Upload timeout! Try smaller video.');
       } else {
-        toast.error(`Upload error: ${error.message}`);
+        safeToast.error(`Upload error: ${error.message}`);
       }
     } finally {
       setIsUploadingVideo(false);
@@ -795,10 +810,10 @@ function DetectionPageBinaryContent() {
       const cmd = { command: 'toggle_bbox', enabled: enabled };
       console.log('📤 Sending command:', cmd);
       wsRef.current.send(JSON.stringify(cmd));
-      toast.success(`BBox ${enabled ? 'enabled' : 'disabled'}`, { autoClose: 1000 });
+      safeToast.success(`BBox ${enabled ? 'enabled' : 'disabled'}`, { autoClose: 1000 });
     } else if (detecting && module !== 'bboxDrawing') {
       // YOLO and Tracking require full restart
-      toast.info(`${module === 'yolo' ? 'YOLO' : 'Tracking'} will apply on next detection start`, {
+      safeToast.info(`${module === 'yolo' ? 'YOLO' : 'Tracking'} will apply on next detection start`, {
         autoClose: 2000
       });
     }

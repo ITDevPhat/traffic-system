@@ -267,35 +267,64 @@ async def realtime_seek(payload: Dict[str, Any] = Body(...)):
 @router.post("/models/load")
 async def load_models():
     """Load YOLO models onto GPU - Fast check only"""
-    # Quick GPU check without heavy imports
-    cuda_available = False
-    device_name = "Unknown"
-    
-    if torch is not None:
-        cuda_available = torch.cuda.is_available()
-        if cuda_available:
-            device_name = torch.cuda.get_device_name(0)
-    
-    if not cuda_available:
-        detail = {
-            "error": "GPU not detected: CUDA required.",
-            "torch_cuda_available": cuda_available,
+    try:
+        # Quick GPU check without heavy imports
+        cuda_available = False
+        device_name = "Unknown"
+        
+        if torch is not None:
+            cuda_available = torch.cuda.is_available()
+            if cuda_available:
+                try:
+                    device_name = torch.cuda.get_device_name(0)
+                except Exception as e:
+                    logger.warning(f"Failed to get device name: {e}")
+                    device_name = "CUDA Device"
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error": "PyTorch not available",
+                    "message": "PyTorch library is not installed or not accessible"
+                }
+            )
+        
+        if not cuda_available:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "GPU not detected: CUDA required.",
+                    "message": "CUDA is not available. Please ensure NVIDIA GPU drivers and CUDA are installed.",
+                    "torch_cuda_available": cuda_available,
+                }
+            )
+        
+        # Just verify CUDA is available
+        # Actual model loading happens in BinaryAnnotStream
+        return {
+            "status": "models ready",
+            "device": "cuda",
+            "device_name": device_name,
+            "note": "Models will be loaded when detection starts"
         }
-        raise HTTPException(status_code=400, detail=detail)
-    
-    # Just verify CUDA is available
-    # Actual model loading happens in BinaryAnnotStream
-    return {
-        "status": "models ready",
-        "device": "cuda",
-        "device_name": device_name,
-        "note": "Models will be loaded when detection starts"
-    }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in load_models: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": str(e),
+                "message": "Internal server error while checking GPU status"
+            }
+        )
 
 
 @router.get("/models/available")
 async def get_available_models():
-    """Get list of available YOLO models from traffic-server/models/"""
+    """Get list of available YOLO models from traffic-server/models/
+    Supports .engine, .onnx, .pt formats
+    """
     # Always use traffic-server/models as the standard location
     models_dir = "models"
     if not os.path.exists(models_dir):
@@ -305,7 +334,18 @@ async def get_available_models():
         return {"ok": False, "error": "Models directory not found"}
     
     logger.info(f"📂 Scanning models in: {models_dir}")
-    pt_files = glob.glob(os.path.join(models_dir, "*.pt"))
+    
+    # Scan all supported formats: .engine > .onnx > .pt (priority order)
+    model_extensions = ["*.engine", "*.onnx", "*.pt"]
+    all_files = []
+    for ext in model_extensions:
+        files = glob.glob(os.path.join(models_dir, "**", ext), recursive=True)
+        all_files.extend(files)
+    
+    # Also scan root directory
+    for ext in model_extensions:
+        files = glob.glob(os.path.join(models_dir, ext))
+        all_files.extend(files)
     
     models = {
         "vehicle": [],
@@ -314,16 +354,40 @@ async def get_available_models():
         "traffic_light": []
     }
     
-    for pt_file in pt_files:
-        basename = os.path.basename(pt_file)
+    # Track which models we've found (to avoid duplicates, prioritize .engine > .onnx > .pt)
+    found_models = {}
+    
+    for model_file in all_files:
+        basename = os.path.basename(model_file)
+        model_name = os.path.splitext(basename)[0]  # Without extension
+        ext = os.path.splitext(basename)[1].lower()
+        
+        # Priority: engine=1, onnx=2, pt=3
+        priority = {"engine": 1, "onnx": 2, "pt": 3}.get(ext[1:], 999)
+        
+        category = None
         if "vehicle" in basename.lower():
-            models["vehicle"].append(basename)
+            category = "vehicle"
         elif "plate" in basename.lower():
-            models["plate"].append(basename)
+            category = "plate"
         elif "ocr" in basename.lower():
-            models["ocr"].append(basename)
+            category = "ocr"
         elif "light" in basename.lower() or "traffic" in basename.lower():
-            models["traffic_light"].append(basename)
+            category = "traffic_light"
+        
+        if category:
+            # Only add if we haven't seen this model, or if this format has higher priority
+            key = f"{category}_{model_name}"
+            if key not in found_models or found_models[key][1] > priority:
+                # Remove old entry if exists
+                if key in found_models:
+                    old_entry = found_models[key][0]
+                    if old_entry in models[category]:
+                        models[category].remove(old_entry)
+                
+                # Add new entry
+                models[category].append(basename)
+                found_models[key] = (basename, priority)
     
     return {"ok": True, "models": models}
 

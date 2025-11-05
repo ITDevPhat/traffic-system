@@ -725,14 +725,14 @@ class BinaryAnnotStream:
                 boxes = results.boxes
                 if boxes is not None and len(boxes) > 0:
                     cls = boxes.cls.cpu().numpy().astype(int)
-                    if self.frame_idx % 30 == 1:
+                    if self.frame_idx % 100 == 1:
                         logger.info(f"🔍 Frame {self.frame_idx}: Raw detections: {len(cls)} objects, classes: {cls}")
                     mask = np.isin(cls, list(VEHICLE_IDS))
                     xyxy = boxes.xyxy.cpu().numpy()[mask]
                     confs = boxes.conf.cpu().numpy()[mask]
                     clss = cls[mask]
-                    if self.frame_idx % 30 == 1 and len(clss) > 0:
-                        logger.info(f"🔍 Frame {self.frame_idx}: Filtered: {len(clss)} vehicles, classes: {clss}")
+                    if self.frame_idx % 100 == 1 and len(clss) > 0:
+                        logger.info(f"🔍 Frame {self.frame_idx}: Filtered: {len(clss)} vehicles, classes: {clss}, HAVE_BOXMOT={HAVE_BOXMOT}, enable_tracking={self.enable_tracking}")
                 else:
                     xyxy = np.empty((0, 4), dtype=float)
                     confs = np.empty((0,), dtype=float)
@@ -743,6 +743,10 @@ class BinaryAnnotStream:
                 xyxy, confs, clss = self._filter_keyframe_detections(xyxy, confs, clss)
 
                 if HAVE_BOXMOT and self.tracker is not None and self.enable_tracking:
+                    # Use ByteTrack (boxmot) - preferred method
+                    if self.frame_idx % 100 == 1:
+                        logger.info(f"✅ Using ByteTrack for frame {self.frame_idx}, input: xyxy.shape={xyxy.shape}, confs.shape={confs.shape}, clss.shape={clss.shape}")
+                    
                     online_targets = self.tracker.update(
                         dets=xyxy,
                         scores=confs,
@@ -750,41 +754,32 @@ class BinaryAnnotStream:
                         img=frame
                     )
                     tracks = online_targets
-                elif self.enable_tracking:
-                    # Fallback: run ultralytics tracker (still heavy)
-                    if self.stop_ev.is_set() or self.model is None:
-                        break
-                    try:
-                        res2 = self.model.track(
-                            frame,
-                            conf=self.conf,
-                            persist=True,
-                            verbose=False,
-                            classes=list(VEHICLE_IDS),
-                            device=self.device,
-                            imgsz=self.imgsz,
-                            half=True
-                        )[0]
-                    except Exception as e:
-                        if self.stop_ev.is_set() or self.model is None:
-                            break
-                        raise e
-                    if res2.boxes is not None and len(res2.boxes) > 0:
-                        for box in res2.boxes:
-                            cls_id = int(box.cls[0])
-                            if cls_id not in VEHICLE_IDS:
-                                continue
-                            x1, y1, x2, y2 = map(float, box.xyxy[0].tolist())
-                            tid = int(box.id[0]) if box.id is not None else -1
-                            tracks.append(np.array([x1, y1, x2, y2, tid, cls_id], dtype=float))
+                    
+                    if self.frame_idx % 100 == 1:
+                        logger.info(f"📊 ByteTrack returned {len(tracks) if tracks is not None else 0} tracks")
+                        if tracks is not None and len(tracks) > 0:
+                            first_track = tracks[0]
+                            logger.info(f"🔬 First track type: {type(first_track)}, shape/len: {first_track.shape if hasattr(first_track, 'shape') else len(first_track) if hasattr(first_track, '__len__') else 'N/A'}, content: {first_track}")
                 else:
-                    # No tracking - just raw detections
+                    # No tracking or tracking not available
+                    # For .engine and .onnx models, tracking doesn't work with ultralytics
+                    # Use raw detections with sequential IDs
+                    if self.frame_idx % 100 == 1:
+                        logger.info(f"⚠️ ByteTrack not available, using raw detections. xyxy.shape={xyxy.shape if xyxy is not None else 'None'}")
                     if len(xyxy) > 0:
                         for i, (x1, y1, x2, y2) in enumerate(xyxy):
                             cls_id = int(clss[i]) if i < len(clss) else 0
-                            tracks.append(np.array([x1, y1, x2, y2, i, cls_id], dtype=float))
+                            conf_val = float(confs[i]) if i < len(confs) else 1.0
+                            # Use frame_idx + i as pseudo track ID for stability
+                            tid = (self.frame_idx * 1000 + i) % 999999
+                            tracks.append(np.array([x1, y1, x2, y2, tid, cls_id], dtype=float))
+                        if self.frame_idx % 100 == 1:
+                            logger.info(f"✅ Created {len(tracks)} tracks with pseudo IDs")
 
                 tracks = self._filter_tracks_by_roi(tracks)
+                
+                if self.frame_idx % 100 == 1:
+                    logger.info(f"📍 After ROI filter: {len(tracks) if tracks is not None else 0} tracks")
 
                 # Update track state and velocities
                 dt = (now - self.last_detect_ts) if self.last_detect_ts else (1.0 / max(self.veh_detect_hz, 1))
@@ -805,6 +800,9 @@ class BinaryAnnotStream:
                 self.last_detect_ts = now
                 detect_duration = time.perf_counter() - detect_start
                 self._update_detect_interval(detect_duration)
+                
+                if self.frame_idx % 100 == 1:
+                    logger.info(f"✅ Detection complete: {len(new_state)} tracks in state")
             else:
                 # Predict tracks between keyframes for perceived 60 fps
                 dt = min(now - self.last_detect_ts, 0.5)
@@ -845,24 +843,42 @@ class BinaryAnnotStream:
             detections = []
             if tracks is not None and len(tracks) > 0:
                 for t in tracks:
-                    x1, y1, x2, y2, tid, cls_id = t
-                    detections.append({
-                        "bbox": [float(x1), float(y1), float(x2), float(y2)],
-                        "track_id": int(tid),
-                        "class_id": int(cls_id),
-                        "class_name": CLASS_NAMES.get(int(cls_id), "vehicle"),
-                        "confidence": 1.0,  # TODO: add real confidence from YOLO results
-                        "violation": None   # TODO: integrate violation detection logic
-                    })
+                    try:
+                        # ByteTrack format: [x1, y1, x2, y2, tid, cid]
+                        if len(t) >= 6:
+                            x1, y1, x2, y2, tid, cls_id = t[:6]
+                        elif len(t) >= 5:
+                            x1, y1, x2, y2, tid = t[:5]
+                            cls_id = 0  # default
+                        else:
+                            x1, y1, x2, y2 = t[:4]
+                            tid = -1
+                            cls_id = 0
+                        
+                        detections.append({
+                            "bbox": [float(x1), float(y1), float(x2), float(y2)],
+                            "track_id": int(tid),
+                            "class_id": int(cls_id),
+                            "class_name": CLASS_NAMES.get(int(cls_id), "vehicle"),
+                            "confidence": 1.0,  # TODO: add real confidence from YOLO results
+                            "violation": None   # TODO: integrate violation detection logic
+                        })
+                    except Exception as e:
+                        logger.warning(f"⚠️  Failed to parse track: {e}, track shape: {t.shape if hasattr(t, 'shape') else len(t) if hasattr(t, '__len__') else 'unknown'}")
+                        continue
             
             # Store detections for this frame (accessible in send thread)
             self._current_detections = detections
+            
+            # DEBUG: Log frame info periodically
+            if self.frame_idx % 30 == 1:
+                logger.info(f"📊 Frame {self.frame_idx}: tracks={len(tracks) if tracks is not None else 0}, detections={len(detections)}, enable_bbox={self.enable_bbox_drawing}, frame.shape={frame.shape}")
             
             # Optionally draw bbox on frame (backward compatible mode)
             if self.enable_bbox_drawing and len(detections) > 0:
                 # DEBUG: Log first detection
                 if self.frame_idx % 30 == 1:
-                    logger.info(f"🎯 Frame {self.frame_idx}: {len(detections)} detections")
+                    logger.info(f"🎯 Frame {self.frame_idx}: Drawing {len(detections)} bboxes. First bbox: {detections[0]}")
                 
                 for det in detections:
                     x1, y1, x2, y2 = [int(v) for v in det["bbox"]]
@@ -870,22 +886,34 @@ class BinaryAnnotStream:
                     cls_id = det["class_id"]
                     cls_name = det["class_name"]
                     
-                    # Get color
+                    # Validate bbox coordinates
+                    if x1 >= x2 or y1 >= y2 or x1 < 0 or y1 < 0:
+                        logger.warning(f"⚠️  Invalid bbox: ({x1}, {y1}, {x2}, {y2})")
+                        continue
+                    
+                    # Get color (bright, high contrast colors)
                     color = CLASS_COLORS.get(cls_id, (0, 255, 0))
                     
-                    # Draw bbox
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2, cv2.LINE_AA)
+                    # Draw bbox with VERY THICK lines for maximum visibility
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 5, cv2.LINE_AA)
                     
-                    # Draw label with background
+                    # Draw label with background (larger, bold)
                     label = f"{cls_name} #{tid}"
-                    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-                    cv2.rectangle(frame, (x1, y1 - th - 8), (x1 + tw + 4, y1), color, -1)
-                    cv2.putText(frame, label, (x1 + 2, y1 - 4),
-                              cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2, cv2.LINE_AA)
-            else:
-                # DEBUG: No tracks
+                    font_scale = 0.8
+                    font_thickness = 2
+                    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)
+                    label_y1 = max(y1 - th - 12, 0)
+                    label_y2 = y1
+                    cv2.rectangle(frame, (x1, label_y1), (x1 + tw + 10, label_y2), color, -1, cv2.LINE_AA)
+                    # Draw label text (white, bold, larger)
+                    cv2.putText(frame, label, (x1 + 5, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), font_thickness, cv2.LINE_AA)
+                    
                 if self.frame_idx % 30 == 1:
-                    logger.info(f"⚠️ Frame {self.frame_idx}: No detections")
+                    logger.info(f"✅ Successfully drew {len(detections)} bboxes on frame {self.frame_idx}")
+            elif self.enable_bbox_drawing and self.frame_idx % 30 == 1:
+                logger.info(f"⚠️  BBox drawing enabled but no detections to draw (frame {self.frame_idx})")
+            elif not self.enable_bbox_drawing and self.frame_idx % 100 == 1:
+                logger.info(f"ℹ️  BBox drawing is DISABLED (frame {self.frame_idx})")
             
             # Downscale before encode (faster JPEG compression)
             enc_frame = self._downscale_for_encode(frame)

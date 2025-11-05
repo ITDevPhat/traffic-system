@@ -4,7 +4,6 @@ import { Figtree } from 'next/font/google';
 import Image from 'next/image';
 import NextTopLoader from 'nextjs-toploader';
 import '@/assets/scss/app.scss';
-import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { DEFAULT_PAGE_TITLE } from '@/context/constants';
 const figtree = Figtree({
@@ -67,7 +66,6 @@ export default function RootLayout({
         <div id="__next_splash">
           <AppProvidersWrapper>{children}</AppProvidersWrapper>
         </div>
-        <ToastContainer position="top-right" autoClose={2500} newestOnTop hideProgressBar theme="dark" closeOnClick pauseOnHover />
       </body>
     </html>;
 }

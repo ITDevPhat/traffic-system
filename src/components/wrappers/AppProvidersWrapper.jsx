@@ -34,7 +34,16 @@ const AppProvidersWrapper = ({
       <LayoutProvider>
         <NotificationProvider>
           {children}
-          <ToastContainer theme="colored" />
+          <ToastContainer 
+            position="top-right" 
+            autoClose={2500} 
+            newestOnTop 
+            hideProgressBar 
+            theme="dark" 
+            closeOnClick 
+            pauseOnHover
+            enableMultiContainer={false}
+          />
         </NotificationProvider>
       </LayoutProvider>
     </SessionProvider>;

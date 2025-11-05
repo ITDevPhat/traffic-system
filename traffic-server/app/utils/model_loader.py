@@ -151,6 +151,9 @@ def load_tensorrt_model(
     """
     Load TensorRT .engine model
     Tối ưu nhất cho RTX 3050 4GB
+    
+    Note: TensorRT models KHÔNG hỗ trợ .to(device), .half(), .fuse()
+    Device được chỉ định trong predict() method
     """
     if not HAVE_ULTRALYTICS:
         raise RuntimeError("ultralytics not available")
@@ -158,26 +161,19 @@ def load_tensorrt_model(
     logger.info(f"🚀 Loading TensorRT engine: {model_path}")
     
     # YOLO có thể load .engine trực tiếp
+    # Không cần .to(device) vì TensorRT đã optimize sẵn
     model = YOLO(model_path)
     
-    # Move to device
-    if device.startswith("cuda"):
-        model.to(device)
-        if torch.cuda.is_available():
-            try:
-                # Enable FP16
-                if half:
-                    model.half()
-                # Optimize
-                model.fuse()
-                # Set CUDA optimizations
-                torch.backends.cudnn.benchmark = True
-                torch.backends.cuda.matmul.allow_tf32 = True
-                torch.backends.cudnn.allow_tf32 = True
-            except Exception as e:
-                logger.warning(f"CUDA optimization failed: {e}")
+    # Set CUDA optimizations (chỉ cho torch backend, không phải model)
+    if device.startswith("cuda") and torch.cuda.is_available():
+        try:
+            torch.backends.cudnn.benchmark = True
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+        except Exception as e:
+            logger.warning(f"CUDA optimization failed: {e}")
     
-    logger.info(f"✅ TensorRT model loaded successfully")
+    logger.info(f"✅ TensorRT model loaded successfully (device will be set in predict())")
     return model
 
 
@@ -190,6 +186,9 @@ def load_onnx_model(
     """
     Load ONNX model với ONNX Runtime
     Tối ưu cho GPU với ExecutionProvider
+    
+    Note: ONNX models KHÔNG hỗ trợ .to(device), .half(), .fuse()
+    Device được chỉ định trong predict() method
     """
     if not HAVE_ULTRALYTICS:
         raise RuntimeError("ultralytics not available")
@@ -197,26 +196,19 @@ def load_onnx_model(
     logger.info(f"⚡ Loading ONNX model: {model_path}")
     
     # YOLO có thể load .onnx trực tiếp
+    # Không cần .to(device) vì ONNX Runtime tự quản lý device
     model = YOLO(model_path)
     
-    # Move to device
-    if device.startswith("cuda"):
-        model.to(device)
-        if torch.cuda.is_available():
-            try:
-                # Enable FP16
-                if half:
-                    model.half()
-                # Optimize
-                model.fuse()
-                # Set CUDA optimizations
-                torch.backends.cudnn.benchmark = True
-                torch.backends.cuda.matmul.allow_tf32 = True
-                torch.backends.cudnn.allow_tf32 = True
-            except Exception as e:
-                logger.warning(f"CUDA optimization failed: {e}")
+    # Set CUDA optimizations (chỉ cho torch backend, không phải model)
+    if device.startswith("cuda") and torch.cuda.is_available():
+        try:
+            torch.backends.cudnn.benchmark = True
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+        except Exception as e:
+            logger.warning(f"CUDA optimization failed: {e}")
     
-    logger.info(f"✅ ONNX model loaded successfully")
+    logger.info(f"✅ ONNX model loaded successfully (device will be set in predict())")
     return model
 
 
