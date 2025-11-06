@@ -1,0 +1,25 @@
+# Requirements cho FastAPI Backend
+# Cài đặt: pip install -r requirements.txt
+
+# Core dependencies
+opencv-python>=4.8.0
+torch>=2.0.0
+torchvision>=0.15.0
+numpy>=1.23.0
+ultralytics>=8.2.0
+Pillow>=10.0.0
+
+# Web framework (FastAPI)
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+
+# Utils
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+requests>=2.31.0  # Cho test script
+
+# Performance optimization (optional)
+# onnxruntime-gpu>=1.16.0  # Uncomment để dùng ONNX Runtime với GPU
+# onnx>=1.14.0  # Uncomment để dùng ONNX
+

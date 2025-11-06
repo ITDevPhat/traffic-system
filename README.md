@@ -26,14 +26,29 @@ Frontend (Next.js)     ←→     WebSocket     ←→     Backend (FastAPI)
    Admin Panel            Violations                 OCR Engine
 ```
 
+## 📖 Documentation
+
+**👉 Xem [COMPLETE_GUIDE.md](COMPLETE_GUIDE.md) để có hướng dẫn chi tiết đầy đủ!**
+
+Bao gồm:
+- ✅ Hướng dẫn cài đặt từ A-Z (Anaconda, GPU, Database)
+- ✅ Kiến trúc hệ thống chi tiết
+- ✅ Luồng xử lý (Pipeline)
+- ✅ Model YOLO (.pt, .onnx, .engine)
+- ✅ Giải thích Confidence Threshold
+- ✅ Cấu hình & Tối ưu
+- ✅ Frontend & Backend
+- ✅ Troubleshooting
+
 ## 🚀 Quick Start
 
 ### Prerequisites
 
-- Python 3.8+
-- Node.js 16+
-- CUDA-capable GPU (recommended)
+- Python 3.8 - 3.11
+- Node.js 16+ - 18.x
+- CUDA-capable GPU (recommended, RTX 3050+)
 - Anaconda/Miniconda
+- PostgreSQL 12+
 
 ### Installation
 
@@ -43,57 +58,59 @@ git clone https://github.com/yourusername/traffic-system.git
 cd traffic-system
 ```
 
-2. **Set up the backend (FastAPI + YOLO)**
+2. **Set up Anaconda environment**
 ```bash
-cd traffic-server
-
-# Create conda environment
-conda create -n LVTN python=3.8
+conda create -n LVTN python=3.10
 conda activate LVTN
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Download YOLO models (if not included)
-# Models should be placed in traffic-server/models/
 ```
 
-3. **Set up the frontend (Next.js)**
+3. **Install PyTorch with CUDA** (if using GPU)
+```bash
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+```
+
+4. **Set up the backend**
+```bash
+cd traffic-server
+pip install -r requirements.txt
+```
+
+5. **Set up the frontend**
 ```bash
 # From project root
 npm install
-# or
-yarn install
 ```
 
-4. **Configure environment variables**
+6. **Configure environment variables**
 
-Create `.env` file in traffic-server directory:
+Create `.env` file in `traffic-server/`:
 ```env
-DATABASE_URL=sqlite:///./traffic.db
+DATABASE_URL=postgresql://user:password@localhost:5432/traffic_db
 SECRET_KEY=your-secret-key-here
-DEVICE=cuda  # or cpu
-STATIC_DIR=./static
-OUTPUT_DIR=./static/outputs
+DEVICE=cuda:0
+STATIC_DIR=static
+VIDEOS_DIR=videos
+EVIDENCE_DIR=evidence
 ```
 
 ### Running the Application
 
-**Terminal 1 - Start the backend server:**
+**Terminal 1 - Backend (FastAPI):**
 ```bash
 cd traffic-server
 conda activate LVTN
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-**Terminal 2 - Start the frontend:**
+**Terminal 2 - Frontend (Next.js):**
 ```bash
 npm run dev
-# or
-yarn dev
 ```
 
-Access the application at `http://localhost:3000`
+**Access:**
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:8000
+- API Docs: http://localhost:8000/docs
 
 ## 📁 Project Structure
 

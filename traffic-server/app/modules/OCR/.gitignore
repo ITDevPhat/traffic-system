@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test results
+test_results_images/
+*.json
+!requirements.txt
+
+# Models (nếu quá lớn, có thể ignore)
+# models/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+

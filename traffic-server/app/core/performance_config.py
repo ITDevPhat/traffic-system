@@ -110,11 +110,26 @@ ENABLE_ASYNC_INFERENCE = True  # Enable async inference
 # ============================================
 
 BYTETRACK_SETTINGS = {
-    "track_thresh": 0.5,      # High threshold for new tracks
-    "track_buffer": 30,       # Track buffer frames (1 sec at 30fps)
-    "match_thresh": 0.8,      # High matching threshold
+    "track_thresh": 0.3,      # Lower threshold for new tracks (easier to start tracking)
+    "track_buffer": 60,       # Track buffer frames (2 sec at 30fps) - INCREASED for better continuity
+    "match_thresh": 0.6,      # Lower matching threshold (easier to match tracks) - DECREASED
     "min_box_area": 100,      # Minimum bbox area
     "mot20": False,           # MOT17 mode (faster)
+}
+
+
+# ============================================
+# 🎯 Track Smoothing for Visualization Stability
+# ============================================
+
+# Track smoothing for front-end visualization stability
+TRACK_SMOOTHING_SETTINGS = {
+    "enabled": True,              # Enable low-pass smoothing on track boxes
+    "position_alpha": 0.75,       # Higher = stickier to previous center (0-1) - INCREASED for smoother
+    "size_alpha": 0.65,           # Smooth width/height changes (0-1) - INCREASED for smoother
+    "max_center_shift": 150.0,    # Allow raw jump (pixels) before bypassing smoothing - INCREASED
+    "max_scale_change": 2.0,      # Allowable scale ratio jump before bypassing smoothing - INCREASED
+    "min_confidence": 0.0,        # Reserved for future confidence-aware smoothing
 }
 
 
@@ -163,6 +178,22 @@ MODEL_PRIORITY = [
     "onnx",    # ONNX Runtime (fast) - 2-3x faster than .pt
     "pt",      # PyTorch (slowest) - fallback
 ]
+
+
+# ============================================
+# 🔤 OCR Settings (License Plate Recognition)
+# ============================================
+
+OCR_SETTINGS = {
+    "enabled": True,                    # Enable OCR
+    "model_type": "auto",               # Auto-detect: engine > onnx > pt
+    "plate_conf_threshold": 0.6,        # Confidence threshold for plate detection
+    "ocr_debounce_sec": 1.0,            # Min time between OCR calls per track (seconds)
+    "min_track_frames": 3,              # Min frames before OCR (stability check)
+    "bbox_expand_ratio": 0.15,          # Expand vehicle bbox before crop (15%)
+    "cleanup_interval_sec": 10.0,       # Cleanup old tracks every N seconds
+    "max_track_age_sec": 5.0,           # Remove tracks inactive for N seconds
+}
 
 
 # ============================================
