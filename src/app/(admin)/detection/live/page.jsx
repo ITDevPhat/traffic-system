@@ -204,18 +204,25 @@ function DetectionPageBinaryContent() {
   const [modelLoaded, setModelLoaded] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [isUploadingVideo, setIsUploadingVideo] = useState(false);
-  const [availableModels, setAvailableModels] = useState([]); // vehicle models full paths
-  const [selectedModel, setSelectedModel] = useState('models/yolov8n.pt');
+  const [availableModels, setAvailableModels] = useState([
+    { name: 'YOLOv10m (TensorRT)', path: 'models/vehicle/v10m/yolo_vehicle_v10m.engine', format: 'engine' },
+    { name: 'YOLOv10m (ONNX)', path: 'models/vehicle/v10m/yolo_vehicle_v10m.onnx', format: 'onnx' },
+    { name: 'YOLOv10m (PyTorch)', path: 'models/vehicle/v10m/yolo_vehicle_v10m.pt', format: 'pt' },
+    { name: 'YOLOv11s (TensorRT)', path: 'models/vehicle/11s/yolo_vehicle_11s.engine', format: 'engine' },
+    { name: 'YOLOv11s (ONNX)', path: 'models/vehicle/11s/yolo_vehicle_11s.onnx', format: 'onnx' },
+    { name: 'YOLOv11s (PyTorch)', path: 'models/vehicle/11s/yolo_vehicle_11s.pt', format: 'pt' },
+  ]);
+  const [selectedModel, setSelectedModel] = useState('models/vehicle/11s/yolo_vehicle_11s.engine'); // Default: 11s TensorRT
   const [autoStart, setAutoStart] = useState(false); // Flag to auto-start detection
   const [warmupProgress, setWarmupProgress] = useState(0); // Warmup progress 0-100
   const [isWarmingUp, setIsWarmingUp] = useState(false); // Warmup phase
   
   // Optimized settings defaults
   const [settings, setSettings] = useState({
-    conf: 0.35,
+    conf: 0.5,           // Increased from 0.35
     target_fps: 45,
-    jpeg_quality: 55,
-    inference_size: 480,
+    jpeg_quality: 60,    // Increased from 55
+    inference_size: 640, // CRITICAL FIX: Was 480, must be 640 for TensorRT
     encode_width: 960,
     veh_detect_hz: 25,
     force_gpu: true
@@ -248,8 +255,14 @@ function DetectionPageBinaryContent() {
         wsRef.current.close();
         wsRef.current = null;
       }
-      // Dismiss all toasts when component unmounts
-      toast.dismiss();
+      // Dismiss all toasts when component unmounts (with safe check)
+      try {
+        if (typeof toast !== 'undefined' && toast && typeof toast.dismiss === 'function') {
+          toast.dismiss();
+        }
+      } catch (error) {
+        console.warn('⚠️ Toast cleanup error (safe to ignore):', error);
+      }
     };
   }, []);
 
@@ -1017,20 +1030,26 @@ function DetectionPageBinaryContent() {
 
               <Col xs="auto">
                 <Form.Group className="mb-0">
-                  <Form.Label className="mb-1">Vehicle Model</Form.Label>
+                  <Form.Label className="mb-1">
+                    <strong>🧠 Model</strong>
+                  </Form.Label>
                   <Form.Select
                     value={selectedModel}
                     onChange={(e) => setSelectedModel(e.target.value)}
                     disabled={detecting}
-                    style={{ minWidth: 260 }}
+                    style={{ minWidth: 280, fontSize: '0.9rem' }}
                   >
-                    {availableModels.length === 0 && (
-                      <option value={selectedModel}>Auto (yolov8n)</option>
-                    )}
-                    {availableModels.map((p) => (
-                      <option key={p} value={p}>{p}</option>
+                    {availableModels.map((model) => (
+                      <option key={model.path} value={model.path}>
+                        {model.name} {model.format === 'engine' && '⚡'}
+                      </option>
                     ))}
                   </Form.Select>
+                  <Form.Text className="text-muted" style={{ fontSize: '0.75rem' }}>
+                    {selectedModel.includes('.engine') && '⚡ TensorRT (Fastest)'}
+                    {selectedModel.includes('.onnx') && '⚙️ ONNX (Fast)'}
+                    {selectedModel.includes('.pt') && '📦 PyTorch (Slow)'}
+                  </Form.Text>
                 </Form.Group>
                   </Col>
                   

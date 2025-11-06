@@ -18,7 +18,19 @@ class Settings(BaseSettings):
     # ============================================
     # Base paths (without extension) - sẽ auto-detect .engine/.onnx/.pt
     MODELS_DIR: str = os.path.join(os.path.dirname(__file__), "..", "..", "models")
-    YOLO_VEHICLE_MODEL: str = os.path.join(MODELS_DIR, "vehicle", "v10m", "yolo_vehicle_v10m")
+    
+    # Vehicle model selection: "v10m" (chính xác cao) hoặc "11s" (nhanh hơn)
+    VEHICLE_MODEL_VERSION: str = os.getenv("VEHICLE_MODEL_VERSION", "v10m")  # v10m | 11s
+    
+    # Dynamic vehicle model path based on version
+    @property
+    def vehicle_model_path(self) -> str:
+        if self.VEHICLE_MODEL_VERSION == "11s":
+            return os.path.join(self.MODELS_DIR, "vehicle", "11s", "yolo_vehicle_11s")
+        else:  # default v10m
+            return os.path.join(self.MODELS_DIR, "vehicle", "v10m", "yolo_vehicle_v10m")
+    
+    YOLO_VEHICLE_MODEL: str = None  # Will be set dynamically
     YOLO_PLATE_MODEL: str = os.path.join(MODELS_DIR, "license_plate", "yolo_plate_v10n")
     YOLO_OCR_MODEL: str = os.path.join(MODELS_DIR, "ocr", "yolo_ocr_chars_v8n")
     YOLO_TRAFFIC_LIGHT_MODEL: str = os.path.join(MODELS_DIR, "traffic_light", "yolo_trafficlight_v10n")
@@ -90,4 +102,7 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Set vehicle model path dynamically
+settings.YOLO_VEHICLE_MODEL = settings.vehicle_model_path
 

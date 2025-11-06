@@ -283,3 +283,33 @@ VALUES
 (8, 'video8.mp4', '/videos/video8.mp4', 'done', 30.0, 60.0, 'Demo upload - Nguyễn Hữu Cảnh - Tôn Đức Thắng'),
 (9, 'video9.mp4', '/videos/video9.mp4', 'done', 30.0, 60.0, 'Demo upload - Trường Sơn - Hồng Hà'),
 (10, 'video10.mp4', '/videos/video10.mp4', 'done', 30.0, 60.0, 'Demo upload - Xa Lộ Hà Nội - Mai Chí Thọ');
+
+
+-- =========================================================
+-- 🧠 THÊM DỮ LIỆU CHO BẢNG MODELS (ĐẦY ĐỦ CẢ .pt, .onnx, .engine)
+-- =========================================================
+INSERT INTO models (name, model_type, file_path, version, framework, confidence_threshold, description)
+VALUES
+-- 🚗 VEHICLE DETECTION MODELS
+('yolo_vehicle_11s_pt', 'vehicle', 'models/vehicle/11s/yolo_vehicle_11s.pt', '11s', 'YOLOv11s', 0.5, 'Phát hiện phương tiện - phiên bản nhẹ, tốc độ cao (.pt)'),
+('yolo_vehicle_11s_onnx', 'vehicle', 'models/vehicle/11s/yolo_vehicle_11s.onnx', '11s', 'YOLOv11s', 0.5, 'Phát hiện phương tiện - phiên bản nhẹ, tốc độ cao (.onnx)'),
+('yolo_vehicle_11s_engine', 'vehicle', 'models/vehicle/11s/yolo_vehicle_11s.engine', '11s', 'YOLOv11s', 0.5, 'Phát hiện phương tiện - phiên bản nhẹ, tốc độ cao (.engine)'),
+
+('yolo_vehicle_v10m_pt', 'vehicle', 'models/vehicle/v10m/yolo_vehicle_v10m.pt', 'v10m', 'YOLOv10m', 0.5, 'Phát hiện phương tiện chính xác cao (.pt)'),
+('yolo_vehicle_v10m_onnx', 'vehicle', 'models/vehicle/v10m/yolo_vehicle_v10m.onnx', 'v10m', 'YOLOv10m', 0.5, 'Phát hiện phương tiện chính xác cao (.onnx)'),
+('yolo_vehicle_v10m_engine', 'vehicle', 'models/vehicle/v10m/yolo_vehicle_v10m.engine', 'v10m', 'YOLOv10m', 0.5, 'Phát hiện phương tiện chính xác cao (.engine)'),
+
+-- 🚘 LICENSE PLATE DETECTION
+('yolo_plate_v10n_pt', 'plate', 'models/license_plate/yolo_plate_v10n.pt', 'v10n', 'YOLOv10n', 0.6, 'Nhận dạng biển số xe Việt Nam (.pt)'),
+('yolo_plate_v10n_onnx', 'plate', 'models/license_plate/yolo_plate_v10n.onnx', 'v10n', 'YOLOv10n', 0.6, 'Nhận dạng biển số xe Việt Nam (.onnx)'),
+('yolo_plate_v10n_engine', 'plate', 'models/license_plate/yolo_plate_v10n.engine', 'v10n', 'YOLOv10n', 0.6, 'Nhận dạng biển số xe Việt Nam (.engine)'),
+
+-- 🔤 OCR CHARACTER RECOGNITION
+('yolo_ocr_chars_v8n_pt', 'ocr', 'models/ocr/yolo_ocr_chars_v8n.pt', 'v8n', 'YOLOv8n', 0.65, 'Nhận diện ký tự OCR trên biển số (.pt)'),
+('yolo_ocr_chars_v8n_onnx', 'ocr', 'models/ocr/yolo_ocr_chars_v8n.onnx', 'v8n', 'YOLOv8n', 0.65, 'Nhận diện ký tự OCR trên biển số (.onnx)'),
+('yolo_ocr_chars_v8n_engine', 'ocr', 'models/ocr/yolo_ocr_chars_v8n.engine', 'v8n', 'YOLOv8n', 0.65, 'Nhận diện ký tự OCR trên biển số (.engine)'),
+
+-- 🚦 TRAFFIC LIGHT DETECTION
+('yolo_trafficlight_v10n_pt', 'traffic_light', 'models/traffic_light/yolo_trafficlight_v10n.pt', 'v10n', 'YOLOv10n', 0.6, 'Phát hiện đèn giao thông (.pt)'),
+('yolo_trafficlight_v10n_onnx', 'traffic_light', 'models/traffic_light/yolo_trafficlight_v10n.onnx', 'v10n', 'YOLOv10n', 0.6, 'Phát hiện đèn giao thông (.onnx)'),
+('yolo_trafficlight_v10n_engine', 'traffic_light', 'models/traffic_light/yolo_trafficlight_v10n.engine', 'v10n', 'YOLOv10n', 0.6, 'Phát hiện đèn giao thông (.engine)');

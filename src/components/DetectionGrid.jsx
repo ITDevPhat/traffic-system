@@ -2,9 +2,15 @@
 import React, { useState, useEffect } from 'react';
 import { Row, Col, Spinner, Alert } from 'react-bootstrap';
 import { DetectionCard } from './DetectionCard';
+import { DetectionCardRealtime } from './DetectionCardRealtime';
 import { fetchVideos } from '@/services/api';
 
-export function DetectionGrid({ videos: initialVideos = null, autoRefresh = true, refreshInterval = 30000 }) {
+export function DetectionGrid({ 
+  videos: initialVideos = null, 
+  autoRefresh = true, 
+  refreshInterval = 30000,
+  useRealtime = true  // Enable realtime detection by default
+}) {
   const [videos, setVideos] = useState(initialVideos || []);
   const [loading, setLoading] = useState(!initialVideos);
   const [error, setError] = useState(null);
@@ -96,13 +102,16 @@ export function DetectionGrid({ videos: initialVideos = null, autoRefresh = true
     );
   }
 
+  // Choose which card component to use
+  const CardComponent = useRealtime ? DetectionCardRealtime : DetectionCard;
+
   return (
     <Row className="g-4">
       {videos.map((video) => {
         const key = video.id || video.video_job_id || video.filename || video.file_name || Math.random();
         return (
           <Col key={key} xs={12} md={6} lg={6}>
-            <DetectionCard video={video} />
+            <CardComponent video={video} />
           </Col>
         );
       })}

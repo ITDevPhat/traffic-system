@@ -13,6 +13,7 @@ from app.core.database import create_db_and_tables
 from app.core.check_db import check_database_connection, test_database_query
 from app.routers import detection, violations, videos
 from app.routers import realtime_ws_binary  # Binary WS for 30 FPS
+from app.routers import realtime_detection  # JSON WS for detection grid
 from app.routers import auth as auth_router
 
 # =========================================================
@@ -98,6 +99,8 @@ app.include_router(violations.router, prefix=f"{settings.API_V1_PREFIX}/violatio
 app.include_router(videos.router, prefix=f"{settings.API_V1_PREFIX}/videos", tags=["Videos"])
 # Binary realtime endpoint - 30 FPS with TurboJPEG + Multithreading
 app.include_router(realtime_ws_binary.router, tags=["Realtime Binary"])
+# JSON realtime detection - for detection grid view
+app.include_router(realtime_detection.router, prefix=f"{settings.API_V1_PREFIX}/realtime", tags=["Realtime Detection"])
 # Auth routes
 app.include_router(auth_router.router, prefix=f"{settings.API_V1_PREFIX}")
 

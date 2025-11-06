@@ -58,22 +58,24 @@ from app.utils.roi_utils import draw_polygon_on_frame, point_in_polygon
 from app.utils.model_loader import load_yolo_model, get_model_info
 
 # Custom YOLO model class IDs (0-indexed, not COCO)
-VEHICLE_IDS = {0, 1, 2, 3}  # bus, car, motorbike, truck
+# User's model: 0=bus, 1=car, 2=bike, 3=truck
+VEHICLE_IDS = {0, 1, 2, 3}  # bus, car, bike, truck
 
 # Class names (match your custom model)
 CLASS_NAMES = {
     0: "bus",
     1: "car", 
-    2: "motorbike",
+    2: "bike",    # Fixed: was "motorbike"
     3: "truck"
 }
 
-# Colors for different classes (BGR)
+# Colors for different classes (BGR format)
+# Match DetectionCardRealtime.jsx color scheme
 CLASS_COLORS = {
-    0: (255, 0, 0),      # bus - blue
-    1: (0, 255, 0),      # car - green
-    2: (0, 255, 255),    # motorbike - yellow
-    3: (255, 165, 0)     # truck - orange
+    0: (34, 126, 230),   # bus - orange (#e67e22 in BGR)
+    1: (219, 152, 52),   # car - blue (#3498db in BGR)
+    2: (113, 204, 46),   # bike - green (#2ecc71 in BGR)
+    3: (60, 76, 231)     # truck - red (#e74c3c in BGR)
 }
 
 ROI_COLORS = [
@@ -787,10 +789,17 @@ class BinaryAnnotStream:
                 for tr in tracks:
                     x1, y1, x2, y2, tid, cid = tr
                     tid = int(tid)
+                    
+                    # Validate bbox before adding to state
+                    if x1 >= x2 or y1 >= y2:
+                        if self.frame_idx % 100 == 1:
+                            logger.warning(f"⚠️ Skipping invalid track {tid}: bbox ({x1}, {y1}, {x2}, {y2})")
+                        continue
+                    
                     cx = 0.5 * (x1 + x2)
                     cy = 0.5 * (y1 + y2)
-                    w = max(1.0, x2 - x1)
-                    h = max(1.0, y2 - y1)
+                    w = max(1.0, x2 - x1)  # Ensure w >= 1
+                    h = max(1.0, y2 - y1)  # Ensure h >= 1
                     vx = vy = 0.0
                     if tid in self._track_state and dt > 1e-3:
                         vx = (cx - self._track_state[tid]["cx"]) / dt
@@ -810,6 +819,11 @@ class BinaryAnnotStream:
                     cx = s["cx"] + s["vx"] * dt
                     cy = s["cy"] + s["vy"] * dt
                     w, h = s["w"], s["h"]
+                    
+                    # Validate w, h > 0
+                    if w <= 0 or h <= 0:
+                        continue  # Skip invalid tracks
+                    
                     # Clamp to frame
                     cx = max(0.5 * w, min(cx, self.w - 0.5 * w))
                     cy = max(0.5 * h, min(cy, self.h - 0.5 * h))
@@ -817,6 +831,11 @@ class BinaryAnnotStream:
                     y1 = cy - 0.5 * h
                     x2 = cx + 0.5 * w
                     y2 = cy + 0.5 * h
+                    
+                    # Final validation
+                    if x1 >= x2 or y1 >= y2 or x1 < 0 or y1 < 0 or x2 > self.w or y2 > self.h:
+                        continue  # Skip invalid bbox
+                    
                     tracks.append(np.array([x1, y1, x2, y2, tid, s["cid"]], dtype=float))
 
             self._put_latest(self.q_det, (frame, tracks))
