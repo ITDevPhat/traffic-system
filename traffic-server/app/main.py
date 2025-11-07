@@ -15,6 +15,10 @@ from app.routers import detection, violations, videos
 from app.routers import realtime_ws_binary  # Binary WS for 30 FPS
 from app.routers import realtime_detection  # JSON WS for detection grid
 from app.routers import auth as auth_router
+from app.services.realtime_binary_stream import (
+    preload_realtime_resources,
+    DEFAULT_REALTIME_MODEL_PATH,
+)
 
 # =========================================================
 # 📝 Cấu hình logging - Reduced for production
@@ -111,6 +115,13 @@ def on_startup():
     Khởi tạo database và tables khi ứng dụng start.
     """
     create_db_and_tables()
+    try:
+        if preload_realtime_resources(DEFAULT_REALTIME_MODEL_PATH):
+            logger.info("🚀 Realtime detection model preloaded on startup")
+        else:
+            logger.warning("⚠️  Skipped realtime detector preload (model missing or load error)")
+    except Exception as exc:
+        logger.error("❌ Failed to preload realtime detector: %s", exc)
 
 
 @app.get("/")

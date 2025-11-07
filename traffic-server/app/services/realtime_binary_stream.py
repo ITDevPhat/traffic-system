@@ -20,6 +20,9 @@ GLOBAL_YOLO_MODEL = None
 GLOBAL_YOLO_DEVICE = None
 GLOBAL_YOLO_PATH = None
 
+# Default realtime detection model (TensorRT engine preferred)
+DEFAULT_REALTIME_MODEL_PATH = "models/vehicle/11s/yolo_vehicle_11s.engine"
+
 try:
     import torch
     from ultralytics import YOLO
@@ -90,6 +93,86 @@ ROI_COLORS = [
 ]
 
 
+def preload_realtime_resources(
+    model_path: Optional[str] = None,
+    device: Optional[str] = None,
+    imgsz: int = 640,
+) -> bool:
+    """Pre-load the realtime YOLO detector at application startup.
+
+    Args:
+        model_path: Optional custom model path. Defaults to the realtime engine.
+        device: Optional device hint ("cuda:0" / "cpu"). Auto-detect when None.
+        imgsz: Inference size to initialise internal buffers with.
+
+    Returns:
+        True if the model was loaded into the global cache, False otherwise.
+    """
+
+    if not YOLO or not load_yolo_model:
+        logger.warning("⚠️  Ultralytics YOLO not available - skipping realtime preload")
+        return False
+
+    target_path = model_path or DEFAULT_REALTIME_MODEL_PATH
+    info = get_model_info(target_path)
+
+    if not info.get("found", False):
+        logger.warning("⚠️  Realtime model not found for preload: %s", target_path)
+        return False
+
+    chosen_device = device
+    if not chosen_device:
+        if torch and torch.cuda.is_available():
+            chosen_device = "cuda:0"
+        else:
+            chosen_device = "cpu"
+
+    half_precision = chosen_device.startswith("cuda")
+
+    global GLOBAL_YOLO_MODEL, GLOBAL_YOLO_PATH, GLOBAL_YOLO_DEVICE
+
+    # If already loaded with the same path/device, skip reloading
+    if (
+        GLOBAL_YOLO_MODEL is not None
+        and GLOBAL_YOLO_PATH == info.get("path")
+        and GLOBAL_YOLO_DEVICE == chosen_device
+    ):
+        logger.info("ℹ️  Realtime detector already preloaded (%s on %s)", info.get("type"), chosen_device)
+        return True
+
+    try:
+        logger.info(
+            "🚀 Preloading realtime YOLO model: %s (%s) on %s",
+            info.get("path"),
+            info.get("type"),
+            chosen_device,
+        )
+        model = load_yolo_model(
+            info.get("path"),
+            device=chosen_device,
+            imgsz=imgsz,
+            half=half_precision,
+            verbose=False,
+        )
+    except FileNotFoundError as exc:
+        logger.warning("⚠️  Unable to preload realtime model (%s): %s", target_path, exc)
+        return False
+    except Exception as exc:
+        logger.error("❌ Failed to preload realtime model %s: %s", target_path, exc)
+        return False
+
+    GLOBAL_YOLO_MODEL = model
+    GLOBAL_YOLO_PATH = info.get("path")
+    GLOBAL_YOLO_DEVICE = chosen_device
+
+    logger.info(
+        "✅ Realtime YOLO model ready: %s (size %.2f MB)",
+        info.get("path"),
+        info.get("size_mb", 0.0),
+    )
+    return True
+
+
 class BinaryAnnotStream:
     """
     Multithreaded binary stream for 30 FPS
@@ -118,7 +201,8 @@ class BinaryAnnotStream:
         enable_bbox_drawing: bool = True,
         enable_roi: bool = True,
         enable_roi_drawing: bool = True,
-        force_gpu: bool = True
+        force_gpu: bool = True,
+        warmup_seconds: float = 5.0,
     ):
         """
         Args:
@@ -148,6 +232,11 @@ class BinaryAnnotStream:
         self.enable_bbox_drawing = bool(enable_bbox_drawing)
         self.enable_roi = bool(enable_roi)
         self.enable_roi_drawing = bool(enable_roi_drawing)
+
+        try:
+            self.warmup_seconds = max(0.0, float(warmup_seconds))
+        except (TypeError, ValueError):
+            self.warmup_seconds = 0.0
         
         # OCR settings
         ocr_cfg = OCR_SETTINGS or {}
@@ -226,9 +315,9 @@ class BinaryAnnotStream:
         self.t_cap: Optional[Thread] = None
         self.t_det: Optional[Thread] = None
         self.t_enc: Optional[Thread] = None
-        
+
         # Model path auto-detection
-        self.model_path = model_path or "models/yolo_vehicle_v10m.pt"
+        self.model_path = model_path or DEFAULT_REALTIME_MODEL_PATH
         
         # Metrics
         self.frame_idx = 0
@@ -238,6 +327,10 @@ class BinaryAnnotStream:
         self.detect_interval = self._base_detect_interval
         self.last_detect_ts = 0.0
         self._last_detect_duration = 0.0
+
+        # Warmup control
+        self._warmup_until: Optional[float] = None
+        self._warmup_logged = False
 
         # Track state for prediction between keyframes
         # tid -> {cx, cy, w, h, cid, vx, vy}
@@ -457,32 +550,37 @@ class BinaryAnnotStream:
             except (TypeError, ValueError):
                 track_thresh = 0.5
             try:
-                track_buffer = int(tracker_cfg.get("track_buffer", 30))
+                track_buffer = int(tracker_cfg.get("track_buffer", 50))
             except (TypeError, ValueError):
-                track_buffer = 30
+                track_buffer = 50
             try:
                 match_thresh = float(tracker_cfg.get("match_thresh", 0.8))
             except (TypeError, ValueError):
                 match_thresh = 0.8
             try:
+                frame_rate = float(tracker_cfg.get("frame_rate", self.target_fps or 30))
+            except (TypeError, ValueError):
+                frame_rate = float(self.target_fps or 30)
+            try:
                 min_box_area = float(tracker_cfg.get("min_box_area", 100))
             except (TypeError, ValueError):
                 min_box_area = 100.0
             mot20 = bool(tracker_cfg.get("mot20", False))
-            
+
             self.tracker = BYTETracker(
                 track_thresh=track_thresh,
                 track_buffer=track_buffer,
                 match_thresh=match_thresh,
-                frame_rate=self.fps_cap,
+                frame_rate=frame_rate,
                 min_box_area=min_box_area,
                 mot20=mot20,
             )
             logger.info(
-                "✅ Initialized boxmot BYTETracker (thresh=%.2f, buffer=%d, match=%.2f, min_area=%.1f)",
+                "✅ Initialized boxmot BYTETracker (thresh=%.2f, buffer=%d, match=%.2f, fps=%.1f, min_area=%.1f)",
                 track_thresh,
                 track_buffer,
                 match_thresh,
+                frame_rate,
                 min_box_area,
             )
         else:
@@ -837,36 +935,73 @@ class BinaryAnnotStream:
 
                 xyxy, confs, clss = self._filter_keyframe_detections(xyxy, confs, clss)
 
+                if len(xyxy) > 0:
+                    frame_h, frame_w = frame.shape[:2]
+                    orig_shape = getattr(results, "orig_shape", (frame_h, frame_w))
+                    try:
+                        orig_h, orig_w = int(orig_shape[0]), int(orig_shape[1])
+                    except (TypeError, ValueError, IndexError):
+                        orig_h, orig_w = frame_h, frame_w
+                    if orig_w and orig_h and (orig_w != frame_w or orig_h != frame_h):
+                        scale_x = frame_w / float(orig_w)
+                        scale_y = frame_h / float(orig_h)
+                        xyxy = xyxy.astype(np.float32)
+                        xyxy[:, [0, 2]] *= scale_x
+                        xyxy[:, [1, 3]] *= scale_y
+
+                tracker_inputs = np.empty((0, 6), dtype=np.float32)
+                if len(xyxy) > 0:
+                    min_len = min(len(xyxy), len(confs), len(clss))
+                    if min_len != len(xyxy):
+                        logger.warning(
+                            "⚠️ Frame %s: detection tensors misaligned (xyxy=%d, conf=%d, cls=%d) — truncating to %d entries",
+                            self.frame_idx,
+                            len(xyxy),
+                            len(confs),
+                            len(clss),
+                            min_len,
+                        )
+                    if min_len > 0:
+                        tracker_inputs = np.concatenate(
+                            [
+                                xyxy[:min_len].astype(np.float32),
+                                confs[:min_len].reshape(-1, 1).astype(np.float32),
+                                clss[:min_len].reshape(-1, 1).astype(np.float32),
+                            ],
+                            axis=1,
+                        )
+
                 if HAVE_BOXMOT and self.tracker is not None and self.enable_tracking:
                     # Use ByteTrack (boxmot) - preferred method
                     if self.frame_idx % 100 == 1:
-                        logger.info(f"✅ Using ByteTrack for frame {self.frame_idx}, input: xyxy.shape={xyxy.shape}, confs.shape={confs.shape}, clss.shape={clss.shape}")
-                        if len(confs) > 0:
-                            logger.info(f"   Confidence range: min={confs.min():.3f}, max={confs.max():.3f}, mean={confs.mean():.3f}")
-                    
-                    # Ensure detections have minimum confidence for tracking
-                    if len(xyxy) > 0 and len(confs) > 0:
-                        # Filter by track_thresh (ByteTrack will also filter, but we log it)
-                        valid_mask = confs >= 0.25  # Minimum confidence for tracking
-                        if not valid_mask.all():
-                            logger.debug(f"   Filtered {np.sum(~valid_mask)} low-confidence detections")
-                        
-                        online_targets = self.tracker.update(
-                            dets=xyxy,
-                            scores=confs,
-                            cls_ids=clss,
-                            img=frame
+                        logger.info(
+                            "✅ Using ByteTrack for frame %s, tracker_inputs=%s",
+                            self.frame_idx,
+                            tracker_inputs.shape,
                         )
-                        tracks = online_targets
-                        
-                        if self.frame_idx % 100 == 1:
-                            logger.info(f"📊 ByteTrack returned {len(tracks) if tracks is not None else 0} tracks")
-                            if tracks is not None and len(tracks) > 0:
-                                # Log track IDs for debugging continuity
-                                track_ids = [int(t[4]) for t in tracks if len(t) >= 5]
-                                logger.info(f"🔗 Track IDs: {sorted(set(track_ids))} (unique: {len(set(track_ids))})")
-                    else:
-                        tracks = []
+                        if tracker_inputs.size > 0:
+                            logger.info(
+                                "   Confidence range: min=%.3f, max=%.3f, mean=%.3f",
+                                float(tracker_inputs[:, 4].min()),
+                                float(tracker_inputs[:, 4].max()),
+                                float(tracker_inputs[:, 4].mean()),
+                            )
+
+                    online_targets = self.tracker.update(tracker_inputs, frame)
+                    tracks = online_targets if online_targets is not None else []
+
+                    if self.frame_idx % 100 == 1:
+                        logger.info(
+                            "📊 ByteTrack returned %d tracks",
+                            0 if tracks is None else len(tracks),
+                        )
+                        if tracks is not None and len(tracks) > 0:
+                            track_ids = [int(t[4]) for t in tracks if len(t) >= 5]
+                            logger.info(
+                                "🔗 Track IDs: %s (unique: %d)",
+                                sorted(set(track_ids)),
+                                len(set(track_ids)),
+                            )
                 else:
                     # No tracking or tracking not available
                     # For .engine and .onnx models, tracking doesn't work with ultralytics
@@ -879,7 +1014,7 @@ class BinaryAnnotStream:
                             conf_val = float(confs[i]) if i < len(confs) else 1.0
                             # Use frame_idx + i as pseudo track ID for stability
                             tid = (self.frame_idx * 1000 + i) % 999999
-                            tracks.append(np.array([x1, y1, x2, y2, tid, cls_id], dtype=float))
+                            tracks.append(np.array([x1, y1, x2, y2, tid, conf_val, cls_id], dtype=float))
                         if self.frame_idx % 100 == 1:
                             logger.info(f"✅ Created {len(tracks)} tracks with pseudo IDs")
 
@@ -898,7 +1033,7 @@ class BinaryAnnotStream:
                 
                 dt = (now - self.last_detect_ts) if self.last_detect_ts else (1.0 / max(self.veh_detect_hz, 1))
                 new_state: dict[int, dict] = {}
-                smoothed_tracks: List[np.ndarray] = []
+                output_tracks: List[np.ndarray] = []
                 
                 for arr in track_iterable:
                     if arr.size < 5:
@@ -920,8 +1055,9 @@ class BinaryAnnotStream:
                             logger.warning(f"⚠️ Skipping invalid track {tid}: bbox ({x1}, {y1}, {x2}, {y2})")
                         continue
                     
-                    cid = int(arr[5]) if arr.size >= 6 else 0
-                    conf_val = float(arr[6]) if arr.size >= 7 else 1.0
+                    conf_val = float(arr[5]) if arr.size >= 6 else 1.0
+                    cid = int(arr[6]) if arr.size >= 7 else 0
+                    det_index = int(arr[7]) if arr.size >= 8 else -1
                     
                     # Raw measurements
                     raw_cx = 0.5 * (x1 + x2)
@@ -936,6 +1072,8 @@ class BinaryAnnotStream:
                     smooth_h = raw_h
                     
                     prev_state = self._track_state.get(tid)
+                    prev_age = int(prev_state.get("age", 0)) if prev_state else 0
+
                     if (
                         self._smooth_tracks
                         and prev_state is not None
@@ -993,7 +1131,9 @@ class BinaryAnnotStream:
                     if prev_state is not None and dt > 1e-3:
                         vx = (smooth_cx - prev_state.get("cx", smooth_cx)) / dt
                         vy = (smooth_cy - prev_state.get("cy", smooth_cy)) / dt
-                    
+
+                    age_frames = prev_age + 1
+
                     # Store state
                     state_entry = {
                         "cx": smooth_cx,
@@ -1009,34 +1149,61 @@ class BinaryAnnotStream:
                         "raw_h": raw_h,
                         "confidence": conf_val,
                         "last_seen_time": time.time(),  # Track when last seen for cleanup
+                        "age": age_frames,
+                        "missed": 0,
+                        "det_index": det_index,
                     }
+                    if prev_state is not None:
+                        for key in ("plate", "plate_conf", "plate_cached"):
+                            if key in prev_state and key not in state_entry:
+                                state_entry[key] = prev_state[key]
                     new_state[tid] = state_entry
-                    
+
                     # Update array with smoothed coordinates
                     smoothed_arr = arr.copy()
                     smoothed_arr[:4] = [smooth_x1, smooth_y1, smooth_x2, smooth_y2]
-                    smoothed_tracks.append(smoothed_arr)
-                
-                tracks = smoothed_tracks
+                    if smoothed_arr.size >= 6:
+                        smoothed_arr[5] = conf_val
+                    if smoothed_arr.size >= 7:
+                        smoothed_arr[6] = cid
+
+                    if age_frames > 2:
+                        output_tracks.append(smoothed_arr)
+                        if age_frames == 3:
+                            logger.debug("🆕 Track %d stabilised after %d frames", tid, age_frames)
+                    else:
+                        if self.frame_idx % 60 == 1:
+                            logger.debug("⏳ Track %d warming up (age=%d)", tid, age_frames)
+
+                tracks = output_tracks
                 
                 # Merge new_state with existing track_state (preserve old tracks for continuity)
                 # Only update tracks that appear in current frame, keep others for prediction
                 for tid, state in new_state.items():
                     self._track_state[tid] = state
-                
+
                 # Cleanup old tracks aggressively (not seen for > 0.5 seconds) to prevent memory leak
                 # Only keep tracks that are actively being detected or very recently seen
                 cleanup_threshold = 0.5  # seconds - AGGRESSIVE cleanup to prevent ghost boxes
                 current_time = time.time()
                 tracks_to_remove = []
-                for tid, state in self._track_state.items():
-                    # Check if track is in new_state (active) or very old
-                    if tid not in new_state:
-                        # Track not in current frame - check if too old
-                        last_seen = state.get('last_seen_time', current_time)
-                        age = current_time - last_seen
-                        if age > cleanup_threshold:
-                            tracks_to_remove.append(tid)
+                for tid, state in list(self._track_state.items()):
+                    if tid in new_state:
+                        continue
+
+                    prev_age = int(state.get('age', 0))
+                    missed = int(state.get('missed', 0)) + 1
+                    state['missed'] = missed
+                    self._track_state[tid] = state
+
+                    if prev_age <= 2 or missed >= 2:
+                        tracks_to_remove.append(tid)
+                        continue
+
+                    last_seen = state.get('last_seen_time', current_time)
+                    age = current_time - last_seen
+                    if age > cleanup_threshold:
+                        tracks_to_remove.append(tid)
                 
                 # Remove old tracks
                 if tracks_to_remove:
@@ -1050,13 +1217,18 @@ class BinaryAnnotStream:
                     if tid in self._track_state:
                         self._track_state[tid]['last_seen_time'] = current_time
                 
+                if output_tracks and self.frame_idx % 30 == 1:
+                    stable_ids = sorted({int(arr[4]) for arr in output_tracks if arr.size >= 5})
+                    if stable_ids:
+                        logger.info("🎯 Stable track IDs (>2 frames): %s", stable_ids)
+
                 self.last_detect_ts = now
                 detect_duration = time.perf_counter() - detect_start
                 self._update_detect_interval(detect_duration)
                 
                 # Run OCR on detected vehicles (with debounce)
-                if self.enable_ocr and self.ocr_service and len(smoothed_tracks) > 0:
-                    for arr in smoothed_tracks:
+                if self.enable_ocr and self.ocr_service and len(output_tracks) > 0:
+                    for arr in output_tracks:
                         if arr.size < 5:
                             continue
                         try:
@@ -1084,7 +1256,7 @@ class BinaryAnnotStream:
                     
                     # Cleanup old tracks every 100 frames
                     if self.frame_idx % 100 == 0:
-                        active_tids = [int(arr[4]) for arr in smoothed_tracks if arr.size >= 5]
+                        active_tids = [int(arr[4]) for arr in output_tracks if arr.size >= 5]
                         ocr_cfg = OCR_SETTINGS or {}
                         max_age = float(ocr_cfg.get("max_track_age_sec", 5.0))
                         self.ocr_service.cleanup_old_tracks(active_tids, max_age_sec=max_age)
@@ -1111,7 +1283,14 @@ class BinaryAnnotStream:
                     age = current_time - last_seen
                     if age > max_prediction_age:
                         continue  # Skip old tracks - don't predict them
-                    
+
+                    age_frames = int(s.get("age", 0))
+                    if age_frames <= 2:
+                        continue  # Wait for track to stabilise before predicting
+
+                    if int(s.get("missed", 0)) > 0:
+                        continue  # Skip tracks that are currently missing detections
+
                     # Get smoothed state
                     prev_cx = s.get("cx", 0.0)
                     prev_cy = s.get("cy", 0.0)
@@ -1156,8 +1335,10 @@ class BinaryAnnotStream:
                     # Final validation
                     if x1 >= x2 or y1 >= y2 or x1 < 0 or y1 < 0 or x2 > self.w or y2 > self.h:
                         continue  # Skip invalid bbox
-                    
-                    tracks.append(np.array([x1, y1, x2, y2, tid, s["cid"]], dtype=float))
+
+                    conf_val = float(s.get("confidence", 1.0))
+                    cls_id = int(s.get("cid", 0))
+                    tracks.append(np.array([x1, y1, x2, y2, tid, conf_val, cls_id], dtype=float))
 
             self._put_latest(self.q_det, (frame, tracks))
         
@@ -1184,17 +1365,22 @@ class BinaryAnnotStream:
             if tracks is not None and len(tracks) > 0:
                 for t in tracks:
                     try:
-                        # ByteTrack format: [x1, y1, x2, y2, tid, cid]
-                        if len(t) >= 6:
-                            x1, y1, x2, y2, tid, cls_id = t[:6]
+                        # ByteTrack format: [x1, y1, x2, y2, tid, score, cls, *extras]
+                        if len(t) >= 7:
+                            x1, y1, x2, y2, tid, conf_val, cls_id = t[:7]
+                        elif len(t) >= 6:
+                            x1, y1, x2, y2, tid, conf_val = t[:6]
+                            cls_id = 0  # default when class missing
                         elif len(t) >= 5:
                             x1, y1, x2, y2, tid = t[:5]
-                            cls_id = 0  # default
+                            conf_val = 1.0
+                            cls_id = 0
                         else:
                             x1, y1, x2, y2 = t[:4]
                             tid = -1
+                            conf_val = 1.0
                             cls_id = 0
-                        
+
                         # Get plate info from track state (if OCR enabled)
                         plate_text = None
                         plate_conf = 0.0
@@ -1209,7 +1395,7 @@ class BinaryAnnotStream:
                             "track_id": int(tid),
                             "class_id": int(cls_id),
                             "class_name": CLASS_NAMES.get(int(cls_id), "vehicle"),
-                            "confidence": 1.0,  # TODO: add real confidence from YOLO results
+                            "confidence": float(conf_val),
                             "violation": None   # TODO: integrate violation detection logic
                         }
                         
@@ -1290,8 +1476,16 @@ class BinaryAnnotStream:
     
     def start(self):
         """Start all pipeline threads"""
+        if self.warmup_seconds > 0:
+            self._warmup_until = time.perf_counter() + self.warmup_seconds
+            self._warmup_logged = False
+            logger.info("⏳ Holding frames for %.1fs warmup before streaming", self.warmup_seconds)
+        else:
+            self._warmup_until = None
+            self._warmup_logged = False
+
         self._open()
-        
+
         self.t_cap = Thread(target=self._thread_capture, daemon=True, name="capture")
         self.t_det = Thread(target=self._thread_infer, daemon=True, name="infer")
         self.t_enc = Thread(target=self._thread_annotate_encode, daemon=True, name="encode")
@@ -1368,9 +1562,11 @@ class BinaryAnnotStream:
                 "bbox_drawing": self.enable_bbox_drawing,
                 "roi_drawing": self.enable_roi_drawing,
                 "ocr": self.enable_ocr
-            }
+            },
+            "warmup_seconds": self.warmup_seconds,
+            "warmup_active": bool(self._warmup_until),
         }
-        
+
         # Add OCR info if enabled
         if self.enable_ocr and self.ocr_service:
             packet["ocr"] = {
@@ -1390,10 +1586,27 @@ class BinaryAnnotStream:
         
         Pacing: Sleep to maintain target_fps, preventing overwhelming the client
         """
+        # Warmup phase: keep processing but do not stream frames yet
+        if self._warmup_until is not None:
+            remaining = self._warmup_until - time.perf_counter()
+            if remaining > 0:
+                if not self._warmup_logged:
+                    logger.info("⏳ Warmup in progress - streaming will start in %.1fs", remaining)
+                    self._warmup_logged = True
+                # Light sleep to avoid busy loop while letting pipelines fill queues
+                time.sleep(min(0.05, max(0.0, remaining)))
+                return None, None
+
+            logger.info("🚀 Warmup complete - starting realtime stream")
+            self._warmup_until = None
+            self._warmup_logged = False
+            # Reset pacing baseline after warmup to avoid large FPS spikes
+            self.last_sent_ts = time.perf_counter()
+
         # Server-side pacing: maintain target FPS
         now = time.perf_counter()
         dt = now - self.last_sent_ts
-        
+
         if dt < self.interval:
             time.sleep(self.interval - dt)
             now = time.perf_counter()

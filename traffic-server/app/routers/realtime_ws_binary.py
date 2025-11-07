@@ -3,7 +3,10 @@ Binary WebSocket Router - 2-phase (text header + binary JPEG)
 Optimized for 30 FPS with TurboJPEG + multithreading
 """
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, HTTPException, UploadFile
-from app.services.realtime_binary_stream import BinaryAnnotStream
+from app.services.realtime_binary_stream import (
+    BinaryAnnotStream,
+    DEFAULT_REALTIME_MODEL_PATH,
+)
 from typing import Dict, Any
 from fastapi import Body
 import json
@@ -32,14 +35,18 @@ async def ws_realtime_binary(
     imgsz: int = Query(640, description="YOLO inference size - MUST be 640 for TensorRT models"),
     quality: int = Query(60, description="JPEG quality (1-100, lower=faster)"),
     encode_width: int = Query(960, description="Downscale width before encoding"),
-    model_path: str = Query("models/vehicle/11s/yolo_vehicle_11s.engine", description="YOLO model path (default: 11s TensorRT)"),
+    model_path: str = Query(
+        DEFAULT_REALTIME_MODEL_PATH,
+        description="YOLO model path (default: 11s TensorRT)",
+    ),
     veh_detect_hz: int = Query(25, description="Vehicle detect frequency for keyframes (Hz)"),
     enable_yolo: bool = Query(True, description="Enable YOLO detection"),
     enable_tracking: bool = Query(True, description="Enable ByteTrack tracking"),
     enable_bbox_drawing: bool = Query(True, description="Enable bbox drawing"),
     enable_roi: bool = Query(True, description="Enable ROI module"),
     enable_roi_drawing: bool = Query(True, description="Enable ROI drawing"),
-    force_gpu: bool = Query(True, description="Require CUDA GPU (disable for CPU fallback)")
+    force_gpu: bool = Query(True, description="Require CUDA GPU (disable for CPU fallback)"),
+    warmup: float = Query(5.0, description="Seconds to keep backend warming before streaming"),
 ):
     """
     Binary WebSocket - 30 FPS optimized
@@ -86,7 +93,8 @@ async def ws_realtime_binary(
             enable_bbox_drawing=enable_bbox_drawing,
             enable_roi=enable_roi,
             enable_roi_drawing=enable_roi_drawing,
-            force_gpu=force_gpu
+            force_gpu=force_gpu,
+            warmup_seconds=warmup,
         )
         
         # Start all threads

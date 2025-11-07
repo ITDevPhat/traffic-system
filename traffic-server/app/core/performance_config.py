@@ -110,9 +110,10 @@ ENABLE_ASYNC_INFERENCE = True  # Enable async inference
 # ============================================
 
 BYTETRACK_SETTINGS = {
-    "track_thresh": 0.3,      # Lower threshold for new tracks (easier to start tracking)
-    "track_buffer": 60,       # Track buffer frames (2 sec at 30fps) - INCREASED for better continuity
-    "match_thresh": 0.6,      # Lower matching threshold (easier to match tracks) - DECREASED
+    "track_thresh": 0.5,      # Stricter to stabilize IDs on re-entry
+    "track_buffer": 50,       # Allow short occlusions (~1.6s @30fps) without ID swap
+    "match_thresh": 0.8,      # Tighter association to prevent bbox jumps
+    "frame_rate": 30,         # Expected realtime FPS for buffer scaling
     "min_box_area": 100,      # Minimum bbox area
     "mot20": False,           # MOT17 mode (faster)
 }
