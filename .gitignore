@@ -132,6 +132,13 @@ web_modules/
 Thumbs.db
 desktop.ini
 
+# Backup files
+*.backup
+*.bak
+*~
+tree.txt
+tree_*.txt
+
 # =============================
 # PROJECT-SPECIFIC
 # =============================

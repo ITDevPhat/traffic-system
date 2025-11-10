@@ -39,17 +39,21 @@ def setup_cuda_optimizations():
 # ============================================
 
 # Target FPS và frame skip
-TARGET_FPS = 30  # Target >30 FPS
+TARGET_FPS = 32  # Target >30 FPS with headroom
 FRAME_SKIP = 1   # Process every frame (no skip)
 MAX_BATCH_SIZE = 1  # Single frame inference (lowest latency)
 
-# Inference settings
+# Fixed detection interval for stable FPS (no adaptive throttling)
+FIXED_DETECT_INTERVAL = 0.033  # 30 FPS = 33ms per frame
+ENABLE_ADAPTIVE_INTERVAL = False  # Disable adaptive FPS throttling
+
+# Inference settings - Optimized for YOLO11s ONNX FP32
 INFERENCE_SETTINGS = {
-    "imgsz": 640,           # Input size (standard YOLO)
-    "conf": 0.5,            # Confidence threshold (lower = more detections but slower)
+    "imgsz": 832,           # Native YOLO11s size for better accuracy
+    "conf": 0.35,           # Lower confidence for better detection (catch small/dim vehicles)
     "iou": 0.45,            # NMS IOU threshold
-    "max_det": 100,         # Max detections per image
-    "half": True,           # FP16 precision (2x faster on GPU)
+    "max_det": 150,         # Increased for dense traffic scenarios
+    "half": False,          # FP32 precision (ONNX FP32 compatibility)
     "device": "cuda:0",     # GPU device
     "verbose": False,       # No verbose output
     "stream": False,        # Don't stream (single frame)
@@ -110,11 +114,11 @@ ENABLE_ASYNC_INFERENCE = True  # Enable async inference
 # ============================================
 
 BYTETRACK_SETTINGS = {
-    "track_thresh": 0.5,      # Stricter to stabilize IDs on re-entry
-    "track_buffer": 50,       # Allow short occlusions (~1.6s @30fps) without ID swap
-    "match_thresh": 0.8,      # Tighter association to prevent bbox jumps
+    "track_thresh": 0.4,      # Lower threshold for better weak detection tracking
+    "track_buffer": 30,       # Reduced buffer for faster adaptation (1s @30fps)
+    "match_thresh": 0.85,     # Higher match threshold for stable tracking
     "frame_rate": 30,         # Expected realtime FPS for buffer scaling
-    "min_box_area": 100,      # Minimum bbox area
+    "min_box_area": 80,       # Lower minimum area to catch smaller vehicles
     "mot20": False,           # MOT17 mode (faster)
 }
 
@@ -123,13 +127,13 @@ BYTETRACK_SETTINGS = {
 # 🎯 Track Smoothing for Visualization Stability
 # ============================================
 
-# Track smoothing for front-end visualization stability
+# Track smoothing for front-end visualization stability - Optimized for responsiveness
 TRACK_SMOOTHING_SETTINGS = {
     "enabled": True,              # Enable low-pass smoothing on track boxes
-    "position_alpha": 0.75,       # Higher = stickier to previous center (0-1) - INCREASED for smoother
-    "size_alpha": 0.65,           # Smooth width/height changes (0-1) - INCREASED for smoother
-    "max_center_shift": 150.0,    # Allow raw jump (pixels) before bypassing smoothing - INCREASED
-    "max_scale_change": 2.0,      # Allowable scale ratio jump before bypassing smoothing - INCREASED
+    "position_alpha": 0.55,       # Reduced for faster adaptation (less sticky)
+    "size_alpha": 0.5,            # Reduced for quicker size changes
+    "max_center_shift": 80.0,     # Reduced threshold for smoother tracking
+    "max_scale_change": 1.6,      # Reduced for more responsive scaling
     "min_confidence": 0.0,        # Reserved for future confidence-aware smoothing
 }
 
@@ -175,9 +179,8 @@ CANVAS_SETTINGS = {
 # ============================================
 
 MODEL_PRIORITY = [
-    "engine",  # TensorRT (fastest) - 3-5x faster than .pt
-    "onnx",    # ONNX Runtime (fast) - 2-3x faster than .pt
-    "pt",      # PyTorch (slowest) - fallback
+    "onnx",    # ONNX Runtime (preferred) - FP32 compatible, RTX 3050 optimized
+    "pt",      # PyTorch (fallback) - slower but compatible
 ]
 
 
@@ -187,7 +190,7 @@ MODEL_PRIORITY = [
 
 OCR_SETTINGS = {
     "enabled": True,                    # Enable OCR
-    "model_type": "auto",               # Auto-detect: engine > onnx > pt
+    "model_type": "auto",               # Auto-detect: onnx > pt
     "plate_conf_threshold": 0.6,        # Confidence threshold for plate detection
     "ocr_debounce_sec": 1.0,            # Min time between OCR calls per track (seconds)
     "min_track_frames": 3,              # Min frames before OCR (stability check)
@@ -221,7 +224,8 @@ def print_performance_config():
     print(f"📊 Target FPS: {TARGET_FPS}")
     print(f"🎯 Frame Skip: {FRAME_SKIP} (process every frame)")
     print(f"💾 Max Batch Size: {MAX_BATCH_SIZE}")
-    print(f"🔧 FP16 Precision: {INFERENCE_SETTINGS['half']}")
+    precision_mode = "FP16" if INFERENCE_SETTINGS['half'] else "FP32"
+    print(f"🔧 Precision Mode: {precision_mode} (ONNX FP32 Compatible)")
     print(f"🖥️  Device: {INFERENCE_SETTINGS['device']}")
     print(f"📐 Input Size: {INFERENCE_SETTINGS['imgsz']}")
     print(f"🎚️  Confidence: {INFERENCE_SETTINGS['conf']}")

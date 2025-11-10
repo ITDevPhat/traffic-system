@@ -149,6 +149,46 @@ async def ws_realtime_binary(
                                 enabled = cmd.get('enabled', True)
                                 stream.enable_bbox_drawing = enabled
                                 logger.info(f"🎨 BBox drawing toggled to: {enabled}")
+                            elif cmd.get('command') == 'update_settings':
+                                # Live settings update during detection
+                                settings = cmd.get('settings', {})
+                                updated = []
+                                
+                                # Update confidence threshold
+                                if 'conf' in settings:
+                                    new_conf = float(settings['conf'])
+                                    if 0.1 <= new_conf <= 0.9:
+                                        stream.conf = new_conf
+                                        updated.append(f"conf={new_conf:.2f}")
+                                
+                                # Update target FPS
+                                if 'target_fps' in settings:
+                                    new_fps = int(settings['target_fps'])
+                                    if 15 <= new_fps <= 60:
+                                        stream.target_fps = new_fps
+                                        updated.append(f"fps={new_fps}")
+                                
+                                # Update JPEG quality
+                                if 'jpeg_quality' in settings:
+                                    new_quality = int(settings['jpeg_quality'])
+                                    if 50 <= new_quality <= 95:
+                                        stream.jpeg_quality = new_quality
+                                        updated.append(f"quality={new_quality}")
+                                
+                                # Update inference size (requires restart)
+                                if 'inference_size' in settings:
+                                    new_size = int(settings['inference_size'])
+                                    if new_size in [480, 640, 832, 960]:
+                                        stream.imgsz = new_size
+                                        updated.append(f"imgsz={new_size}")
+                                
+                                if updated:
+                                    logger.info(f"⚙️ Live settings updated: {', '.join(updated)}")
+                                    # Send confirmation back to frontend
+                                    await websocket.send_text(json.dumps({
+                                        "type": "settings_updated",
+                                        "message": f"Updated: {', '.join(updated)}"
+                                    }))
                             elif cmd.get('command') == 'set_roi':
                                 rois_payload = cmd.get('rois')
                                 if isinstance(rois_payload, list):
@@ -331,7 +371,7 @@ async def load_models():
 @router.get("/models/available")
 async def get_available_models():
     """Get list of available YOLO models from traffic-server/models/
-    Supports .engine, .onnx, .pt formats
+    Supports .onnx, .pt formats only (TensorRT .engine files excluded)
     """
     # Always use traffic-server/models as the standard location
     models_dir = "models"
@@ -343,8 +383,8 @@ async def get_available_models():
     
     logger.info(f"📂 Scanning models in: {models_dir}")
     
-    # Scan all supported formats: .engine > .onnx > .pt (priority order)
-    model_extensions = ["*.engine", "*.onnx", "*.pt"]
+    # Scan supported formats: .onnx > .pt (TensorRT .engine excluded)
+    model_extensions = ["*.onnx", "*.pt"]
     all_files = []
     for ext in model_extensions:
         files = glob.glob(os.path.join(models_dir, "**", ext), recursive=True)
@@ -362,7 +402,7 @@ async def get_available_models():
         "traffic_light": []
     }
     
-    # Track which models we've found (to avoid duplicates, prioritize .engine > .onnx > .pt)
+    # Track which models we've found (to avoid duplicates, prioritize .onnx > .pt)
     found_models = {}
     
     for model_file in all_files:
@@ -370,8 +410,8 @@ async def get_available_models():
         model_name = os.path.splitext(basename)[0]  # Without extension
         ext = os.path.splitext(basename)[1].lower()
         
-        # Priority: engine=1, onnx=2, pt=3
-        priority = {"engine": 1, "onnx": 2, "pt": 3}.get(ext[1:], 999)
+        # Priority: onnx=1, pt=2 (engine removed)
+        priority = {"onnx": 1, "pt": 2}.get(ext[1:], 999)
         
         category = None
         if "vehicle" in basename.lower():
@@ -393,9 +433,14 @@ async def get_available_models():
                     if old_entry in models[category]:
                         models[category].remove(old_entry)
                 
-                # Add new entry
-                models[category].append(basename)
-                found_models[key] = (basename, priority)
+                # Add new entry with format info
+                model_info = {
+                    "name": basename,
+                    "format": ext[1:],  # "onnx" or "pt"
+                    "path": os.path.relpath(model_file, models_dir).replace("\\", "/")
+                }
+                models[category].append(model_info)
+                found_models[key] = (model_info, priority)
     
     return {"ok": True, "models": models}
 
@@ -464,6 +509,235 @@ async def upload_temp_video(file: UploadFile):
     except Exception as e:
         logger.error(f"Upload error: {e}")
         return {"ok": False, "error": str(e)}
+
+
+@router.post("/models/hot-swap")
+async def hot_swap_model(request: dict):
+    """
+    Hot-swap YOLO model without restarting server
+    Supports .onnx and .pt formats only (TensorRT .engine files rejected)
+    """
+    try:
+        model_path = request.get("model_path")
+        device = request.get("device", "cuda:0")
+        
+        if not model_path:
+            raise HTTPException(
+                status_code=400,
+                detail="model_path is required"
+            )
+        
+        # Validate model format - reject .engine files
+        if model_path.lower().endswith('.engine'):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "TensorRT .engine files are no longer supported",
+                    "message": "Please use .onnx or .pt models instead for better compatibility",
+                    "suggestion": f"Try: {model_path.replace('.engine', '.onnx')}"
+                }
+            )
+        
+        if not model_path.lower().endswith(('.onnx', '.pt')):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "Unsupported model format",
+                    "supported_formats": [".onnx", ".pt"],
+                    "provided": model_path
+                }
+            )
+        
+        # Check if model file exists
+        if not os.path.exists(model_path):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model file not found: {model_path}"
+            )
+        
+        # Hot-swap the model
+        from app.utils.model_loader import hot_swap_model
+        
+        success = hot_swap_model(model_path, device)
+        
+        if success:
+            model_type = "onnx" if model_path.lower().endswith('.onnx') else "pt"
+            logger.info(f"♻️ Hot-swapped model: {model_path} ({model_type.upper()})")
+            
+            return {
+                "ok": True,
+                "message": f"Model hot-swapped successfully to {model_type.upper()}",
+                "model_path": model_path,
+                "model_type": model_type,
+                "device": device
+            }
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to hot-swap model"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Hot-swap error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": str(e),
+                "message": "Internal server error during model hot-swap"
+            }
+        )
+
+
+@router.get("/models/versions")
+async def get_model_versions():
+    """Get available model versions (11s, v10m) with their formats"""
+    try:
+        models_dir = "models/vehicle"
+        if not os.path.exists(models_dir):
+            return {"ok": False, "error": "Vehicle models directory not found"}
+        
+        versions = {}
+        
+        # Check for 11s models
+        v11s_dir = os.path.join(models_dir, "11s")
+        if os.path.exists(v11s_dir):
+            v11s_models = []
+            for ext in [".onnx", ".pt"]:
+                model_file = os.path.join(v11s_dir, f"yolo_vehicle_11s{ext}")
+                if os.path.exists(model_file):
+                    size_mb = os.path.getsize(model_file) / (1024 * 1024)
+                    v11s_models.append({
+                        "format": ext[1:],  # Remove dot
+                        "path": model_file,
+                        "size_mb": round(size_mb, 1),
+                        "optimized_for": "Speed & Efficiency"
+                    })
+            
+            if v11s_models:
+                versions["11s"] = {
+                    "name": "YOLO11s",
+                    "description": "Fast and efficient for real-time detection",
+                    "models": v11s_models
+                }
+        
+        # Check for v10m models
+        v10m_dir = os.path.join(models_dir, "v10m")
+        if os.path.exists(v10m_dir):
+            v10m_models = []
+            for ext in [".onnx", ".pt"]:
+                model_file = os.path.join(v10m_dir, f"yolo_vehicle_v10m{ext}")
+                if os.path.exists(model_file):
+                    size_mb = os.path.getsize(model_file) / (1024 * 1024)
+                    v10m_models.append({
+                        "format": ext[1:],  # Remove dot
+                        "path": model_file,
+                        "size_mb": round(size_mb, 1),
+                        "optimized_for": "Accuracy & Precision"
+                    })
+            
+            if v10m_models:
+                versions["v10m"] = {
+                    "name": "YOLO10m",
+                    "description": "Higher accuracy for precise detection",
+                    "models": v10m_models
+                }
+        
+        return {
+            "ok": True,
+            "versions": versions,
+            "current_version": os.getenv("VEHICLE_MODEL_VERSION", "v10m")
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error getting model versions: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": str(e),
+                "message": "Failed to get model versions"
+            }
+        )
+
+
+@router.post("/models/switch-version")
+async def switch_model_version(request: dict):
+    """Switch between model versions (11s <-> v10m) and formats (onnx <-> pt)"""
+    try:
+        version = request.get("version")  # "11s" or "v10m"
+        format_type = request.get("format", "onnx")  # "onnx" or "pt"
+        
+        if not version:
+            raise HTTPException(
+                status_code=400,
+                detail="version is required (11s or v10m)"
+            )
+        
+        if version not in ["11s", "v10m"]:
+            raise HTTPException(
+                status_code=400,
+                detail="version must be '11s' or 'v10m'"
+            )
+        
+        if format_type not in ["onnx", "pt"]:
+            raise HTTPException(
+                status_code=400,
+                detail="format must be 'onnx' or 'pt'"
+            )
+        
+        # Build model path
+        if version == "11s":
+            model_path = f"models/vehicle/11s/yolo_vehicle_11s.{format_type}"
+        else:  # v10m
+            model_path = f"models/vehicle/v10m/yolo_vehicle_v10m.{format_type}"
+        
+        # Check if model exists
+        if not os.path.exists(model_path):
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model not found: {model_path}"
+            )
+        
+        # Update environment variable
+        os.environ['VEHICLE_MODEL_VERSION'] = version
+        
+        # Hot-swap the model
+        from app.utils.model_loader import hot_swap_model
+        
+        success = hot_swap_model(model_path, "cuda:0")
+        
+        if success:
+            logger.info(f"🔄 Switched to model version: {version} ({format_type.upper()})")
+            
+            return {
+                "ok": True,
+                "message": f"Successfully switched to {version.upper()} ({format_type.upper()})",
+                "version": version,
+                "format": format_type,
+                "model_path": model_path,
+                "optimizations": {
+                    "11s": "Speed & Real-time performance",
+                    "v10m": "Accuracy & Detection precision"
+                }.get(version, "Unknown")
+            }
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to switch model version"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Model version switch error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": str(e),
+                "message": "Internal server error during model version switch"
+            }
+        )
 
 
 @router.post("/settings/update")

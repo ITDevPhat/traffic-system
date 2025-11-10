@@ -5,6 +5,54 @@ import logging
 # This happens when multiple packages (PyTorch, NumPy, etc.) include OpenMP
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
+# =========================================================
+# 🔧 ONNX FP32 Compatibility Patch (RTX 3050 Optimized)
+# =========================================================
+# Force FP32 precision for ONNX models to avoid float16 mismatch
+os.environ['FORCE_FP32_ONNX'] = '1'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+
+# Apply runtime patches for ONNX FP32 compatibility
+def apply_onnx_fp32_patches():
+    """Apply runtime patches to ensure ONNX FP32 compatibility"""
+    try:
+        # Patch YOLO model loading to force FP32
+        from ultralytics import YOLO
+        original_init = YOLO.__init__
+        
+        def patched_init(self, model='yolov8n.pt', task=None, verbose=True):
+            result = original_init(self, model, task, verbose)
+            # Force FP32 for ONNX models
+            if hasattr(self, 'model') and str(model).endswith('.onnx'):
+                if hasattr(self.model, 'half'):
+                    self.model.half = lambda: self.model  # No-op for ONNX
+            return result
+        
+        YOLO.__init__ = patched_init
+        
+        # Patch predict method to respect FP32 setting
+        original_predict = YOLO.predict
+        
+        def patched_predict(self, source=None, **kwargs):
+            # Force half=False for ONNX models
+            if hasattr(self, 'ckpt_path') and str(self.ckpt_path).endswith('.onnx'):
+                kwargs['half'] = False
+            elif 'half' not in kwargs:
+                # Use config setting
+                from app.core.performance_config import INFERENCE_SETTINGS
+                kwargs['half'] = INFERENCE_SETTINGS.get('half', False)
+            return original_predict(self, source, **kwargs)
+        
+        YOLO.predict = patched_predict
+        
+        logging.getLogger("main").info("✅ ONNX FP32 patches applied successfully")
+        
+    except Exception as e:
+        logging.getLogger("main").warning(f"⚠️ ONNX patch warning: {e}")
+
+# Apply patches before importing other modules
+apply_onnx_fp32_patches()
+
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -115,6 +163,34 @@ def on_startup():
     Khởi tạo database và tables khi ứng dụng start.
     """
     create_db_and_tables()
+    
+    # Print optimization summary
+    logger.info("=" * 60)
+    logger.info("🚀 TRAFFIC DETECTION SERVER - RTX 3050 OPTIMIZED")
+    logger.info("=" * 60)
+    
+    # Show ONNX FP32 status
+    from app.core.performance_config import INFERENCE_SETTINGS, FIXED_DETECT_INTERVAL, ENABLE_ADAPTIVE_INTERVAL
+    precision_mode = "FP32" if not INFERENCE_SETTINGS.get('half', True) else "FP16"
+    logger.info(f"🔧 Precision Mode: {precision_mode} (ONNX Compatible)")
+    logger.info(f"⚡ Fixed Interval: {FIXED_DETECT_INTERVAL:.3f}s ({1/FIXED_DETECT_INTERVAL:.1f} FPS target)")
+    logger.info(f"📊 Adaptive FPS: {'Disabled' if not ENABLE_ADAPTIVE_INTERVAL else 'Enabled'}")
+    logger.info(f"🎯 Inference Size: {INFERENCE_SETTINGS.get('imgsz', 640)}px")
+    logger.info(f"🔍 Confidence: {INFERENCE_SETTINGS.get('conf', 0.35)}")
+    
+    # Check GPU status
+    try:
+        import torch
+        if torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_name(0)
+            logger.info(f"🎮 GPU: {gpu_name} (CUDA {torch.version.cuda})")
+        else:
+            logger.warning("⚠️ CUDA not available - falling back to CPU")
+    except Exception:
+        logger.warning("⚠️ Could not detect GPU status")
+    
+    logger.info("=" * 60)
+    
     try:
         if preload_realtime_resources(DEFAULT_REALTIME_MODEL_PATH):
             logger.info("🚀 Realtime detection model preloaded on startup")

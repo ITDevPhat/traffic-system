@@ -7,6 +7,7 @@ D:.
 |   package-lock.json
 |   package.json
 |   README.md
+|   start_server.py
 |   tree.txt
 |   tsconfig.json
 |   yarn.lock
@@ -16,134 +17,22 @@ D:.
 |   |   trace
 |   |   
 |   |   |   
-|   |   |   +----aTbcIEhVRrPMlSBpe-P9wGJ8MjFrYP97B0G27kJg5c=
-|   |   |   |       
-|   |   |   +----FgOzd9bYLLxbMVXOTYrtPZoV0d4Cww14RzinZ7cAjA=
-|   |   |   |       
-|   |   |   +----wMGudouxmu1o-LOQdiHOdAgeho5TTcqRjyevae3nxo=
-|   |   |   |       
-|   |   |   +---1qfPNi8yfjLM0nU1P1irrg5KueIdQhf8KOjm6E+dcYI=
-|   |   |   |       
-|   |   |   +---3VRpJAQC2sL27RPi+8tOQIWctiuudV4MGNHYBzhmdgE=
-|   |   |   |       
-|   |   |   |       
-|   |   |   +---4fMtLM9sBRhZHq0mgBi6UZHMtOmkhRIes5xmiUBbk9Y=
-|   |   |   |       
-|   |   |   +---4lQkbhq2Gn5-fksCx69R1MOnuCGofCIyD5orgvMsmQI=
-|   |   |   |       
-|   |   |   +---4VIJSoEejDDG8-WZN42UH4k+McnRR67eMy5+igjV8e0=
-|   |   |   |       
-|   |   |   +---4XiIYgroVw0vRl-oUIg9rbPAglr--9famuDXb1wKULM=
-|   |   |   |       
-|   |   |   +---6PBXNhSkkpKYUL+HelST-1uj0d-PYTUgjRuuFF9BYrE=
-|   |   |   |       
-|   |   |   +---729R3iwLQ2WFg1EIScjUI3MgWYvrAnq-ZhmCwx-T1OA=
-|   |   |   |       
-|   |   |   +---aHbHVWxFNl9VEkNpIqeu8RlNu2XB6D6yjhxBYqB4RqM=
-|   |   |   |       
-|   |   |   +---bhMWAXyHk5nQQkKZ7i2hhI7+ctqQI2HLCb+oI+bdll0=
-|   |   |   |       
-|   |   |   +---cc56qSfgVLsvUeCrsZoqAFrmvCw5Ao0KtZHJEfKTFoM=
-|   |   |   |       
-|   |   |   +---CFWzrlS94vGzBo3pY-lvkuOMas1J9H7PqsORr6lbGW4=
-|   |   |   |       
-|   |   |   +---CNnQ8Vr1-o1BFIWoxejjWuOWjyPEs5YA1gUr5FRYtdI=
-|   |   |   |       
-|   |   |   +---CSh4OQnIr3ybfsc3lzI1qDFhXuQvp0n7WUTHr0SrX40=
-|   |   |   |       
-|   |   |   +---d+E0htbbNpmaHBOqTVF5QtMOD8hFAG-SS6wO9yibr9U=
-|   |   |   |       
-|   |   |   +---d42-RUD-CzE-SHInQYHisyGaTakCd2WBO8pejFhYwMs=
-|   |   |   |       
-|   |   |   +---EQziTaNgGhgcSofXyeOmfe01oVaFkLa2zmal7Ai9xIk=
-|   |   |   |       
-|   |   |   +---FbCiHxJFM2a6iUmVddTrxMfuLEibITCaLS3DMafPDok=
-|   |   |   |       
-|   |   |   +---FbkIoQoc3xDLv8qzYwJhWGLMHp97Ha+495nSj6LSmGE=
-|   |   |   |       
-|   |   |   +---Fcay+U-XyKRp9dYxkdYiwf5gz2aBEI5zsBDNscjH++g=
-|   |   |   |       
-|   |   |   +---fkwyM6y+x9LkQ2rfna5sBPsx4cy-HfzXG4MBzXzcQmE=
-|   |   |   |       
-|   |   |   +---fqxqxz24ul9hl74ZPMWA-TpkGfzCI5gAoFcO31NjAzY=
-|   |   |   |       
-|   |   |   +---h86px8W8pOe00-VBbf-6iOVsGX6q6J2+u6bRSQ6katA=
-|   |   |   |       
-|   |   |   +---IGYBIUzqLvcxHVKJiEYF9yKY9yakUhlSSdxXXKkDh74=
-|   |   |   |       
-|   |   |   +---kOjlEr-bMXhkaObydxp1OiOj-veF9LPS6WnMM5zRK4k=
-|   |   |   |       
-|   |   |   +---KzTYNaXRqsY37OrwTfHLDu4-Hq62sEO3jLmjbACciMc=
-|   |   |   |       
-|   |   |   +---lipqnR1yEq693wTMELXcZEI+RUy7Ca-gd9ou6yiEKCc=
-|   |   |   |       
 |   |   |   +---LKiY4c1uZMxVHVyhZOzJ5-9tI20+B9E2xe2upgFj+GU=
-|   |   |   |       
-|   |   |   +---lTxiXUn+dIChnuPPeSxXzBh59+Y5JBPXx7SuEpURwhY=
-|   |   |   |       
-|   |   |   +---LurNCdSyLI47awTnWy9gBKvwNH18dH7RhTkaxg9WYdc=
+|   |   |   |       60.1762437006824.eMVXqGcLO7arSb71cXVHA5zs87wLqcmPHCday8IOIAY=.webp
 |   |   |   |       
 |   |   |   +---m4RunKBuu3HLHh7LvACL1o5-eUGlw2iTLMmRkdyfghE=
-|   |   |   |       
-|   |   |   +---mubSKQaLZE9c7g2apDgHiEEz3HD-xtLDs2ruRSMyU5g=
-|   |   |   |       
-|   |   |   +---MVI-ZN2CPKzNlAGbrYxQ9nzRz619H50BLUwltmgkOY8=
-|   |   |   |       
-|   |   |   |       
-|   |   |   +---myBKvpoN776VKtcmnXA2YVwEUp5d1bo3k+Nhd+fynhY=
-|   |   |   |       
-|   |   |   +---nb3C24n6EM8eGhe0JybAsnUOC2mAMRQsLR3oUKSEJJk=
-|   |   |   |       
-|   |   |   +---nIKC5T0T6498-SOzvFke7HESE8AOzoqx7rs44vtpM-k=
-|   |   |   |       
-|   |   |   +---NQ-EkUc8HWM+QpxhODV7buuBtQ0bTgaKY7vgeSWROEM=
-|   |   |   |       
-|   |   |   +---OK9XmFdDr+nRolZI70QTQxXbevmRTkGcTLXRX4yT1J8=
-|   |   |   |       
-|   |   |   |       
-|   |   |   +---oU4O5Qv3Yn9eTnHQFenbcdfGKONp4fy6A-xOFK-4iF8=
-|   |   |   |       
-|   |   |   |       
-|   |   |   +---qDAaunLt0tLAXKv6sNKzGp3gOrEEYtfkiAynYQpGt2s=
-|   |   |   |       
-|   |   |   +---QWKPNkPkcRfU2xkgwPSqwRF6E1xUIZ-cyqE1Zuh1Btc=
+|   |   |   |       60.1762758797356.xlVs+Yp-t5t-+V3QLf672kew8IXKk1JOwJXFOWyLesg=.webp
 |   |   |   |       
 |   |   |   +---r9VlD0KLHv7ojFpvtUE0njuAMubJ5xAXzGt7xy+x-sk=
+|   |   |   |       60.1762758798270.mSSgNy81V+vNqpAH0s1EPBvCTxgF9YIfP5N8BEBxHYo=.webp
 |   |   |   |       
-|   |   |   +---RD5KuKhONEG6TFywAJ2gMD+-co4+qgT9d8HQlg0ZHdE=
-|   |   |   |       
-|   |   |   +---Ri965CdtcuckI0PZEc8gmdXRGO-QPpk+GHIdx9jPdfI=
-|   |   |   |       
-|   |   |   +---RTXJB0TBnrYGXvkQYt8hGsbOA1QTaXIsgmz+FzNpW0c=
-|   |   |   |       
-|   |   |   +---sw8g13eejcS56QUkLG0OGRcv7oJRZP9E-VKZoAhd-sQ=
-|   |   |   |       
-|   |   |   +---u1SF+96lXUlBxh5zlEe-T3Q1UT+I2xueMSET4qILHAo=
-|   |   |   |       
-|   |   |   +---U5Yiehx7DWr6oec1xRZ-pu6ColV5XeUwV8HEOiKQmwo=
-|   |   |   |       
-|   |   |   +---UE3seE+R-MVOEZnNzj6Nuix29ZtpjJfzK-vKklevPy8=
-|   |   |   |       
-|   |   |   +---UqjhzpRucSle5sdhd6xapkngwlHOcT864cNL0qC82WA=
-|   |   |   |       
-|   |   |   +---Uqqrj1KI7lhFFfVBMxg5zNR+TlOBrNkzAsXRWcaBjY8=
-|   |   |   |       
-|   |   |   +---uVe+eMAS9MiyYpihGev2p7iFrYqYB290GBzcCIPMgHY=
-|   |   |   |       
-|   |   |   +---VmtRQEh8gcCIp23V0MgH-ED6J1o5WYmhVmYk0u3W3MQ=
-|   |   |   |       
-|   |   |   |       
-|   |   |   +---w6+QZDNf8gbQsc0dMdLrd4TywAzmXfPn3Cmx-CrFgBg=
-|   |   |   |       
-|   |   |   +---x7rkO+F8G98WhqggY7RJOefJCAonb1YHjdNYwLnZoJ4=
-|   |   |   |       
-|   |   |   +---xOny9+uiE00AykE8k-axJw61kLdHEfLfU+6Tbzy9oj8=
-|   |   |   |       
-|   |   |   \---z0m7fiXdWYPUiGt9i6tmLKUfQ5DjB5cdch-MIrUEMQQ=
+|   |   |   \---UqjhzpRucSle5sdhd6xapkngwlHOcT864cNL0qC82WA=
+|   |   |           60.1762752085963.QZfcdQTk9zKnfXiAoHUlZnAFSFHgNTpY-t6Pcu0iEr0=.webp
 |   |   |           
 |   |   +---swc
 |   |   |   \---plugins
 |   |   |       \---v7_windows_x86_64_0.106.15
+|   |   \---webpack
 |   |       +---client-development
 |   |       |       0.pack.gz
 |   |       |       1.pack.gz
@@ -164,26 +53,8 @@ D:.
 |   |       |       23.pack.gz
 |   |       |       24.pack.gz
 |   |       |       25.pack.gz
-|   |       |       26.pack.gz
-|   |       |       27.pack.gz
-|   |       |       28.pack.gz
-|   |       |       29.pack.gz
 |   |       |       3.pack.gz
-|   |       |       30.pack.gz
-|   |       |       31.pack.gz
-|   |       |       32.pack.gz
-|   |       |       33.pack.gz
-|   |       |       34.pack.gz
-|   |       |       35.pack.gz
-|   |       |       36.pack.gz
-|   |       |       37.pack.gz
-|   |       |       38.pack.gz
-|   |       |       39.pack.gz
 |   |       |       4.pack.gz
-|   |       |       40.pack.gz
-|   |       |       41.pack.gz
-|   |       |       42.pack.gz
-|   |       |       43.pack.gz
 |   |       |       5.pack.gz
 |   |       |       6.pack.gz
 |   |       |       7.pack.gz
@@ -203,11 +74,7 @@ D:.
 |   |       |       
 |   |       +---edge-server-development
 |   |       |       0.pack.gz
-|   |       |       1.pack.gz
-|   |       |       2.pack.gz
-|   |       |       3.pack.gz
 |   |       |       index.pack.gz
-|   |       |       index.pack.gz.old
 |   |       |       
 |   |       +---edge-server-production
 |   |       |       0.pack
@@ -235,33 +102,9 @@ D:.
 |   |       |       25.pack.gz
 |   |       |       26.pack.gz
 |   |       |       27.pack.gz
-|   |       |       28.pack.gz
-|   |       |       29.pack.gz
 |   |       |       3.pack.gz
-|   |       |       30.pack.gz
-|   |       |       31.pack.gz
-|   |       |       32.pack.gz
-|   |       |       33.pack.gz
-|   |       |       34.pack.gz
-|   |       |       35.pack.gz
-|   |       |       36.pack.gz
-|   |       |       37.pack.gz
-|   |       |       38.pack.gz
-|   |       |       39.pack.gz
 |   |       |       4.pack.gz
-|   |       |       40.pack.gz
-|   |       |       41.pack.gz
-|   |       |       42.pack.gz
-|   |       |       43.pack.gz
-|   |       |       44.pack.gz
-|   |       |       45.pack.gz
-|   |       |       46.pack.gz
-|   |       |       47.pack.gz
-|   |       |       48.pack.gz
-|   |       |       49.pack.gz
 |   |       |       5.pack.gz
-|   |       |       50.pack.gz
-|   |       |       51.pack.gz
 |   |       |       6.pack.gz
 |   |       |       7.pack.gz
 |   |       |       8.pack.gz
@@ -274,22 +117,186 @@ D:.
 |   |               index.pack
 |   |               
 |   +---server
-|   |       app-paths-manifest.json
-|   |       middleware-manifest.json
-|   |       middleware-react-loadable-manifest.js
-|   |       pages-manifest.json
-|   |       server-reference-manifest.js
-|   |       server-reference-manifest.json
-|   |       
+|   |   |   apexcharts.js
+|   |   |   app-paths-manifest.json
+|   |   |   bootstrap.js
+|   |   |   edge-runtime-webpack.js
+|   |   |   middleware-manifest.json
+|   |   |   middleware-react-loadable-manifest.js
+|   |   |   pages-manifest.json
+|   |   |   server-reference-manifest.js
+|   |   |   server-reference-manifest.json
+|   |   |   webpack-runtime.js
+|   |   |   _rsc_src_app_admin_dashboards_analytics_components_SalesChart_jsx.js
+|   |   |   _rsc_src_app_admin_dashboards_analytics_components_SocialSource_jsx.js
+|   |   |   _rsc_src_app_admin_dashboards_analytics_components_Statistics_jsx.js
+|   |   |   _rsc_src_app_admin_dashboards_analytics_components_Transaction_jsx.js
+|   |   |   _rsc_src_helpers_data_js.js
+|   |   |   
+|   |   +---app
+|   |   |   +---(admin)
+|   |   |   |   +---dashboards
+|   |   |   |   |   \---analytics
+|   |   |   |   |           page.js
+|   |   |   |   |           page_client-reference-manifest.js
+|   |   |   |   |           
+|   |   |   |   \---detection
+|   |   |   |       |   page.js
+|   |   |   |       |   page_client-reference-manifest.js
+|   |   |   |       |   
+|   |   |   |       \---live
+|   |   |   |               page.js
+|   |   |   |               page_client-reference-manifest.js
+|   |   |   |               
+|   |   |   \---api
+|   |   |       \---auth
+|   |   |                   route.js
+|   |   |                   
+|   |   +---src
+|   |   |       middleware.js
+|   |   |       
+|   |   \---static
+|   |       \---webpack
+|   |               633457081244afec._.hot-update.json
+|   |               
 |   +---static
 |   |   +---chunks
-|   |   |       polyfills.js
+|   |   |   |   apexcharts.js
+|   |   |   |   app-pages-internals.js
+|   |   |   |   bootstrap.js
+|   |   |   |   main-app.js
+|   |   |   |   polyfills.js
+|   |   |   |   webpack.js
+|   |   |   |   _app-pages-browser_src_context_useLayoutContext_jsx.js
+|   |   |   |   
+|   |   |   \---app
+|   |   |       |   layout.js
+|   |   |       |   
+|   |   |       \---(admin)
+|   |   |           |   layout.js
+|   |   |           |   
+|   |   |           +---dashboards
+|   |   |           |   \---analytics
+|   |   |           |           page.js
+|   |   |           |           
+|   |   |           \---detection
+|   |   |               |   page.js
+|   |   |               |   
+|   |   |               \---live
+|   |   |                       page.js
+|   |   |                       
+|   |   +---css
+|   |   |   |   
+|   |   |   \---app
+|   |   |           layout.css
+|   |   |           
+|   |   +---development
+|   |   |       _ssgManifest.js
 |   |   |       
-|   |   \---development
-|   |           _ssgManifest.js
-|   |           
+|   |   +---media
+|   |   |       avatar-10.842ed3f6.jpg
+|   |   |       avatar-2.0b1161dc.jpg
+|   |   |       avatar-3.2885c5a0.jpg
+|   |   |       avatar-4.8129b9cd.jpg
+|   |   |       avatar-5.f49bd1fc.jpg
+|   |   |       avatar-6.42282426.jpg
+|   |   |       avatar-7.7ce1dc02.jpg
+|   |   |       avatar-8.38ce5731.jpg
+|   |   |       avatar-9.0a484c94.jpg
+|   |   |       chat.6fa0a341.jpg
+|   |   |       customer-bg.09326a82.jpg
+|   |   |       d9fef5bf2f64cf9a-s.woff2
+|   |   |       de42cfb9a3b980ae-s.p.woff2
+|   |   |       img-4.de00824a.jpg
+|   |   |       img-6.1d240fb6.jpg
+|   |   |       img-7.92c56bff.jpg
+|   |   |       mastercard.4ef0a101.svg
+|   |   |       money.877568c1.png
+|   |   |       p-1.a2e36c1c.jpg
+|   |   |       p-10.a864f44f.jpg
+|   |   |       p-2.956b628c.jpg
+|   |   |       p-3.72f91ca3.jpg
+|   |   |       p-4.44337622.jpg
+|   |   |       p-5.f0b1d84b.jpg
+|   |   |       p-6.ff463056.jpg
+|   |   |       p-7.a4cc800d.jpg
+|   |   |       p-8.11e23dd1.jpg
+|   |   |       p-9.c928fa34.jpg
+|   |   |       paypal.d39e4696.svg
+|   |   |       visa.20832c3c.svg
+|   |   |       
+|   |   \---webpack
+|   |       |   02def7cc46ab3b8f.webpack.hot-update.json
+|   |       |   0ea82ab18f37e90f.webpack.hot-update.json
+|   |       |   3fd8e4a36b09d5ec.webpack.hot-update.json
+|   |       |   489e40888754ab7a.webpack.hot-update.json
+|   |       |   633457081244afec._.hot-update.json
+|   |       |   6b1c031d863a117d.webpack.hot-update.json
+|   |       |   74f9b416f887faa5.webpack.hot-update.json
+|   |       |   a90f599533ce37ab.webpack.hot-update.json
+|   |       |   aac57f09cc43c406.webpack.hot-update.json
+|   |       |   b3675bd9b69940a1.webpack.hot-update.json
+|   |       |   bootstrap.3fd8e4a36b09d5ec.hot-update.js
+|   |       |   ef4fbe0dcc1e61af.webpack.hot-update.json
+|   |       |   f855163ab6343c65.webpack.hot-update.json
+|   |       |   webpack.02def7cc46ab3b8f.hot-update.js
+|   |       |   webpack.0ea82ab18f37e90f.hot-update.js
+|   |       |   webpack.3fd8e4a36b09d5ec.hot-update.js
+|   |       |   webpack.489e40888754ab7a.hot-update.js
+|   |       |   webpack.6b1c031d863a117d.hot-update.js
+|   |       |   webpack.74f9b416f887faa5.hot-update.js
+|   |       |   webpack.a90f599533ce37ab.hot-update.js
+|   |       |   webpack.aac57f09cc43c406.hot-update.js
+|   |       |   webpack.b3675bd9b69940a1.hot-update.js
+|   |       |   webpack.ef4fbe0dcc1e61af.hot-update.js
+|   |       |   webpack.f855163ab6343c65.hot-update.js
+|   |       |   
+|   |       \---app
+|   |           \---(admin)
+|   |               \---detection
+|   |                   |   page.6b1c031d863a117d.hot-update.js
+|   |                   |   
+|   |                   \---live
+|   |                           page.02def7cc46ab3b8f.hot-update.js
+|   |                           page.0ea82ab18f37e90f.hot-update.js
+|   |                           page.489e40888754ab7a.hot-update.js
+|   |                           page.6b1c031d863a117d.hot-update.js
+|   |                           page.74f9b416f887faa5.hot-update.js
+|   |                           page.a90f599533ce37ab.hot-update.js
+|   |                           page.aac57f09cc43c406.hot-update.js
+|   |                           page.b3675bd9b69940a1.hot-update.js
+|   |                           page.f855163ab6343c65.hot-update.js
+|   |                           
 |   \---types
-|           package.json
+|       |   package.json
+|       |   
+|       \---app
+|           |   layout.ts
+|           |   
+|           +---(admin)
+|           |   |   layout.ts
+|           |   |   
+|           |   +---dashboards
+|           |   |   \---analytics
+|           |   |           page.ts
+|           |   |           
+|           |   \---detection
+|           |       |   page.ts
+|           |       |   
+|           |       \---live
+|           |               page.ts
+|           |               
+|           \---api
+|               \---auth
+|                           route.ts
+|                           
++---.windsurf
+|   \---rules
+|           architecture.md
+|           devstyle.md
+|           performance.md
+|           runtime-rule.md
+|           traffic-rule.md
 |           
 |   |   .package-lock.json
 |   |   
@@ -7621,6 +7628,7 @@ D:.
 |   |   |   LICENSE
 |   |   |   package.json
 |   |   |   README.md
+|   |   |   webpack.config.js
 |   |   |   
 |   |   |   \---workflows
 |   |   |           release.yml
@@ -8713,6 +8721,7 @@ D:.
 |   |   |   |       webkit-user-drag.js
 |   |   |   |       webm.js
 |   |   |   |       webnfc.js
+|   |   |   |       webp.js
 |   |   |   |       websockets.js
 |   |   |   |       webtransport.js
 |   |   |   |       webusb.js
@@ -13926,6 +13935,7 @@ D:.
 |   |   |           no-unresolved.md
 |   |   |           no-unused-modules.md
 |   |   |           no-useless-path-segments.md
+|   |   |           no-webpack-loader-syntax.md
 |   |   |           order.md
 |   |   |           prefer-default-export.md
 |   |   |           unambiguous.md
@@ -13982,6 +13992,7 @@ D:.
 |   |   |           no-unresolved.js
 |   |   |           no-unused-modules.js
 |   |   |           no-useless-path-segments.js
+|   |   |           no-webpack-loader-syntax.js
 |   |   |           order.js
 |   |   |           prefer-default-export.js
 |   |   |           unambiguous.js
@@ -15332,11 +15343,9 @@ D:.
 |   |   |       flatted.php
 |   |   |       
 |   |   +---python
-|   |   |   |   flatted.py
-|   |   |   |   test.py
-|   |   |   |   
-|   |   |           flatted.cpython-311.pyc
-|   |   |           
+|   |   |       flatted.py
+|   |   |       test.py
+|   |   |       
 |   |   \---types
 |   |           index.d.ts
 |   |           
@@ -19512,6 +19521,9 @@ D:.
 |   |   |   |   |   utils.d.ts
 |   |   |   |   |   utils.js
 |   |   |   |   |   utils.js.map
+|   |   |   |   |   webpack-config.d.ts
+|   |   |   |   |   webpack-config.js
+|   |   |   |   |   webpack-config.js.map
 |   |   |   |   |   worker.d.ts
 |   |   |   |   |   worker.js
 |   |   |   |   |   worker.js.map
@@ -19685,6 +19697,7 @@ D:.
 |   |   |   |   |       types.js
 |   |   |   |   |       types.js.map
 |   |   |   |   |       
+|   |   |   |   +---webpack
 |   |   |   |   |   |   stringify-request.d.ts
 |   |   |   |   |   |   stringify-request.js
 |   |   |   |   |   |   stringify-request.js.map
@@ -19980,6 +19993,7 @@ D:.
 |   |   |   |   |       |       shared.js
 |   |   |   |   |       |       shared.js.map
 |   |   |   |   |       |       
+|   |   |   |   |       +---terser-webpack-plugin
 |   |   |   |   |       |   \---src
 |   |   |   |   |       |           index.d.ts
 |   |   |   |   |       |           index.js
@@ -20025,6 +20039,9 @@ D:.
 |   |   |   |   |               simpleWebpackError.d.ts
 |   |   |   |   |               simpleWebpackError.js
 |   |   |   |   |               simpleWebpackError.js.map
+|   |   |   |   |               webpackModuleError.d.ts
+|   |   |   |   |               webpackModuleError.js
+|   |   |   |   |               webpackModuleError.js.map
 |   |   |   |   |               
 |   |   |   |   |       impl.d.ts
 |   |   |   |   |       impl.js
@@ -20033,6 +20050,7 @@ D:.
 |   |   |   |   |       index.js
 |   |   |   |   |       index.js.map
 |   |   |   |   |       
+|   |   |   |   \---webpack-config-rules
 |   |   |   |           resolve.d.ts
 |   |   |   |           resolve.js
 |   |   |   |           resolve.js.map
@@ -20058,6 +20076,9 @@ D:.
 |   |   |   |   |   app-link-gc.d.ts
 |   |   |   |   |   app-link-gc.js
 |   |   |   |   |   app-link-gc.js.map
+|   |   |   |   |   app-webpack.d.ts
+|   |   |   |   |   app-webpack.js
+|   |   |   |   |   app-webpack.js.map
 |   |   |   |   |   detect-domain-locale.d.ts
 |   |   |   |   |   detect-domain-locale.js
 |   |   |   |   |   detect-domain-locale.js.map
@@ -20127,6 +20148,9 @@ D:.
 |   |   |   |   |   web-vitals.d.ts
 |   |   |   |   |   web-vitals.js
 |   |   |   |   |   web-vitals.js.map
+|   |   |   |   |   webpack.d.ts
+|   |   |   |   |   webpack.js
+|   |   |   |   |   webpack.js.map
 |   |   |   |   |   with-router.d.ts
 |   |   |   |   |   with-router.js
 |   |   |   |   |   with-router.js.map
@@ -20376,6 +20400,9 @@ D:.
 |   |   |   |   |   |   |   |           index.js.map
 |   |   |   |   |   |   |   |           
 |   |   |   |   |   |   |   +---helpers
+|   |   |   |   |   |   |   |       format-webpack-messages.d.ts
+|   |   |   |   |   |   |   |       format-webpack-messages.js
+|   |   |   |   |   |   |   |       format-webpack-messages.js.map
 |   |   |   |   |   |   |   |       get-socket-url.d.ts
 |   |   |   |   |   |   |   |       get-socket-url.js
 |   |   |   |   |   |   |   |       get-socket-url.js.map
@@ -21648,6 +21675,7 @@ D:.
 |   |   |   |   |   |   
 |   |   |   |   |   \---cjs
 |   |   |   |   |           
+|   |   |   |   +---react-server-dom-webpack
 |   |   |   |   |   |   client.browser.js
 |   |   |   |   |   |   client.edge.js
 |   |   |   |   |   |   client.js
@@ -21665,7 +21693,34 @@ D:.
 |   |   |   |   |   |   server.node.unbundled.js
 |   |   |   |   |   |   
 |   |   |   |   |   \---cjs
+|   |   |   |   |           react-server-dom-webpack-client.browser.development.js
+|   |   |   |   |           react-server-dom-webpack-client.browser.production.js
+|   |   |   |   |           react-server-dom-webpack-client.browser.production.min.js
+|   |   |   |   |           react-server-dom-webpack-client.edge.development.js
+|   |   |   |   |           react-server-dom-webpack-client.edge.production.js
+|   |   |   |   |           react-server-dom-webpack-client.edge.production.min.js
+|   |   |   |   |           react-server-dom-webpack-client.node.development.js
+|   |   |   |   |           react-server-dom-webpack-client.node.production.js
+|   |   |   |   |           react-server-dom-webpack-client.node.production.min.js
+|   |   |   |   |           react-server-dom-webpack-client.node.unbundled.development.js
+|   |   |   |   |           react-server-dom-webpack-client.node.unbundled.production.js
+|   |   |   |   |           react-server-dom-webpack-client.node.unbundled.production.min.js
+|   |   |   |   |           react-server-dom-webpack-node-register.js
+|   |   |   |   |           react-server-dom-webpack-plugin.js
+|   |   |   |   |           react-server-dom-webpack-server.browser.development.js
+|   |   |   |   |           react-server-dom-webpack-server.browser.production.js
+|   |   |   |   |           react-server-dom-webpack-server.browser.production.min.js
+|   |   |   |   |           react-server-dom-webpack-server.edge.development.js
+|   |   |   |   |           react-server-dom-webpack-server.edge.production.js
+|   |   |   |   |           react-server-dom-webpack-server.edge.production.min.js
+|   |   |   |   |           react-server-dom-webpack-server.node.development.js
+|   |   |   |   |           react-server-dom-webpack-server.node.production.js
+|   |   |   |   |           react-server-dom-webpack-server.node.production.min.js
+|   |   |   |   |           react-server-dom-webpack-server.node.unbundled.development.js
+|   |   |   |   |           react-server-dom-webpack-server.node.unbundled.production.js
+|   |   |   |   |           react-server-dom-webpack-server.node.unbundled.production.min.js
 |   |   |   |   |           
+|   |   |   |   +---react-server-dom-webpack-experimental
 |   |   |   |   |   |   client.browser.js
 |   |   |   |   |   |   client.edge.js
 |   |   |   |   |   |   client.js
@@ -21683,6 +21738,32 @@ D:.
 |   |   |   |   |   |   server.node.unbundled.js
 |   |   |   |   |   |   
 |   |   |   |   |   \---cjs
+|   |   |   |   |           react-server-dom-webpack-client.browser.development.js
+|   |   |   |   |           react-server-dom-webpack-client.browser.production.js
+|   |   |   |   |           react-server-dom-webpack-client.browser.production.min.js
+|   |   |   |   |           react-server-dom-webpack-client.edge.development.js
+|   |   |   |   |           react-server-dom-webpack-client.edge.production.js
+|   |   |   |   |           react-server-dom-webpack-client.edge.production.min.js
+|   |   |   |   |           react-server-dom-webpack-client.node.development.js
+|   |   |   |   |           react-server-dom-webpack-client.node.production.js
+|   |   |   |   |           react-server-dom-webpack-client.node.production.min.js
+|   |   |   |   |           react-server-dom-webpack-client.node.unbundled.development.js
+|   |   |   |   |           react-server-dom-webpack-client.node.unbundled.production.js
+|   |   |   |   |           react-server-dom-webpack-client.node.unbundled.production.min.js
+|   |   |   |   |           react-server-dom-webpack-node-register.js
+|   |   |   |   |           react-server-dom-webpack-plugin.js
+|   |   |   |   |           react-server-dom-webpack-server.browser.development.js
+|   |   |   |   |           react-server-dom-webpack-server.browser.production.js
+|   |   |   |   |           react-server-dom-webpack-server.browser.production.min.js
+|   |   |   |   |           react-server-dom-webpack-server.edge.development.js
+|   |   |   |   |           react-server-dom-webpack-server.edge.production.js
+|   |   |   |   |           react-server-dom-webpack-server.edge.production.min.js
+|   |   |   |   |           react-server-dom-webpack-server.node.development.js
+|   |   |   |   |           react-server-dom-webpack-server.node.production.js
+|   |   |   |   |           react-server-dom-webpack-server.node.production.min.js
+|   |   |   |   |           react-server-dom-webpack-server.node.unbundled.development.js
+|   |   |   |   |           react-server-dom-webpack-server.node.unbundled.production.js
+|   |   |   |   |           react-server-dom-webpack-server.node.unbundled.production.min.js
 |   |   |   |   |           
 |   |   |   |   +---regenerator-runtime
 |   |   |   |   |       LICENSE
@@ -21875,6 +21956,7 @@ D:.
 |   |   |   |   |       package.json
 |   |   |   |   |       web-vitals.attribution.js
 |   |   |   |   |       
+|   |   |   |   +---webpack
 |   |   |   |   |       BasicEvaluatedExpression.js
 |   |   |   |   |       bundle5.js
 |   |   |   |   |       ExternalsPlugin.js
@@ -21896,12 +21978,17 @@ D:.
 |   |   |   |   |       package.json
 |   |   |   |   |       SingleEntryPlugin.js
 |   |   |   |   |       sources.js
+|   |   |   |   |       webpack-lib.js
+|   |   |   |   |       webpack.d.ts
+|   |   |   |   |       webpack.js
 |   |   |   |   |       WebWorkerTemplatePlugin.js
 |   |   |   |   |       
+|   |   |   |   +---webpack-sources1
 |   |   |   |   |       index.js
 |   |   |   |   |       LICENSE
 |   |   |   |   |       package.json
 |   |   |   |   |       
+|   |   |   |   +---webpack-sources3
 |   |   |   |   |       index.js
 |   |   |   |   |       LICENSE
 |   |   |   |   |       package.json
@@ -21975,6 +22062,8 @@ D:.
 |   |   |   |   |   |   type-check.js.map
 |   |   |   |   |   |   utils.js
 |   |   |   |   |   |   utils.js.map
+|   |   |   |   |   |   webpack-config.js
+|   |   |   |   |   |   webpack-config.js.map
 |   |   |   |   |   |   worker.js
 |   |   |   |   |   |   worker.js.map
 |   |   |   |   |   |   
@@ -22087,6 +22176,7 @@ D:.
 |   |   |   |   |   |       types.js
 |   |   |   |   |   |       types.js.map
 |   |   |   |   |   |       
+|   |   |   |   |   +---webpack
 |   |   |   |   |   |   |   stringify-request.js
 |   |   |   |   |   |   |   stringify-request.js.map
 |   |   |   |   |   |   |   utils.js
@@ -22300,6 +22390,7 @@ D:.
 |   |   |   |   |   |       |       shared.js
 |   |   |   |   |   |       |       shared.js.map
 |   |   |   |   |   |       |       
+|   |   |   |   |   |       +---terser-webpack-plugin
 |   |   |   |   |   |       |   \---src
 |   |   |   |   |   |       |           index.js
 |   |   |   |   |   |       |           index.js.map
@@ -22331,12 +22422,15 @@ D:.
 |   |   |   |   |   |               parseScss.js.map
 |   |   |   |   |   |               simpleWebpackError.js
 |   |   |   |   |   |               simpleWebpackError.js.map
+|   |   |   |   |   |               webpackModuleError.js
+|   |   |   |   |   |               webpackModuleError.js.map
 |   |   |   |   |   |               
 |   |   |   |   |   |       impl.js
 |   |   |   |   |   |       impl.js.map
 |   |   |   |   |   |       index.js
 |   |   |   |   |   |       index.js.map
 |   |   |   |   |   |       
+|   |   |   |   |   \---webpack-config-rules
 |   |   |   |   |           resolve.js
 |   |   |   |   |           resolve.js.map
 |   |   |   |   |           
@@ -22353,6 +22447,8 @@ D:.
 |   |   |   |   |   |   app-index.js.map
 |   |   |   |   |   |   app-link-gc.js
 |   |   |   |   |   |   app-link-gc.js.map
+|   |   |   |   |   |   app-webpack.js
+|   |   |   |   |   |   app-webpack.js.map
 |   |   |   |   |   |   detect-domain-locale.js
 |   |   |   |   |   |   detect-domain-locale.js.map
 |   |   |   |   |   |   get-domain-locale.js
@@ -22399,6 +22495,8 @@ D:.
 |   |   |   |   |   |   use-intersection.js.map
 |   |   |   |   |   |   web-vitals.js
 |   |   |   |   |   |   web-vitals.js.map
+|   |   |   |   |   |   webpack.js
+|   |   |   |   |   |   webpack.js.map
 |   |   |   |   |   |   with-router.js
 |   |   |   |   |   |   with-router.js.map
 |   |   |   |   |   |   
@@ -22574,6 +22672,8 @@ D:.
 |   |   |   |   |   |   |   |   |           index.js.map
 |   |   |   |   |   |   |   |   |           
 |   |   |   |   |   |   |   |   +---helpers
+|   |   |   |   |   |   |   |   |       format-webpack-messages.js
+|   |   |   |   |   |   |   |   |       format-webpack-messages.js.map
 |   |   |   |   |   |   |   |   |       get-socket-url.js
 |   |   |   |   |   |   |   |   |       get-socket-url.js.map
 |   |   |   |   |   |   |   |   |       getErrorByType.js
@@ -23151,6 +23251,8 @@ D:.
 |   |   |   |   |   |   |   hot-middleware.js.map
 |   |   |   |   |   |   |   hot-reloader-types.js
 |   |   |   |   |   |   |   hot-reloader-types.js.map
+|   |   |   |   |   |   |   hot-reloader-webpack.js
+|   |   |   |   |   |   |   hot-reloader-webpack.js.map
 |   |   |   |   |   |   |   messages.js
 |   |   |   |   |   |   |   messages.js.map
 |   |   |   |   |   |   |   on-demand-entry-handler.js
@@ -23384,6 +23486,10 @@ D:.
 |   |   |   |   |   |       |       |       react-jsx-dev-runtime.js.map
 |   |   |   |   |   |       |       |       react-jsx-runtime.js
 |   |   |   |   |   |       |       |       react-jsx-runtime.js.map
+|   |   |   |   |   |       |       |       react-server-dom-webpack-server-edge.js
+|   |   |   |   |   |       |       |       react-server-dom-webpack-server-edge.js.map
+|   |   |   |   |   |       |       |       react-server-dom-webpack-server-node.js
+|   |   |   |   |   |       |       |       react-server-dom-webpack-server-node.js.map
 |   |   |   |   |   |       |       |       react.js
 |   |   |   |   |   |       |       |       react.js.map
 |   |   |   |   |   |       |       |       
@@ -23398,6 +23504,8 @@ D:.
 |   |   |   |   |   |       |               react-jsx-dev-runtime.js.map
 |   |   |   |   |   |       |               react-jsx-runtime.js
 |   |   |   |   |   |       |               react-jsx-runtime.js.map
+|   |   |   |   |   |       |               react-server-dom-webpack-client-edge.js
+|   |   |   |   |   |       |               react-server-dom-webpack-client-edge.js.map
 |   |   |   |   |   |       |               react.js
 |   |   |   |   |   |       |               react.js.map
 |   |   |   |   |   |       |               
@@ -23564,6 +23672,12 @@ D:.
 |   |   |   |   |   |   |   |       squoosh_resize.js
 |   |   |   |   |   |   |   |       squoosh_resize.js.map
 |   |   |   |   |   |   |   |       
+|   |   |   |   |   |   |   \---webp
+|   |   |   |   |   |   |           webp_enc.d.ts
+|   |   |   |   |   |   |           webp_node_dec.js
+|   |   |   |   |   |   |           webp_node_dec.js.map
+|   |   |   |   |   |   |           webp_node_enc.js
+|   |   |   |   |   |   |           webp_node_enc.js.map
 |   |   |   |   |   |   |           
 |   |   |   |   |   |   \---trace
 |   |   |   |   |   |           constants.js
@@ -24553,6 +24667,9 @@ D:.
 |   |   |   |   |   |   hot-reloader-types.d.ts
 |   |   |   |   |   |   hot-reloader-types.js
 |   |   |   |   |   |   hot-reloader-types.js.map
+|   |   |   |   |   |   hot-reloader-webpack.d.ts
+|   |   |   |   |   |   hot-reloader-webpack.js
+|   |   |   |   |   |   hot-reloader-webpack.js.map
 |   |   |   |   |   |   messages.d.ts
 |   |   |   |   |   |   messages.js
 |   |   |   |   |   |   messages.js.map
@@ -24896,6 +25013,12 @@ D:.
 |   |   |   |   |       |       |       react-jsx-runtime.d.ts
 |   |   |   |   |       |       |       react-jsx-runtime.js
 |   |   |   |   |       |       |       react-jsx-runtime.js.map
+|   |   |   |   |       |       |       react-server-dom-webpack-server-edge.d.ts
+|   |   |   |   |       |       |       react-server-dom-webpack-server-edge.js
+|   |   |   |   |       |       |       react-server-dom-webpack-server-edge.js.map
+|   |   |   |   |       |       |       react-server-dom-webpack-server-node.d.ts
+|   |   |   |   |       |       |       react-server-dom-webpack-server-node.js
+|   |   |   |   |       |       |       react-server-dom-webpack-server-node.js.map
 |   |   |   |   |       |       |       react.d.ts
 |   |   |   |   |       |       |       react.js
 |   |   |   |   |       |       |       react.js.map
@@ -24916,6 +25039,9 @@ D:.
 |   |   |   |   |       |               react-jsx-runtime.d.ts
 |   |   |   |   |       |               react-jsx-runtime.js
 |   |   |   |   |       |               react-jsx-runtime.js.map
+|   |   |   |   |       |               react-server-dom-webpack-client-edge.d.ts
+|   |   |   |   |       |               react-server-dom-webpack-client-edge.js
+|   |   |   |   |       |               react-server-dom-webpack-client-edge.js.map
 |   |   |   |   |       |               react.d.ts
 |   |   |   |   |       |               react.js
 |   |   |   |   |       |               react.js.map
@@ -25148,6 +25274,14 @@ D:.
 |   |   |   |   |   |   +---rotate
 |   |   |   |   |   |   |       rotate.wasm
 |   |   |   |   |   |   |       
+|   |   |   |   |   |   \---webp
+|   |   |   |   |   |           webp_enc.d.ts
+|   |   |   |   |   |           webp_node_dec.js
+|   |   |   |   |   |           webp_node_dec.js.map
+|   |   |   |   |   |           webp_node_dec.wasm
+|   |   |   |   |   |           webp_node_enc.js
+|   |   |   |   |   |           webp_node_enc.js.map
+|   |   |   |   |   |           webp_node_enc.wasm
 |   |   |   |   |   |           
 |   |   |   |   |   \---trace
 |   |   |   |   |           constants.d.ts
@@ -30423,6 +30557,7 @@ D:.
 |   |   |   readme.md
 |   |   |   style.d.ts
 |   |   |   style.js
+|   |   |   webpack.js
 |   |   |   
 |   |   |   +---babel
 |   |   |   |       index.js
@@ -30430,6 +30565,7 @@ D:.
 |   |   |   +---index
 |   |   |   |       index.js
 |   |   |   |       
+|   |   |   \---webpack
 |   |   |           index.js
 |   |   |           
 |   |   \---lib
@@ -32458,8 +32594,14 @@ D:.
 |   |   |   |               TopCustomer.jsx
 |   |   |   |               
 |   |   |   +---detection
-|   |   |   |       page.jsx
-|   |   |   |       
+|   |   |   |   |   page.jsx
+|   |   |   |   |   
+|   |   |   |   +---grid
+|   |   |   |   |       page.jsx
+|   |   |   |   |       
+|   |   |   |   \---live
+|   |   |   |           page.jsx
+|   |   |   |           
 |   |   |   +---forms
 |   |   |   |   +---basic
 |   |   |   |   |   |   page.jsx
@@ -32731,8 +32873,16 @@ D:.
 |   |   |               Maintenance.jsx
 |   |   |               
 |   |   \---api
-|   |       \---auth
-|   |                   route.js
+|   |       +---auth
+|   |       |           route.js
+|   |       |           
+|   |           |   route.ts
+|   |           |   
+|   |           +---from-folder
+|   |           |       route.ts
+|   |           |       
+|   |           \---[id]
+|   |                   route.ts
 |   |                   
 |   +---assets
 |   |   +---data
@@ -32941,6 +33091,9 @@ D:.
 |   +---components
 |   |   |   ComponentContainerCard.jsx
 |   |   |   CustomFlatpickr.jsx
+|   |   |   DetectionCard.jsx
+|   |   |   DetectionCardRealtime.jsx
+|   |   |   DetectionGrid.jsx
 |   |   |   FallbackLoading.jsx
 |   |   |   FileUpload.jsx
 |   |   |   PageTitle.jsx
@@ -33035,58 +33188,157 @@ D:.
 |   \---workers
 |           wsWorker.js
 |           
-\---traffic-server
-    |   requirements.txt
-    |   tree.txt
-    |   tree_server.txt
-    |   
-    +---app
-    |   |   main.py
-    |   |   
-    |   +---core
-    |   |       config.py
-    |   |       database.py
-    |   |       
-    |   +---models
-    |   |       roi.py
-    |   |       user.py
-    |   |       vehicle.py
-    |   |       video_job.py
-    |   |       violation.py
-    |   |       __init__.py
-    |   |       
-    |   +---routers
-    |   |       auth.py
-    |   |       detection.py
-    |   |       realtime_ws_binary.py
-    |   |       violations.py
-    |   |       
-    |   +---schemas
-    |   |       auth.py
-    |   |       __init__.py
-    |   |       
-    |   |       create_admin.py
-    |   |       seed_admin.py
-    |   |       
-    |   +---services
-    |   |       detection_service.py
-    |   |       realtime_binary_stream.py
-    |   |       
-    |   +---static
-    |   |   \---outputs
-    |   |       \---temp
-    |   |               
-    |   +---trackers
-    |   |       bytetrack.yaml
-    |   |       
-    |   \---utils
-    |           plate_utils.py
-    |           roi_utils.py
-    |           __init__.py
-    |           
-    +---models
-    |       
-    +---traffic-server
-    |   \---static
-    |       \---temp
-            
++---traffic-server
+|   |   requirements.txt
+|   |   
+|   +---app
+|   |   |   main.py
+|   |   |   
+|   |   +---core
+|   |   |   |   config.py
+|   |   |   |   database.py
+|   |   |   |   performance_config.py
+|   |   |   |   runtime_check.py
+|   |   |   |   
+|   |   |           config.cpython-311.pyc
+|   |   |           database.cpython-311.pyc
+|   |   |           performance_config.cpython-311.pyc
+|   |   |           
+|   |   +---models
+|   |   |   |   roi.py
+|   |   |   |   user.py
+|   |   |   |   vehicle.py
+|   |   |   |   video_job.py
+|   |   |   |   violation.py
+|   |   |   |   __init__.py
+|   |   |   |   
+|   |   |           roi.cpython-311.pyc
+|   |   |           user.cpython-311.pyc
+|   |   |           vehicle.cpython-311.pyc
+|   |   |           video_job.cpython-311.pyc
+|   |   |           violation.cpython-311.pyc
+|   |   |           __init__.cpython-311.pyc
+|   |   |           
+|   |   +---modules
+|   |   |   |   base.py
+|   |   |   |   drawing.py
+|   |   |   |   roi.py
+|   |   |   |   yolo.py
+|   |   |   |   __init__.py
+|   |   |   |   
+|   |   |   +---OCR
+|   |   |   |   |   core.py
+|   |   |   |   |   main.py
+|   |   |   |   |   README.md
+|   |   |   |   |   requirements.txt
+|   |   |   |   |   router.py
+|   |   |   |   |   __init__.py
+|   |   |   |   |   
+|   |   |   |   +---function
+|   |   |   |   |   |   utils_rotate.py
+|   |   |   |   |   |   __init__.py
+|   |   |   |   |   |   
+|   |   |   |   |           utils_rotate.cpython-311.pyc
+|   |   |   |   |           __init__.cpython-311.pyc
+|   |   |   |   |           
+|   |   |   |   +---models
+|   |   |   |   |   +---license_plate
+|   |   |   |   |   |       yolo_plate_v10n.engine
+|   |   |   |   |   |       yolo_plate_v10n.onnx
+|   |   |   |   |   |       
+|   |   |   |   |   \---ocr
+|   |   |   |   |           yolo_ocr_chars_v8n.engine
+|   |   |   |   |           yolo_ocr_chars_v8n.onnx
+|   |   |   |   |           
+|   |   |   |           core.cpython-311.pyc
+|   |   |   |           __init__.cpython-311.pyc
+|   |   |   |           
+|   |   |           base.cpython-311.pyc
+|   |   |           drawing.cpython-311.pyc
+|   |   |           roi.cpython-311.pyc
+|   |   |           yolo.cpython-311.pyc
+|   |   |           __init__.cpython-311.pyc
+|   |   |           
+|   |   +---routers
+|   |   |   |   auth.py
+|   |   |   |   detection.py
+|   |   |   |   realtime_detection.py
+|   |   |   |   realtime_ws_binary.py
+|   |   |   |   violations.py
+|   |   |   |   
+|   |   |           auth.cpython-311.pyc
+|   |   |           detection.cpython-311.pyc
+|   |   |           realtime_detection.cpython-311.pyc
+|   |   |           realtime_ws_binary.cpython-311.pyc
+|   |   |           violations.cpython-311.pyc
+|   |   |           
+|   |   +---schemas
+|   |   |   |   auth.py
+|   |   |   |   __init__.py
+|   |   |   |   
+|   |   |           auth.cpython-311.pyc
+|   |   |           __init__.cpython-311.pyc
+|   |   |           
+|   |   |       create_admin.py
+|   |   |       seed_admin.py
+|   |   |       
+|   |   +---services
+|   |   |   |   boxmot_loader.py
+|   |   |   |   detection_service.py
+|   |   |   |   plate_ocr_service.py
+|   |   |   |   realtime_binary_stream.py
+|   |   |   |   violation_detector.py
+|   |   |   |   
+|   |   |           boxmot_loader.cpython-311.pyc
+|   |   |           detection_service.cpython-311.pyc
+|   |   |           plate_ocr_service.cpython-311.pyc
+|   |   |           realtime_binary_stream.cpython-311.pyc
+|   |   |           
+|   |   +---static
+|   |   |   \---outputs
+|   |   |       \---temp
+|   |   +---trackers
+|   |   |       bytetrack.yaml
+|   |   |       
+|   |   +---utils
+|   |   |   |   model_loader.py
+|   |   |   |   plate_utils.py
+|   |   |   |   roi_utils.py
+|   |   |   |   __init__.py
+|   |   |   |   
+|   |   |           model_loader.cpython-311.pyc
+|   |   |           plate_utils.cpython-311.pyc
+|   |   |           roi_utils.cpython-311.pyc
+|   |   |           __init__.cpython-311.pyc
+|   |   |           
+|   |           main.cpython-311.pyc
+|   |           
+|   +---models
+|   |   |   convert.py
+|   |   |   
+|   |   +---license_plate
+|   |   |       yolo_plate_v10n.engine
+|   |   |       yolo_plate_v10n.onnx
+|   |   |       
+|   |   +---ocr
+|   |   |       yolo_ocr_chars_v8n.engine
+|   |   |       yolo_ocr_chars_v8n.onnx
+|   |   |       
+|   |   +---traffic_light
+|   |   |       yolo_trafficlight_v10n.engine
+|   |   |       yolo_trafficlight_v10n.onnx
+|   |   |       
+|   |   \---vehicle
+|   |       +---11s
+|   |       |       convert.py
+|   |       |       yolo_vehicle_11s.onnx
+|   |       |       
+|   |       \---v10m
+|   |               convert.py
+|   |               yolo_vehicle_v10m.onnx
+|   |               
+|   |       
+|           onnx_fp32_patch.cpython-311.pyc
+|           
+        onnx_fp32_patch.cpython-311.pyc
+        

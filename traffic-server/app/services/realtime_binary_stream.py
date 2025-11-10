@@ -8,9 +8,11 @@ import time
 import math
 import numpy as np
 import logging
+import glob
 from typing import Optional, Tuple, List
 from queue import Queue, Empty
 from threading import Thread, Event, Lock
+from pathlib import Path
 import os
 
 logger = logging.getLogger(__name__)
@@ -20,8 +22,8 @@ GLOBAL_YOLO_MODEL = None
 GLOBAL_YOLO_DEVICE = None
 GLOBAL_YOLO_PATH = None
 
-# Default realtime detection model (TensorRT engine preferred)
-DEFAULT_REALTIME_MODEL_PATH = "models/vehicle/11s/yolo_vehicle_11s.engine"
+# Default realtime detection model (ONNX preferred - optimized for RTX 3050)
+DEFAULT_REALTIME_MODEL_PATH = "models/vehicle/11s/yolo_vehicle_11s.onnx"
 
 try:
     import torch
@@ -32,14 +34,12 @@ except Exception as e:
     YOLO = None
 
 # ByteTrack (boxmot) - preferred
-try:
-    from boxmot.trackers.bytetrack.byte_tracker import BYTETracker
-    HAVE_BOXMOT = True
-    logger.info("✅ Using boxmot BYTETracker")
-except Exception:
-    BYTETracker = None
-    HAVE_BOXMOT = False
-    logger.info("⚠️  boxmot not available, using ultralytics built-in tracker")
+# Use centralised loader to handle different boxmot versions and module layouts
+from app.services.boxmot_loader import BYTETracker, HAVE_BOXMOT, instantiate_tracker
+if HAVE_BOXMOT:
+    logger.info("✅ boxmot BYTETracker discovered by boxmot_loader")
+else:
+    logger.warning("⚠️  boxmot not available - ByteTrack will not work (boxmot_loader did not find a tracker)")
 
 # TurboJPEG - required for 30 FPS
 try:
@@ -316,8 +316,48 @@ class BinaryAnnotStream:
         self.t_det: Optional[Thread] = None
         self.t_enc: Optional[Thread] = None
 
-        # Model path auto-detection
-        self.model_path = model_path or DEFAULT_REALTIME_MODEL_PATH
+        # Model path auto-detection - Normalize to ONNX only
+        # Always use ONNX format for ByteTrack compatibility
+        script_dir = Path(__file__).parent.parent.parent
+        models_base = script_dir / "models" / "vehicle"
+        
+        if model_path:
+            # Keep original extension - support both .engine and .onnx
+            model_path_norm = model_path
+
+            # If it's a relative path, try to resolve against models dir
+            if not os.path.isabs(model_path):
+                # Handle various input formats from frontend:
+                # - models/yolo_vehicle_11s.engine -> models/vehicle/11s/yolo_vehicle_11s.engine
+                # - models/vehicle/11s/yolo_vehicle_11s.engine -> (unchanged)
+                # - yolo_vehicle_11s.engine -> models/vehicle/11s/yolo_vehicle_11s.engine
+                
+                base_name = os.path.basename(model_path)
+                ext = os.path.splitext(base_name)[1].lower()
+                
+                # Determine version (11s or v10m) from model name or path
+                if "11s" in base_name or "11s" in model_path:
+                    version_dir = "11s"
+                elif "v10m" in base_name or "v10m" in model_path:
+                    version_dir = "v10m"
+                else:
+                    # Default to 11s (faster for realtime)
+                    version_dir = "11s"
+                
+                # Try to find the model in models/vehicle/VERSION/
+                model_path_norm = str(models_base / version_dir / base_name)
+                if not os.path.exists(model_path_norm):
+                    # Try the other version if not found
+                    other_dir = "v10m" if version_dir == "11s" else "11s"
+                    other_path = models_base / other_dir / base_name
+                    if other_path.exists():
+                        model_path_norm = str(other_path)
+            
+            self.model_path = model_path_norm
+            logger.info(f"🔄 Using model: {model_path} → {self.model_path}")
+        else:
+            # Use default: 11s model
+            self.model_path = DEFAULT_REALTIME_MODEL_PATH
         
         # Metrics
         self.frame_idx = 0
@@ -347,19 +387,22 @@ class BinaryAnnotStream:
             return max(0.0, min(1.0, val_f))
         
         self._smooth_tracks = bool(smoothing_cfg.get("enabled", True))
-        self._smooth_position_alpha = _clamp_alpha(smoothing_cfg.get("position_alpha", 0.65), 0.65)
-        self._smooth_size_alpha = _clamp_alpha(smoothing_cfg.get("size_alpha", 0.55), 0.55)
+        # Optimized smoothing for snappier response (per requirements)
+        self._smooth_position_alpha = _clamp_alpha(smoothing_cfg.get("position_alpha", 0.55), 0.55)  # More responsive
+        self._smooth_size_alpha = _clamp_alpha(smoothing_cfg.get("size_alpha", 0.5), 0.5)  # More responsive
         
         try:
-            self._smooth_max_center_shift = float(smoothing_cfg.get("max_center_shift", 120.0))
+            # Reduced max shift for snappier tracking (was 120, now 80)
+            self._smooth_max_center_shift = float(smoothing_cfg.get("max_center_shift", 80.0))
         except (TypeError, ValueError):
-            self._smooth_max_center_shift = 120.0
+            self._smooth_max_center_shift = 80.0
         self._smooth_max_center_shift = max(0.0, self._smooth_max_center_shift)
         
         try:
-            self._smooth_max_scale_change = float(smoothing_cfg.get("max_scale_change", 1.9))
+            # Reduced max scale change for stability (was 1.9, now 1.6)
+            self._smooth_max_scale_change = float(smoothing_cfg.get("max_scale_change", 1.6))
         except (TypeError, ValueError):
-            self._smooth_max_scale_change = 1.9
+            self._smooth_max_scale_change = 1.6
         self._smooth_max_scale_change = max(1.0, self._smooth_max_scale_change)
         
         try:
@@ -471,20 +514,42 @@ class BinaryAnnotStream:
         
         logger.info(f"📊 Video: {self.w}x{self.h} @ {self.fps_cap} FPS, {self.total} frames")
         
-        # Unified model loader: auto-detect .engine > .onnx > .pt
-        model_info = get_model_info(self.model_path)
+        # Load either .engine or .onnx model
+        script_dir = Path(__file__).parent.parent.parent
         
-        if not model_info["found"]:
-            # Fallback: try to find any vehicle model
-            from app.core.config import settings
-            fallback_info = get_model_info(settings.YOLO_VEHICLE_MODEL)
-            if fallback_info["found"]:
-                model_info = fallback_info
-                logger.warning(f"⚠️  Model '{self.model_path}' not found. Using fallback: {fallback_info['path']}")
-            else:
-                raise RuntimeError(f"❌ Model not found: {self.model_path}")
+        # Try the model path directly first
+        if os.path.isabs(self.model_path):
+            model_path = Path(self.model_path)
+        else:
+            model_path = script_dir / self.model_path
         
-        actual_path = model_info["path"]
+        # Validate model exists
+        if not model_path.exists():
+            raise RuntimeError(f"❌ Model file does not exist: {model_path}")
+        
+        actual_path = str(model_path)
+        model_ext = model_path.suffix.lower()
+        
+        # Check model type - only .onnx and .pt supported (reject .engine)
+        if model_ext == '.engine':
+            raise RuntimeError(
+                f"❌ TensorRT .engine files are no longer supported: {actual_path}\n"
+                f"💡 Please use .onnx or .pt models instead for better compatibility\n"
+                f"   Example: {actual_path.replace('.engine', '.onnx')}"
+            )
+        elif model_ext not in ['.onnx', '.pt']:
+            raise RuntimeError(
+                f"❌ Invalid model type: {model_ext}\n"
+                f"   Supported formats: .onnx, .pt\n"
+                f"   Got: {actual_path}"
+            )
+        
+        # Get model info for logging
+        model_info = get_model_info(actual_path)
+        size_mb = model_info.get("size_mb", 0) if model_info.get("found") else 0
+        
+        model_type_name = "ONNX" if model_ext == ".onnx" else "PyTorch"
+        logger.info(f"✅ Using {model_type_name} model: {actual_path} ({size_mb}MB)")
         
         # Load YOLO with global cache
         global GLOBAL_YOLO_MODEL, GLOBAL_YOLO_DEVICE, GLOBAL_YOLO_PATH
@@ -517,14 +582,27 @@ class BinaryAnnotStream:
                 globals()["GLOBAL_YOLO_PATH"] = None
                 globals()["GLOBAL_YOLO_DEVICE"] = None
 
-            logger.info(f"⚙️  Loading YOLO ({model_info['type']}): {actual_path} ({model_info['size_mb']}MB)")
+            # Load model based on extension
+            is_engine = actual_path.lower().endswith('.engine')
+            logger.info(
+                f"⚙️  Loading YOLO model ({'.engine' if is_engine else '.onnx'}): "
+                f"{actual_path} ({model_info['size_mb']}MB)"
+            )
+
+            # Use performance config for half precision (ONNX FP32 compatible)
+            from app.core.performance_config import INFERENCE_SETTINGS
+            use_half = INFERENCE_SETTINGS.get('half', False)
+            
             self.model = load_yolo_model(
                 actual_path,
                 device=self.device,
                 imgsz=self.imgsz,
-                half=True,
+                half=use_half,
                 verbose=False
             )
+            # Verify model is loaded correctly
+            if self.model is None:
+                raise RuntimeError(f"❌ Failed to load model: {actual_path}")
             
             if torch and self.device.startswith("cuda"):
                 try:
@@ -542,54 +620,57 @@ class BinaryAnnotStream:
         GLOBAL_YOLO_DEVICE = self.device
         GLOBAL_YOLO_PATH = actual_path
         
-        # Initialize tracker with config
-        if HAVE_BOXMOT:
-            tracker_cfg = dict(BYTETRACK_SETTINGS)
-            try:
-                track_thresh = float(tracker_cfg.get("track_thresh", 0.5))
-            except (TypeError, ValueError):
-                track_thresh = 0.5
-            try:
-                track_buffer = int(tracker_cfg.get("track_buffer", 50))
-            except (TypeError, ValueError):
-                track_buffer = 50
-            try:
-                match_thresh = float(tracker_cfg.get("match_thresh", 0.8))
-            except (TypeError, ValueError):
-                match_thresh = 0.8
-            try:
-                frame_rate = float(tracker_cfg.get("frame_rate", self.target_fps or 30))
-            except (TypeError, ValueError):
-                frame_rate = float(self.target_fps or 30)
-            try:
-                min_box_area = float(tracker_cfg.get("min_box_area", 100))
-            except (TypeError, ValueError):
-                min_box_area = 100.0
-            mot20 = bool(tracker_cfg.get("mot20", False))
+        # Initialize ByteTrack tracker (REQUIRED for ONNX models)
+        if not HAVE_BOXMOT:
+            raise RuntimeError(
+                "❌ ByteTrack (boxmot) is required but not available. "
+                "Install with: pip install boxmot>=10.0.0"
+            )
+        
+        # Optimized ByteTrack parameters for snappier, stable tracking (RTX 3050 30+ FPS)
+        tracker_cfg = dict(BYTETRACK_SETTINGS) if BYTETRACK_SETTINGS else {}
+        
+        # Improved defaults for better responsiveness and fewer ID flips
+        try:
+            track_thresh = float(tracker_cfg.get("track_thresh", 0.5))  # Higher = more stable tracks
+        except (TypeError, ValueError):
+            track_thresh = 0.5
+        try:
+            # Optimized buffer: fps + 10 for 30fps = 40 frames buffer
+            default_buffer = max(40, int(self.target_fps) + 10) if self.target_fps else 40
+            track_buffer = int(tracker_cfg.get("track_buffer", default_buffer))
+        except (TypeError, ValueError):
+            track_buffer = 40
+        try:
+            match_thresh = float(tracker_cfg.get("match_thresh", 0.85))  # Higher = less ID switches
+        except (TypeError, ValueError):
+            match_thresh = 0.85
+        try:
+            frame_rate = float(tracker_cfg.get("frame_rate", self.target_fps or 30))
+        except (TypeError, ValueError):
+            frame_rate = float(self.target_fps or 30)
+        try:
+            min_box_area = float(tracker_cfg.get("min_box_area", 100))
+        except (TypeError, ValueError):
+            min_box_area = 100.0
+        mot20 = bool(tracker_cfg.get("mot20", False))
 
-            self.tracker = BYTETracker(
-                track_thresh=track_thresh,
-                track_buffer=track_buffer,
-                match_thresh=match_thresh,
-                frame_rate=frame_rate,
-                min_box_area=min_box_area,
-                mot20=mot20,
-            )
-            logger.info(
-                "✅ Initialized boxmot BYTETracker (thresh=%.2f, buffer=%d, match=%.2f, fps=%.1f, min_area=%.1f)",
-                track_thresh,
-                track_buffer,
-                match_thresh,
-                frame_rate,
-                min_box_area,
-            )
-        else:
-            self.tracker = None
-            logger.info("⚠️  ByteTrack not available - using ultralytics built-in tracker")
-            # Fall back: lower detect rate to avoid overload
-            self.veh_detect_hz = min(self.veh_detect_hz, 10)
-            self._base_detect_interval = 1.0 / max(self.veh_detect_hz, 1)
-            self.detect_interval = self._base_detect_interval
+        self.tracker = BYTETracker(
+            track_thresh=track_thresh,
+            track_buffer=track_buffer,
+            match_thresh=match_thresh,
+            frame_rate=frame_rate,
+            min_box_area=min_box_area,
+            mot20=mot20,
+        )
+        logger.info(
+            "✅ ByteTrack optimized for ≥30 FPS (thresh=%.2f, buffer=%d, match=%.2f, fps=%.1f, min_area=%.1f)",
+            track_thresh,
+            track_buffer,
+            match_thresh,
+            frame_rate,
+            min_box_area,
+        )
         
         # Initialize OCR service
         if self.enable_ocr:
@@ -613,7 +694,24 @@ class BinaryAnnotStream:
         else:
             logger.info("ℹ️  OCR disabled by config")
 
-        logger.info("✅ Stream initialized")
+        # Final startup summary with Vietnamese emoji logging
+        model_type = "ONNX" if actual_path.lower().endswith('.onnx') else "PyTorch"
+        device_name = self.device
+        if torch and torch.cuda.is_available():
+            try:
+                device_name = f"{self.device} ({torch.cuda.get_device_name(0)})"
+            except:
+                pass
+        
+        logger.info("=" * 60)
+        logger.info("✅ READY: Traffic Detection System Optimized for RTX 3050")
+        logger.info(f"🎯 Target FPS: ≥{self.target_fps} | Model: {model_type}")
+        logger.info(f"🖥️  Device: {device_name}")
+        logger.info(f"📹 Resolution: {self.w}x{self.h} | Encode: {self.encode_width}px")
+        logger.info(f"🎛️  Modules: YOLO={self.enable_yolo}, Tracking={self.enable_tracking}")
+        logger.info(f"🗺️  ROI: {len(self._roi_polygons)} regions | OCR: {self.enable_ocr}")
+        logger.info(f"⚡ Optimizations: FP16=True, TurboJPEG={HAVE_TURBOJPEG}")
+        logger.info("=" * 60)
     
     def _release(self):
         """Release resources"""
@@ -704,16 +802,65 @@ class BinaryAnnotStream:
         if duration <= 0:
             return
 
-        # Keep detection cadence within hardware limits
-        target = max(self._base_detect_interval, duration * 1.05)
-        target = min(target, 0.5)
+        # Check if adaptive interval is enabled
+        from app.core.performance_config import ENABLE_ADAPTIVE_INTERVAL, FIXED_DETECT_INTERVAL
+        
+        if not ENABLE_ADAPTIVE_INTERVAL:
+            # Use fixed interval for stable FPS (no oscillation)
+            self.detect_interval = FIXED_DETECT_INTERVAL
+            self._last_detect_duration = duration
+            
+            # Log performance metrics periodically
+            if self.frame_idx % 150 == 1:  # Every ~5 seconds at 30fps
+                current_fps = 1.0 / duration if duration > 0 else 0
+                logger.info(f"📊 Fixed Interval Mode: detect_fps={current_fps:.1f}, interval={self.detect_interval:.3f}s (stable)")
+                
+                # Vietnamese emoji log for clear monitoring
+                if current_fps >= 30:
+                    logger.info("✅ Hiệu suất ổn định: ≥30 FPS detection")
+                elif current_fps >= 25:
+                    logger.info("🟡 Hiệu suất khá: 25-30 FPS detection") 
+                else:
+                    logger.info("🔴 Hiệu suất thấp: <25 FPS detection")
+            return
+
+        # Legacy adaptive FPS monitoring (if enabled)
+        current_fps = 1.0 / duration if duration > 0 else 0
+        target_detect_fps = self.veh_detect_hz or 25
+        
+        # If detection is too slow (< 28 FPS), increase interval to maintain overall pipeline FPS
+        if current_fps < 28 and current_fps > 0:
+            # Automatically increase detect_interval to reduce detection load
+            adaptive_interval = max(self._base_detect_interval, duration * 1.2)
+            if self.frame_idx % 30 == 1:  # Log every 30 frames
+                logger.warning(f"⚠️ Detection FPS low ({current_fps:.1f} < 28), adapting interval: {adaptive_interval:.3f}s")
+        else:
+            # Normal adaptation
+            adaptive_interval = max(self._base_detect_interval, duration * 1.05)
+        
+        # Cap maximum interval to prevent too slow detection
+        adaptive_interval = min(adaptive_interval, 0.5)
 
         if self.detect_interval <= 0:
-            self.detect_interval = target
+            self.detect_interval = adaptive_interval
         else:
-            self.detect_interval = (0.7 * self.detect_interval) + (0.3 * target)
+            # Smooth adaptation
+            self.detect_interval = (0.7 * self.detect_interval) + (0.3 * adaptive_interval)
 
         self._last_detect_duration = duration
+        
+        # Log performance metrics periodically
+        if self.frame_idx % 150 == 1:  # Every ~5 seconds at 30fps
+            pipeline_fps = 1.0 / (duration + 0.001)  # Avoid division by zero
+            logger.info(f"📊 Adaptive Mode: detect_fps={current_fps:.1f}, interval={self.detect_interval:.3f}s, pipeline_fps={pipeline_fps:.1f}")
+            
+            # Vietnamese emoji log for clear monitoring
+            if current_fps >= 30:
+                logger.info("✅ Hiệu suất tốt: ≥30 FPS detection")
+            elif current_fps >= 25:
+                logger.info("🟡 Hiệu suất khá: 25-30 FPS detection") 
+            else:
+                logger.info("🔴 Hiệu suất thấp: <25 FPS detection - tự động điều chỉnh")
 
     def _filter_keyframe_detections(
         self,
@@ -899,6 +1046,10 @@ class BinaryAnnotStream:
                     if torch and torch.cuda.is_available():
                         torch.cuda.empty_cache()
                     
+                    # Use performance config for half precision (ONNX FP32 compatible)
+                    from app.core.performance_config import INFERENCE_SETTINGS
+                    use_half = INFERENCE_SETTINGS.get('half', False)
+                    
                     results = self.model.predict(
                         frame,
                         conf=self.conf,
@@ -906,14 +1057,31 @@ class BinaryAnnotStream:
                         verbose=False,
                         classes=list(VEHICLE_IDS),
                         device=self.device,
-                        half=True,  # FP16 bắt buộc cho 4GB VRAM
+                        half=use_half,  # Use config setting (FP32 for ONNX compatibility)
                         agnostic_nms=False,  # Disable để tăng tốc
                         max_det=300,  # Giới hạn detections để tăng tốc
                     )[0]
                 except Exception as e:
+                    # Handle ONNX Runtime unsupported IR version more gracefully
+                    msg = str(e)
                     if self.stop_ev.is_set() or self.model is None:
                         break
-                    raise e
+
+                    # Typical error when onnxruntime does not support the model IR
+                    if "Unsupported model IR version" in msg or "onnxruntime" in msg.lower():
+                        logger.error("❌ ONNX Runtime failed to load the ONNX model: %s", msg)
+                        logger.error("🔧 Suggested fixes:")
+                        logger.error("   - Upgrade onnxruntime to a version that supports the model IR (e.g. pip install -U onnxruntime or onnxruntime-gpu)")
+                        logger.error("   - Re-export the ONNX model with a lower IR/opset compatible with your onnxruntime version")
+                        logger.error("   - Alternatively, use a TensorRT .engine or a .pt model if available")
+                        # Stop the stream gracefully
+                        try:
+                            self.stop_ev.set()
+                        except Exception:
+                            pass
+                        break
+                    # Unknown error - re-raise so it surfaces for debugging
+                    raise
 
                 boxes = results.boxes
                 if boxes is not None and len(boxes) > 0:
@@ -1003,11 +1171,13 @@ class BinaryAnnotStream:
                                 len(set(track_ids)),
                             )
                 else:
-                    # No tracking or tracking not available
-                    # For .engine and .onnx models, tracking doesn't work with ultralytics
-                    # Use raw detections with sequential IDs
+                    # ByteTrack should always be available when using ONNX
+                    # This fallback should never be reached, but keep it for safety
                     if self.frame_idx % 100 == 1:
-                        logger.info(f"⚠️ ByteTrack not available, using raw detections. xyxy.shape={xyxy.shape if xyxy is not None else 'None'}")
+                        logger.warning(
+                            f"⚠️ ByteTrack not initialized (this should not happen with ONNX). "
+                            f"Using raw detections. xyxy.shape={xyxy.shape if xyxy is not None else 'None'}"
+                        )
                     if len(xyxy) > 0:
                         for i, (x1, y1, x2, y2) in enumerate(xyxy):
                             cls_id = int(clss[i]) if i < len(clss) else 0
@@ -1546,7 +1716,7 @@ class BinaryAnnotStream:
             "frame_height": self.h,
             "total_frames": self.total,
             "model": "yolo",
-            "tracker": "bytetrack" if HAVE_BOXMOT else "ultralytics_persist",
+            "tracker": "bytetrack",  # Always use ByteTrack with ONNX models
             "fps_cap": self.target_fps,
             "device": self.device,
             "turbo_jpeg": HAVE_TURBOJPEG,

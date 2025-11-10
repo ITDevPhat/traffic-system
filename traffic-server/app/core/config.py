@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+from pydantic import model_validator
 from typing import Optional
 import os
 
@@ -30,7 +31,8 @@ class Settings(BaseSettings):
         else:  # default v10m
             return os.path.join(self.MODELS_DIR, "vehicle", "v10m", "yolo_vehicle_v10m")
     
-    YOLO_VEHICLE_MODEL: str = None  # Will be set dynamically
+    # Model paths will be set dynamically based on VEHICLE_MODEL_VERSION
+    YOLO_VEHICLE_MODEL: Optional[str] = None  # Will be set after initialization
     YOLO_PLATE_MODEL: str = os.path.join(MODELS_DIR, "license_plate", "yolo_plate_v10n")
     YOLO_OCR_MODEL: str = os.path.join(MODELS_DIR, "ocr", "yolo_ocr_chars_v8n")
     YOLO_TRAFFIC_LIGHT_MODEL: str = os.path.join(MODELS_DIR, "traffic_light", "yolo_trafficlight_v10n")
@@ -96,13 +98,16 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3002",
     ]
     
+    @model_validator(mode='after')
+    def set_vehicle_model_path(self):
+        """Set vehicle model path after validation"""
+        self.YOLO_VEHICLE_MODEL = self.vehicle_model_path
+        return self
+    
     class Config:
         env_file = ".env"
         case_sensitive = True
 
 
 settings = Settings()
-
-# Set vehicle model path dynamically
-settings.YOLO_VEHICLE_MODEL = settings.vehicle_model_path
 

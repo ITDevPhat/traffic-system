@@ -16,7 +16,7 @@ const ROI_COLORS = [
   { stroke: '#a855f7', fill: 'rgba(168, 85, 247, 0.2)' },
 ];
 
-const RoiOverlay = React.forwardRef(({ frameDimensions, rois, draftPoints, isDrawing, onPointerDown }, ref) => {
+const RoiOverlay = React.forwardRef(({ frameDimensions, rois, draftPoints, isDrawing, onPointerDown, mousePos, onMouseMove }, ref) => {
   const width = frameDimensions?.width || 1;
   const height = frameDimensions?.height || 1;
   const hasFrame = width > 0 && height > 0;
@@ -30,6 +30,20 @@ const RoiOverlay = React.forwardRef(({ frameDimensions, rois, draftPoints, isDra
         return `${nx * width},${ny * height}`;
       })
       .join(' ');
+  };
+
+  // Check if mouse is near the start point for snapping
+  const getSnapDistance = (mouseX, mouseY, startPoint) => {
+    if (!startPoint || !hasFrame) return Infinity;
+    const startX = startPoint.x * width;
+    const startY = startPoint.y * height;
+    return Math.sqrt((mouseX - startX) ** 2 + (mouseY - startY) ** 2);
+  };
+
+  const shouldShowSnapCircle = () => {
+    if (!isDrawing || draftPoints.length < 3 || !mousePos || !hasFrame) return false;
+    const snapDistance = getSnapDistance(mousePos.x, mousePos.y, draftPoints[0]);
+    return snapDistance <= 15; // 15px snap radius
   };
 
   const renderLabel = (roi) => {
@@ -68,6 +82,7 @@ const RoiOverlay = React.forwardRef(({ frameDimensions, rois, draftPoints, isDra
       viewBox={`0 0 ${width} ${height}`}
       preserveAspectRatio="none"
       onPointerDown={isDrawing ? onPointerDown : undefined}
+      onMouseMove={isDrawing ? onMouseMove : undefined}
       style={{
         position: 'absolute',
         inset: 0,
@@ -112,6 +127,19 @@ const RoiOverlay = React.forwardRef(({ frameDimensions, rois, draftPoints, isDra
               />
             );
           })}
+          {/* Snapping circle at start point when mouse is near */}
+          {shouldShowSnapCircle() && draftPoints[0] && (
+            <circle
+              cx={draftPoints[0].x * width}
+              cy={draftPoints[0].y * height}
+              r={12}
+              fill="none"
+              stroke="#10b981"
+              strokeWidth={3}
+              strokeDasharray="4 2"
+              opacity={0.8}
+            />
+          )}
         </>
       )}
     </svg>
@@ -204,25 +232,24 @@ function DetectionPageBinaryContent() {
   const [modelLoaded, setModelLoaded] = useState(false);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [isUploadingVideo, setIsUploadingVideo] = useState(false);
-  const [availableModels, setAvailableModels] = useState([
-    { name: 'YOLOv10m (TensorRT)', path: 'models/vehicle/v10m/yolo_vehicle_v10m.engine', format: 'engine' },
-    { name: 'YOLOv10m (ONNX)', path: 'models/vehicle/v10m/yolo_vehicle_v10m.onnx', format: 'onnx' },
-    { name: 'YOLOv10m (PyTorch)', path: 'models/vehicle/v10m/yolo_vehicle_v10m.pt', format: 'pt' },
-    { name: 'YOLOv11s (TensorRT)', path: 'models/vehicle/11s/yolo_vehicle_11s.engine', format: 'engine' },
-    { name: 'YOLOv11s (ONNX)', path: 'models/vehicle/11s/yolo_vehicle_11s.onnx', format: 'onnx' },
-    { name: 'YOLOv11s (PyTorch)', path: 'models/vehicle/11s/yolo_vehicle_11s.pt', format: 'pt' },
-  ]);
-  const [selectedModel, setSelectedModel] = useState('models/vehicle/11s/yolo_vehicle_11s.engine'); // Default: 11s TensorRT
+  const [availableModels, setAvailableModels] = useState([]);
+  const [selectedModel, setSelectedModel] = useState('models/vehicle/11s/yolo_vehicle_11s.onnx'); // Default: 11s ONNX
   const [autoStart, setAutoStart] = useState(false); // Flag to auto-start detection
   const [warmupProgress, setWarmupProgress] = useState(0); // Warmup progress 0-100
   const [isWarmingUp, setIsWarmingUp] = useState(false); // Warmup phase
+  
+  // Model version management
+  const [modelVersions, setModelVersions] = useState({});
+  const [currentVersion, setCurrentVersion] = useState('11s');
+  const [currentFormat, setCurrentFormat] = useState('onnx');
+  const [isLoadingVersions, setIsLoadingVersions] = useState(false);
   
   // Optimized settings defaults
   const [settings, setSettings] = useState({
     conf: 0.5,           // Increased from 0.35
     target_fps: 45,
     jpeg_quality: 60,    // Increased from 55
-    inference_size: 640, // CRITICAL FIX: Was 480, must be 640 for TensorRT
+    inference_size: 640, // Optimized for RTX 3050 performance
     encode_width: 960,
     veh_detect_hz: 25,
     force_gpu: true
@@ -245,6 +272,21 @@ function DetectionPageBinaryContent() {
   const [draftRoiPoints, setDraftRoiPoints] = useState([]);
   const [draftRoiName, setDraftRoiName] = useState('');
   const [activeRoiId, setActiveRoiId] = useState(null);
+  const [mousePos, setMousePos] = useState(null);
+  const [showDebugOverlay, setShowDebugOverlay] = useState(false);
+
+  // Keyboard event handler for debug overlay (D key)
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === 'D' || event.key === 'd') {
+        setShowDebugOverlay(prev => !prev);
+        console.log('🔧 Debug overlay toggled:', !showDebugOverlay);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showDebugOverlay]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -264,6 +306,11 @@ function DetectionPageBinaryContent() {
         console.warn('⚠️ Toast cleanup error (safe to ignore):', error);
       }
     };
+  }, []);
+
+  // Load model versions on mount
+  useEffect(() => {
+    fetchModelVersions();
   }, []);
 
   // Auto-load video from query params
@@ -543,6 +590,8 @@ function DetectionPageBinaryContent() {
             safeToast.info('ROI cleared on detector', { autoClose: 1500 });
           } else if (pkt.type === 'roi_error') {
             safeToast.error(pkt.message || 'ROI update failed');
+          } else if (pkt.type === 'settings_updated') {
+            safeToast.success(`✅ ${pkt.message}`, { autoClose: 2000 });
           }
         } catch (e) {
           console.error('Failed to parse text message:', e);
@@ -670,23 +719,34 @@ function DetectionPageBinaryContent() {
     return () => clearInterval(id);
   }, []);
 
-  // Fetch available vehicle models for selection
+  // Fetch available vehicle models for selection (.onnx/.pt only)
   useEffect(() => {
     (async () => {
       try {
         const res = await fetch(`${API_URL}/api/detection/models/available`);
         if (!res.ok) return;
         const data = await res.json();
-        // Only get vehicle models, use simple "models/" prefix
-        const vehFiles = Array.isArray(data?.models?.vehicle) ? data.models.vehicle : [];
-        const full = vehFiles.map((name) => `models/${name}`);
-        setAvailableModels(full);
-        if (full.length > 0) {
-          // Prefer vehicle_11s or first available
-          const prefer = full.find(p => /vehicle.*11/i.test(p)) || full[0];
-          setSelectedModel(prefer);
+        
+        // Get vehicle models with format info
+        const vehModels = Array.isArray(data?.models?.vehicle) ? data.models.vehicle : [];
+        const modelOptions = vehModels.map((model) => ({
+          name: `${model.name} (${model.format.toUpperCase()})`,
+          path: `models/${model.path}`,
+          format: model.format
+        }));
+        
+        setAvailableModels(modelOptions);
+        
+        if (modelOptions.length > 0) {
+          // Prefer ONNX models, then 11s models, then first available
+          const preferOnnx = modelOptions.find(m => m.format === 'onnx' && /11s/i.test(m.name));
+          const prefer11s = modelOptions.find(m => /11s/i.test(m.name));
+          const selected = preferOnnx || prefer11s || modelOptions[0];
+          setSelectedModel(selected.path);
         }
-      } catch {}
+      } catch (error) {
+        console.error('Failed to fetch models:', error);
+      }
     })();
   }, []);
 
@@ -811,24 +871,157 @@ function DetectionPageBinaryContent() {
 
   const updateSettings = (key, value) => {
     setSettings(prev => ({ ...prev, [key]: value }));
+    
+    // Send live settings update if detection is running
+    if (detecting && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      const cmd = {
+        command: 'update_settings',
+        settings: { [key]: value }
+      };
+      console.log('📤 Sending live settings update:', cmd);
+      wsRef.current.send(JSON.stringify(cmd));
+      
+      // Show immediate feedback
+      safeToast.info(`⚙️ ${key} updated to ${value}`, { autoClose: 1500 });
+    }
   };
 
   const updateModule = (module, enabled) => {
     const newModules = { ...modules, [module]: enabled };
     setModules(newModules);
 
+    // Module toggle validation and confirmation
+    const moduleNames = {
+      yolo: 'YOLO Detection',
+      tracking: 'Object Tracking', 
+      bboxDrawing: 'Bounding Box Drawing',
+      roi: 'ROI Processing',
+      roiDrawing: 'ROI Drawing'
+    };
+
+    const moduleName = moduleNames[module] || module;
+    
     // If detecting and BBox toggle changed, send command to server
     if (detecting && module === 'bboxDrawing' && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       // Send command to toggle bbox drawing
       const cmd = { command: 'toggle_bbox', enabled: enabled };
       console.log('📤 Sending command:', cmd);
       wsRef.current.send(JSON.stringify(cmd));
-      safeToast.success(`BBox ${enabled ? 'enabled' : 'disabled'}`, { autoClose: 1000 });
-    } else if (detecting && module !== 'bboxDrawing') {
+      safeToast.success(`🎨 ${moduleName} ${enabled ? 'enabled' : 'disabled'}`, { autoClose: 1500 });
+    } else if (detecting && (module === 'yolo' || module === 'tracking')) {
       // YOLO and Tracking require full restart
-      safeToast.info(`${module === 'yolo' ? 'YOLO' : 'Tracking'} will apply on next detection start`, {
+      safeToast.info(`🔄 ${moduleName} will apply on next detection start`, {
         autoClose: 2000
       });
+    } else if (detecting && module === 'roi') {
+      // ROI processing toggle
+      safeToast.success(`🎯 ${moduleName} ${enabled ? 'enabled' : 'disabled'}`, { autoClose: 1500 });
+    } else if (module === 'roiDrawing') {
+      // ROI drawing toggle
+      if (!enabled && isDrawingRoi) {
+        cancelRoiDrawing();
+      }
+      safeToast.success(`✏️ ${moduleName} ${enabled ? 'enabled' : 'disabled'}`, { autoClose: 1500 });
+    } else {
+      // General toggle confirmation
+      safeToast.success(`⚙️ ${moduleName} ${enabled ? 'enabled' : 'disabled'}`, { autoClose: 1500 });
+    }
+
+    // Log module state for debugging
+    console.log(`🔧 Module ${module}: ${enabled ? 'ON' : 'OFF'}`);
+  };
+
+  const fetchModelVersions = async () => {
+    try {
+      setIsLoadingVersions(true);
+      const response = await fetch(`${API_URL}/api/detection/models/versions`);
+      const result = await response.json();
+      
+      if (result.ok) {
+        setModelVersions(result.versions);
+        setCurrentVersion(result.current_version);
+        console.log('📋 Model versions loaded:', result.versions);
+      } else {
+        throw new Error(result.error || 'Failed to fetch model versions');
+      }
+    } catch (error) {
+      console.error('Error fetching model versions:', error);
+      safeToast.error(`❌ Failed to load model versions: ${error.message}`);
+    } finally {
+      setIsLoadingVersions(false);
+    }
+  };
+
+  const handleSwitchModelVersion = async (version, format) => {
+    try {
+      safeToast.info(`🔄 Switching to ${version.toUpperCase()} (${format.toUpperCase()})...`, { autoClose: 2000 });
+      
+      const response = await fetch(`${API_URL}/api/detection/models/switch-version`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          version: version,
+          format: format
+        })
+      });
+
+      const result = await response.json();
+      
+      if (result.ok) {
+        setCurrentVersion(version);
+        setCurrentFormat(format);
+        setSelectedModel(result.model_path);
+        
+        safeToast.success(
+          `✅ Switched to ${version.toUpperCase()} (${format.toUpperCase()})!`, 
+          { autoClose: 3000 }
+        );
+        
+        console.log(`✅ Model switch successful: ${result.model_path}`);
+        console.log(`🎯 Optimization: ${result.optimizations}`);
+      } else {
+        throw new Error(result.error || 'Model switch failed');
+      }
+    } catch (error) {
+      console.error('Model switch error:', error);
+      safeToast.error(`❌ Model switch failed: ${error.message}`);
+    }
+  };
+
+  const handleHotSwapModel = async () => {
+    if (!selectedModel) {
+      safeToast.error('No model selected for hot-swap');
+      return;
+    }
+
+    try {
+      safeToast.info('♻️ Hot-swapping model...', { autoClose: 2000 });
+      
+      const response = await fetch(`${API_URL}/api/detection/models/hot-swap`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model_path: selectedModel,
+          device: 'cuda:0'
+        })
+      });
+
+      const result = await response.json();
+      
+      if (result.ok) {
+        const modelType = result.model_type === 'onnx' ? 'ONNX' : 'PyTorch';
+        safeToast.success(`♻️ Model hot-swapped to ${modelType}!`, { autoClose: 3000 });
+        console.log(`✅ Hot-swap successful: ${selectedModel} (${modelType})`);
+      } else {
+        throw new Error(result.error || 'Hot-swap failed');
+      }
+    } catch (error) {
+      console.error('Hot-swap error:', error);
+      safeToast.error(`❌ Hot-swap failed: ${error.message}`);
     }
   };
 
@@ -892,11 +1085,41 @@ function DetectionPageBinaryContent() {
     if (!isDrawingRoi) return;
     const rect = overlayRef.current?.getBoundingClientRect();
     if (!rect || rect.width === 0 || rect.height === 0) return;
-    const nx = clamp01((event.clientX - rect.left) / rect.width);
-    const ny = clamp01((event.clientY - rect.top) / rect.height);
+    
+    const mouseX = event.clientX - rect.left;
+    const mouseY = event.clientY - rect.top;
+    const nx = clamp01(mouseX / rect.width);
+    const ny = clamp01(mouseY / rect.height);
+    
     event.preventDefault();
     event.stopPropagation();
+    
+    // Check for snapping to start point (close polygon)
+    if (draftRoiPoints.length >= 3) {
+      const startPoint = draftRoiPoints[0];
+      const startX = startPoint.x * rect.width;
+      const startY = startPoint.y * rect.height;
+      const snapDistance = Math.sqrt((mouseX - startX) ** 2 + (mouseY - startY) ** 2);
+      
+      if (snapDistance <= 15) {
+        // Snap to start point and complete polygon
+        completeRoi();
+        return;
+      }
+    }
+    
     setDraftRoiPoints((prev) => [...prev, { x: nx, y: ny }]);
+  };
+
+  // Handle mouse move for snapping preview
+  const handleRoiOverlayMouseMove = (event) => {
+    if (!isDrawingRoi) return;
+    const rect = overlayRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0 || rect.height === 0) return;
+    
+    const mouseX = event.clientX - rect.left;
+    const mouseY = event.clientY - rect.top;
+    setMousePos({ x: mouseX, y: mouseY });
   };
 
   const clearAllRois = (notify = true) => {
@@ -1031,24 +1254,58 @@ function DetectionPageBinaryContent() {
               <Col xs="auto">
                 <Form.Group className="mb-0">
                   <Form.Label className="mb-1">
-                    <strong>🧠 Model</strong>
+                    <strong>🧠 Model Version</strong>
                   </Form.Label>
-                  <Form.Select
-                    value={selectedModel}
-                    onChange={(e) => setSelectedModel(e.target.value)}
-                    disabled={detecting}
-                    style={{ minWidth: 280, fontSize: '0.9rem' }}
-                  >
-                    {availableModels.map((model) => (
-                      <option key={model.path} value={model.path}>
-                        {model.name} {model.format === 'engine' && '⚡'}
-                      </option>
-                    ))}
-                  </Form.Select>
+                  <div className="d-flex gap-2">
+                    <Form.Select
+                      value={currentVersion}
+                      onChange={(e) => {
+                        const newVersion = e.target.value;
+                        handleSwitchModelVersion(newVersion, currentFormat);
+                      }}
+                      disabled={detecting || isLoadingVersions}
+                      style={{ minWidth: 120, fontSize: '0.9rem' }}
+                    >
+                      {Object.keys(modelVersions).map((version) => (
+                        <option key={version} value={version}>
+                          {modelVersions[version]?.name || version.toUpperCase()}
+                        </option>
+                      ))}
+                    </Form.Select>
+                    
+                    <Form.Select
+                      value={currentFormat}
+                      onChange={(e) => {
+                        const newFormat = e.target.value;
+                        handleSwitchModelVersion(currentVersion, newFormat);
+                      }}
+                      disabled={detecting || isLoadingVersions}
+                      style={{ minWidth: 100, fontSize: '0.9rem' }}
+                    >
+                      {modelVersions[currentVersion]?.models?.map((model) => (
+                        <option key={model.format} value={model.format}>
+                          {model.format.toUpperCase()} ({model.size_mb}MB)
+                        </option>
+                      )) || []}
+                    </Form.Select>
+                    
+                    {detecting && (
+                      <Button
+                        size="sm"
+                        variant="outline-primary"
+                        onClick={handleHotSwapModel}
+                        disabled={!selectedModel}
+                        title="Hot-swap current model"
+                      >
+                        ♻️
+                      </Button>
+                    )}
+                  </div>
                   <Form.Text className="text-muted" style={{ fontSize: '0.75rem' }}>
-                    {selectedModel.includes('.engine') && '⚡ TensorRT (Fastest)'}
-                    {selectedModel.includes('.onnx') && '⚙️ ONNX (Fast)'}
-                    {selectedModel.includes('.pt') && '📦 PyTorch (Slow)'}
+                    {currentVersion === '11s' && '⚡ Speed & Efficiency (RTX 3050 Optimized)'}
+                    {currentVersion === 'v10m' && '🎯 Accuracy & Precision'}
+                    {' • '}{currentFormat.toUpperCase()} format
+                    {detecting && ' • Use ♻️ for live switching'}
                   </Form.Text>
                 </Form.Group>
                   </Col>
@@ -1123,7 +1380,7 @@ function DetectionPageBinaryContent() {
                 <Card.Body>
         <Row>
           <Col md={12}>
-            <h6 className="mb-3">🔧 Detection Modules {detecting && <small className="text-muted">(restart to apply)</small>}</h6>
+            <h6 className="mb-3">🔧 Detection Modules {detecting && <small className="text-success">(live updates enabled)</small>}</h6>
             <div className="d-flex gap-3 flex-wrap">
               <Form.Check
                 type="switch"
@@ -1176,7 +1433,7 @@ function DetectionPageBinaryContent() {
             </div>
             {detecting && (
               <small className="text-info d-block mt-2">
-                💡 Tip: Stop and restart detection to apply YOLO/Tracking changes
+                💡 Tip: Most settings update live! Only YOLO/Tracking modules need restart
               </small>
             )}
           </Col>
@@ -1185,64 +1442,80 @@ function DetectionPageBinaryContent() {
         <Row>
               <Col md={3}>
                 <Form.Group className="mb-2">
-                  <Form.Label>Confidence: {settings.conf.toFixed(2)}</Form.Label>
+                  <Form.Label>
+                    Confidence: {settings.conf.toFixed(2)} 
+                    {detecting && <small className="text-success"> (live)</small>}
+                  </Form.Label>
                     <Form.Range
                       value={settings.conf}
                       min={0.1}
                       max={0.9}
                       step={0.05}
                     onChange={(e) => updateSettings('conf', parseFloat(e.target.value))}
-                    disabled={detecting}
+                    disabled={false}
                   />
                       </Form.Group>
                     </Col>
               <Col md={2}>
                 <Form.Group className="mb-2">
-                  <Form.Label>Target FPS (max 60): {settings.target_fps}</Form.Label>
+                  <Form.Label>
+                    Target FPS: {settings.target_fps}
+                    {detecting && <small className="text-success"> (live)</small>}
+                  </Form.Label>
                   <Form.Range
                     value={settings.target_fps}
                     min={15}
                     max={60}
                     step={5}
                     onChange={(e) => updateSettings('target_fps', parseInt(e.target.value))}
-                    disabled={detecting}
+                    disabled={false}
                   />
                       </Form.Group>
                     </Col>
               <Col md={2}>
                 <Form.Group className="mb-2">
-                  <Form.Label>JPEG Quality: {settings.jpeg_quality}</Form.Label>
+                  <Form.Label>
+                    JPEG Quality: {settings.jpeg_quality}
+                    {detecting && <small className="text-success"> (live)</small>}
+                  </Form.Label>
                   <Form.Range
                     value={settings.jpeg_quality}
                     min={50}
                     max={85}
                     step={5}
                     onChange={(e) => updateSettings('jpeg_quality', parseInt(e.target.value))}
-                    disabled={detecting}
+                    disabled={false}
                   />
                 </Form.Group>
                   </Col>
               <Col md={2}>
                 <Form.Group className="mb-2">
-                  <Form.Label>Inference Size: {settings.inference_size}</Form.Label>
+                  <Form.Label>
+                    Inference Size: {settings.inference_size}
+                    {detecting && <small className="text-warning"> (restart)</small>}
+                  </Form.Label>
                         <Form.Select 
                     value={settings.inference_size}
                     onChange={(e) => updateSettings('inference_size', parseInt(e.target.value))}
-                    disabled={detecting}
+                    disabled={false}
                   >
                     <option value="480">480 (Faster)</option>
                     <option value="640">640 (Balanced)</option>
+                    <option value="832">832 (YOLO11s Native)</option>
                     <option value="960">960 (Better)</option>
                         </Form.Select>
                       </Form.Group>
                     </Col>
               <Col md={3}>
                 <Form.Group className="mb-2">
-                  <Form.Label>Encode Width: {settings.encode_width}</Form.Label>
+                  <Form.Label>
+                    Encode Width: {settings.encode_width}
+                    {detecting && <small className="text-success"> (live)</small>}
+                  </Form.Label>
                         <Form.Select 
                     value={settings.encode_width}
                     onChange={(e) => updateSettings('encode_width', parseInt(e.target.value))}
-                    disabled={detecting}
+                    disabled={false}
                   >
                     <option value="800">800 (Fastest)</option>
                     <option value="960">960 (Fast)</option>
@@ -1277,7 +1550,46 @@ function DetectionPageBinaryContent() {
                 draftPoints={draftRoiPoints}
                 isDrawing={isDrawingRoi}
                 onPointerDown={handleRoiOverlayPointer}
+                mousePos={mousePos}
+                onMouseMove={handleRoiOverlayMouseMove}
               />
+              
+              {/* Debug Overlay (Press 'D' to toggle) */}
+              {showDebugOverlay && (
+                <div style={{
+                  position: 'absolute',
+                  top: '10px',
+                  left: '10px',
+                  background: 'rgba(0, 0, 0, 0.8)',
+                  color: '#fff',
+                  padding: '12px',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                  fontFamily: 'monospace',
+                  zIndex: 10,
+                  minWidth: '200px'
+                }}>
+                  <div style={{ fontWeight: 'bold', marginBottom: '8px', color: '#00ff00' }}>
+                    🔧 Debug Info (Press D to hide)
+                  </div>
+                  <div>FPS: {fps.toFixed(1)} | Frame: {frameIdx}</div>
+                  <div>Model: {selectedModel.split('/').pop()}</div>
+                  <div>Format: {selectedModel.includes('.onnx') ? 'ONNX' : 'PyTorch'}</div>
+                  <div>Resolution: {frameDimensions.width}x{frameDimensions.height}</div>
+                  <div style={{ marginTop: '6px', fontWeight: 'bold' }}>Modules:</div>
+                  <div style={{ marginLeft: '10px' }}>
+                    <div>YOLO: {modules.yolo ? '✅' : '❌'}</div>
+                    <div>Tracking: {modules.tracking ? '✅' : '❌'}</div>
+                    <div>BBox: {modules.bboxDrawing ? '✅' : '❌'}</div>
+                    <div>ROI: {modules.roi ? '✅' : '❌'} ({roiPolygons.length})</div>
+                    <div>ROI Draw: {modules.roiDrawing ? '✅' : '❌'}</div>
+                  </div>
+                  <div style={{ marginTop: '6px' }}>
+                    Status: {connected ? '🟢 Connected' : '🔴 Disconnected'}
+                  </div>
+                </div>
+              )}
+
               {!detecting && !isWarmingUp && (
                   <div style={{
                     position: 'absolute',
@@ -1291,6 +1603,7 @@ function DetectionPageBinaryContent() {
                   🎥 Ready for Video Detection<br/>
                   <small style={{fontSize: '0.8rem', opacity: 0.7}}>
                     {videoLoaded ? 'Click Start Detection' : 'Upload video to start detection'}
+                    <br/>Press 'D' for debug overlay
                                       </small>
                   </div>
                       )}
