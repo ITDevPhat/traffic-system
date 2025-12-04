@@ -204,7 +204,12 @@ function DetectionPageBinaryContent() {
       if (!isMountedRef.current) return;
       try {
         if (toast && typeof toast.dismiss === 'function') {
-          toast.dismiss(id);
+          // Only pass id if it's valid (not null/undefined)
+          if (id !== null && id !== undefined) {
+            toast.dismiss(id);
+          } else {
+            toast.dismiss();
+          }
         }
       } catch (e) {
         console.warn('Toast dismiss error:', e);

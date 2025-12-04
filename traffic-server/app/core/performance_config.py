@@ -114,11 +114,11 @@ ENABLE_ASYNC_INFERENCE = True  # Enable async inference
 # ============================================
 
 BYTETRACK_SETTINGS = {
-    "track_thresh": 0.4,      # Lower threshold for better weak detection tracking
-    "track_buffer": 30,       # Reduced buffer for faster adaptation (1s @30fps)
-    "match_thresh": 0.85,     # Higher match threshold for stable tracking
+    "track_thresh": 0.45,     # Tăng lên để chỉ track detections tốt (giảm noise)
+    "track_buffer": 15,       # Giảm buffer xuống để track mất nhanh hơn (0.5s @30fps)
+    "match_thresh": 0.8,      # Giảm xuống để match linh hoạt hơn với xe di chuyển nhanh
     "frame_rate": 30,         # Expected realtime FPS for buffer scaling
-    "min_box_area": 80,       # Lower minimum area to catch smaller vehicles
+    "min_box_area": 100,      # Tăng lên để loại bỏ detections quá nhỏ (noise)
     "mot20": False,           # MOT17 mode (faster)
 }
 
@@ -127,13 +127,13 @@ BYTETRACK_SETTINGS = {
 # 🎯 Track Smoothing for Visualization Stability
 # ============================================
 
-# Track smoothing for front-end visualization stability - Optimized for responsiveness
+# Track smoothing for front-end visualization stability - DISABLED for tight bbox fit
 TRACK_SMOOTHING_SETTINGS = {
-    "enabled": True,              # Enable low-pass smoothing on track boxes
-    "position_alpha": 0.55,       # Reduced for faster adaptation (less sticky)
-    "size_alpha": 0.5,            # Reduced for quicker size changes
-    "max_center_shift": 80.0,     # Reduced threshold for smoother tracking
-    "max_scale_change": 1.6,      # Reduced for more responsive scaling
+    "enabled": False,             # TẮT smoothing để bbox ôm sát 100% (no lag)
+    "position_alpha": 0.9,        # Nếu bật lại: 90% new data = rất responsive
+    "size_alpha": 0.85,           # Nếu bật lại: 85% new data
+    "max_center_shift": 30.0,     # Giảm xuống để bbox không nhảy quá xa
+    "max_scale_change": 1.4,      # Giảm xuống để size không thay đổi đột ngột
     "min_confidence": 0.0,        # Reserved for future confidence-aware smoothing
 }
 

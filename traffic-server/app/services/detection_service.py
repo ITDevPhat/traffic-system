@@ -480,7 +480,7 @@ def save_evidence(frame: np.ndarray, track_info: Dict[str, Any], violation_info:
     annotated = frame.copy()
     
     # Red box for violation
-    cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 0, 255), 3)
+    cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 0, 255), 1)
     
     # Text: Plate + Violation type
     text = f"{track_info.get('plate', 'UNKNOWN')} - {violation_info['violation_type']}"

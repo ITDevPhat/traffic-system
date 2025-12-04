@@ -1053,6 +1053,7 @@ class BinaryAnnotStream:
                     results = self.model.predict(
                         frame,
                         conf=self.conf,
+                        iou=0.65,  # IOU threshold cao hơn để bbox ôm sát hơn (default: 0.45)
                         imgsz=self.imgsz,
                         verbose=False,
                         classes=list(VEHICLE_IDS),
@@ -1255,11 +1256,13 @@ class BinaryAnnotStream:
                         prev_h = max(1.0, prev_state.get("h", raw_h))
                         
                         # Position smoothing (low-pass filter)
+                        # alpha = weight of NEW data (higher = more responsive)
                         center_shift = math.hypot(raw_cx - prev_cx, raw_cy - prev_cy)
                         if self._smooth_max_center_shift <= 0.0 or center_shift <= self._smooth_max_center_shift:
                             alpha_pos = self._smooth_position_alpha
-                            smooth_cx = alpha_pos * prev_cx + (1.0 - alpha_pos) * raw_cx
-                            smooth_cy = alpha_pos * prev_cy + (1.0 - alpha_pos) * raw_cy
+                            # FIX: alpha should be weight of NEW data, not old
+                            smooth_cx = alpha_pos * raw_cx + (1.0 - alpha_pos) * prev_cx
+                            smooth_cy = alpha_pos * raw_cy + (1.0 - alpha_pos) * prev_cy
                         
                         # Size smoothing (low-pass filter)
                         max_ratio = self._smooth_max_scale_change
@@ -1268,9 +1271,10 @@ class BinaryAnnotStream:
                         
                         alpha_size = self._smooth_size_alpha
                         if max_ratio <= 1.0 or (ratio_w <= max_ratio and ratio_w >= (1.0 / max_ratio)):
-                            smooth_w = alpha_size * prev_w + (1.0 - alpha_size) * raw_w
+                            # FIX: alpha should be weight of NEW data
+                            smooth_w = alpha_size * raw_w + (1.0 - alpha_size) * prev_w
                         if max_ratio <= 1.0 or (ratio_h <= max_ratio and ratio_h >= (1.0 / max_ratio)):
-                            smooth_h = alpha_size * prev_h + (1.0 - alpha_size) * raw_h
+                            smooth_h = alpha_size * raw_h + (1.0 - alpha_size) * prev_h
                     
                     # Ensure valid dimensions
                     smooth_w = max(1.0, smooth_w)
@@ -1337,13 +1341,14 @@ class BinaryAnnotStream:
                     if smoothed_arr.size >= 7:
                         smoothed_arr[6] = cid
 
-                    if age_frames > 2:
+                    # Giảm warmup xuống 1 frame để bbox hiện ngay lập tức
+                    if age_frames > 0:  # Chỉ cần 1 frame là đủ (giảm lag)
                         output_tracks.append(smoothed_arr)
-                        if age_frames == 3:
-                            logger.debug("🆕 Track %d stabilised after %d frames", tid, age_frames)
+                        if age_frames == 1:
+                            logger.debug("🆕 Track %d active immediately (age=%d)", tid, age_frames)
                     else:
                         if self.frame_idx % 60 == 1:
-                            logger.debug("⏳ Track %d warming up (age=%d)", tid, age_frames)
+                            logger.debug("⏳ Track %d initializing (age=%d)", tid, age_frames)
 
                 tracks = output_tracks
                 
@@ -1609,7 +1614,7 @@ class BinaryAnnotStream:
                     color = CLASS_COLORS.get(cls_id, (0, 255, 0))
                     
                     # Draw bbox with VERY THICK lines for maximum visibility
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 5, cv2.LINE_AA)
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 1, cv2.LINE_AA)
                     
                     # Draw label with background (larger, bold)
                     label = f"{cls_name} #{tid}"

@@ -16,7 +16,7 @@ class BoundingBoxDrawerModule(DetectionModule):
         enabled: bool = True,
         normal_color: Tuple[int, int, int] = (0, 255, 0),
         violation_color: Tuple[int, int, int] = (0, 0, 255),
-        thickness: int = 2,
+        thickness: int = 2,  # 2px - vừa đủ rõ ràng
     ) -> None:
         super().__init__(name="bbox_drawer", enabled=enabled)
         self.normal_color = normal_color
@@ -43,7 +43,7 @@ class BoundingBoxDrawerModule(DetectionModule):
                 label,
                 (x1, max(0, y1 - 10)),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
+                0.45,  # Font size vừa phải
                 color,
-                2,
+                1,  # Text thickness mỏng
             )

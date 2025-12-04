@@ -279,7 +279,7 @@ export function DetectionCardRealtime({ video }) {
   const handleCardClick = () => {
     const videoId = video.id || video.video_job_id;
     const videoPath = video.file_path || video.output_path || video.filename || video.file_name;
-    router.push(`/detection/live?video=${encodeURIComponent(videoPath)}&id=${videoId}`);
+    router.push(`/detection/cameras/${videoId}?video=${encodeURIComponent(videoPath)}`);
   };
 
   return (

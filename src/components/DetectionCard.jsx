@@ -188,10 +188,10 @@ export function DetectionCard({ video }) {
   }, [isHovered, isVisible, videoError]);
 
   const handleCardClick = () => {
-    // Navigate to live detection page with this video
+    // Navigate to camera detection page with this video
     const videoId = video.id || video.video_job_id;
     const videoPath = video.file_path || video.output_path || video.filename || video.file_name;
-    router.push(`/detection/live?video=${encodeURIComponent(videoPath)}&id=${videoId}`);
+    router.push(`/detection/cameras/${videoId}?video=${encodeURIComponent(videoPath)}`);
   };
 
   return (

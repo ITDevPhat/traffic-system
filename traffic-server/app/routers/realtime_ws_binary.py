@@ -115,18 +115,73 @@ async def ws_realtime_binary(
         
         try:
             async def send_frames():
+                """Send frames with connection state checking and timeout protection"""
+                frame_count = 0
+                consecutive_errors = 0
+                max_consecutive_errors = 3
+                
                 while True:
-                    header, jpeg_bytes = stream.next_frame()
+                    # CRITICAL: Check connection state before processing
+                    if websocket.client_state.name == 'DISCONNECTED':
+                        logger.info("🔌 WebSocket disconnected - stopping frame send")
+                        break
                     
-                    if header is None or jpeg_bytes is None:
-                        await asyncio.sleep(0.001)
-                        continue
+                    # Check if stream is stopped
+                    if stream and stream.stop_ev.is_set():
+                        logger.info("🛑 Stream stopped - ending frame send")
+                        break
                     
-                    # 1) Send header (text JSON)
-                    await websocket.send_text(json.dumps(header))
-                    
-                    # 2) Send binary JPEG immediately after
-                    await websocket.send_bytes(jpeg_bytes)
+                    try:
+                        # Get next frame (non-blocking from queue)
+                        header, jpeg_bytes = stream.next_frame()
+                        
+                        if header is None or jpeg_bytes is None:
+                            await asyncio.sleep(0.001)
+                            continue
+                        
+                        # Check connection again before sending
+                        if websocket.client_state.name == 'DISCONNECTED':
+                            logger.info("🔌 Client disconnected during frame processing")
+                            break
+                        
+                        # Send with timeout to prevent hanging
+                        try:
+                            # 1) Send header (text JSON) with timeout
+                            await asyncio.wait_for(
+                                websocket.send_text(json.dumps(header)),
+                                timeout=1.0  # 1 second timeout
+                            )
+                            
+                            # 2) Send binary JPEG with timeout
+                            await asyncio.wait_for(
+                                websocket.send_bytes(jpeg_bytes),
+                                timeout=1.0  # 1 second timeout
+                            )
+                            
+                            frame_count += 1
+                            consecutive_errors = 0  # Reset on success
+                            
+                        except asyncio.TimeoutError:
+                            logger.warning(f"⏱️ Send timeout at frame {frame_count}")
+                            consecutive_errors += 1
+                            if consecutive_errors >= max_consecutive_errors:
+                                logger.error(f"❌ Too many timeouts - stopping")
+                                break
+                            
+                    except Exception as send_error:
+                        error_str = str(send_error)
+                        if "disconnect" in error_str.lower() or "closed" in error_str.lower():
+                            logger.info(f"🔌 Client disconnected: {send_error}")
+                            break
+                        else:
+                            logger.warning(f"⚠️ Send error: {send_error}")
+                            consecutive_errors += 1
+                            if consecutive_errors >= max_consecutive_errors:
+                                logger.error(f"❌ Too many errors - stopping")
+                                break
+                            await asyncio.sleep(0.01)
+                
+                logger.info(f"✅ send_frames() ended after {frame_count} frames")
             
             async def receive_commands():
                 disconnected = False
@@ -232,25 +287,43 @@ async def ws_realtime_binary(
                         logger.warning(f"Command receive error: {e}")
                         await asyncio.sleep(0.01)
             
-            # Run both tasks concurrently
+            # Run both tasks concurrently with proper cancellation
             send_task = asyncio.create_task(send_frames())
             recv_task = asyncio.create_task(receive_commands())
             
-            await asyncio.gather(send_task, recv_task)
+            # Wait for either task to complete (disconnect/error)
+            # When one finishes, cancel the other immediately
+            done, pending = await asyncio.wait(
+                {send_task, recv_task},
+                return_when=asyncio.FIRST_COMPLETED
+            )
+            
+            # Cancel pending tasks immediately
+            for task in pending:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            
+            # Check if any task raised an exception
+            for task in done:
+                try:
+                    task.result()
+                except Exception as e:
+                    logger.warning(f"Task exception: {e}")
         
         finally:
-            # Cancel tasks on exit
-            if send_task and not send_task.done():
-                send_task.cancel()
-            if recv_task and not recv_task.done():
-                recv_task.cancel()
+            # CRITICAL: Stop stream immediately when tasks end
+            if stream:
+                logger.info("🛑 Stopping stream due to task completion/disconnect")
+                stream.stop()
         
         logger.info("✅ Stream ended normally")
     
-    except WebSocketDisconnect:
-        logger.info("❌ Client disconnected")
-        if stream:
-            stream.stop()
+    except WebSocketDisconnect as e:
+        logger.info(f"❌ Client disconnected: {e}")
+        # Stream already stopped in finally block
     
     except Exception as e:
         logger.error(f"❌ Error: {e}", exc_info=True)
@@ -263,17 +336,31 @@ async def ws_realtime_binary(
             pass
     
     finally:
+        # CRITICAL: Force stop stream immediately
         if stream:
-            logger.info("🧹 Cleaning up stream...")
-            stream.stop()
-            stream.close()
+            logger.info("🧹 Force stopping stream...")
+            import time
+            start_time = time.time()
+            
+            try:
+                stream.stop()  # Signal threads to stop
+                stream.close()  # Wait for threads and cleanup
+                
+                elapsed = time.time() - start_time
+                if elapsed > 2.0:
+                    logger.warning(f"⚠️ Stream cleanup took {elapsed:.2f}s")
+                else:
+                    logger.info(f"✅ Stream stopped in {elapsed:.2f}s")
+            except Exception as e:
+                logger.error(f"❌ Stream cleanup error: {e}")
         
+        # Close WebSocket
         try:
             await websocket.close()
         except:
             pass
         
-        logger.info("✅ WebSocket closed")
+        logger.info("✅ WebSocket handler complete")
 
 
 # -------------------- Control Endpoints (Pause/Resume/Seek) --------------------
@@ -757,4 +844,3 @@ async def update_settings(payload: Dict[str, Any]):
     except Exception as e:
         logger.error(f"Settings update error: {e}")
         return {"ok": False, "error": str(e)}
-
