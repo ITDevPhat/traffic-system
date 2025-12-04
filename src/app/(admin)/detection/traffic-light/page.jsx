@@ -1659,75 +1659,7 @@ function DetectionPageBinaryContent() {
               )}
                     </div>
 
-            <Card className="mt-4 shadow-sm">
-              <Card.Body>
-                <div className="d-flex flex-column flex-lg-row justify-content-between align-items-start align-items-lg-center gap-2 mb-3">
-                  <div>
-                    <h6 className="mb-1">🗺️ ROI Designer</h6>
-                    <p className="text-muted small mb-0">
-                      Draw polygon regions to constrain YOLO detections. ROI updates sync automatically when the detector is running.
-                    </p>
-                  </div>
-                  <Badge bg={connected ? 'success' : 'secondary'} className="px-3 py-2 fw-semibold">
-                    {connected ? 'Detector Connected' : 'Detector Offline'}
-                  </Badge>
-                </div>
-                <div className="d-flex flex-wrap gap-2 mb-3">
-                  <Button variant="primary" onClick={startDrawingRoi} disabled={isDrawingRoi}>
-                    ✏️ Start Drawing ROI
-                  </Button>
-                  <Button variant="outline-secondary" onClick={undoLastRoiPoint} disabled={!isDrawingRoi || draftRoiPoints.length === 0}>
-                    ↩️ Undo Point
-                  </Button>
-                  <Button variant="success" onClick={completeRoi} disabled={!isDrawingRoi || draftRoiPoints.length < 3}>
-                    ✅ Complete ROI
-                  </Button>
-                  <Button variant="outline-secondary" onClick={cancelRoiDrawing} disabled={!isDrawingRoi}>
-                    ✖️ Cancel
-                  </Button>
-                  <Button variant="outline-primary" onClick={() => sendRoisToServer(true)} disabled={roiPolygons.length === 0}>
-                    🚀 Apply to Detector
-                  </Button>
-                  <Button variant="outline-danger" onClick={() => clearAllRois(true)} disabled={roiPolygons.length === 0 && draftRoiPoints.length === 0}>
-                    🧹 Clear All
-                  </Button>
-                </div>
-                {isDrawingRoi && (
-                  <div className="alert alert-warning py-2 px-3 mb-3">
-                    Click on the video to add polygon points. Finish with ‘Complete ROI’ once you have at least 3 points.
-                  </div>
-                )}
-                {roiPolygons.length > 0 ? (
-                  <div className="d-flex flex-column gap-2">
-                    {roiPolygons.map((roi, idx) => (
-                      <div key={roi.id} className="d-flex align-items-center gap-2 flex-wrap">
-                        <span
-                          style={{
-                            width: 16,
-                            height: 16,
-                            borderRadius: '50%',
-                            background: roi.color?.fill || 'rgba(59,130,246,0.2)',
-                            border: `2px solid ${roi.color?.stroke || '#2563eb'}`,
-                          }}
-                        />
-                        <Form.Control
-                          value={roi.label}
-                          onChange={(e) => updateRoiLabel(roi.id, e.target.value)}
-                          size="sm"
-                          style={{ maxWidth: 220 }}
-                        />
-                        <span className="text-muted small">{roi.points.length} pts</span>
-                        <Button variant="outline-danger" size="sm" onClick={() => removeRoi(roi.id)}>
-                          Remove
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-muted mb-0">No ROI polygons yet. Click ‘Start Drawing ROI’ to begin.</p>
-                )}
-              </Card.Body>
-            </Card>
+            
 
 
                                   </div>

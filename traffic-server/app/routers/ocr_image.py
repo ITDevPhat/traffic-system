@@ -211,7 +211,8 @@ def is_plate_too_large(bbox: List[float], image_shape: Tuple[int, int]) -> bool:
 async def ocr_image(
     file: UploadFile = File(..., description="Image file for license plate recognition"),
     confidence_threshold: Optional[float] = Form(0.60, description="Confidence threshold (0-1)"),
-    draw_bbox: Optional[bool] = Form(False, description="Draw bounding boxes on result")
+    draw_bbox: Optional[bool] = Form(False, description="Draw bounding boxes on result"),
+    return_padded_image: Optional[bool] = Form(True, description="Return padded image for small images (better visualization)")
 ) -> Dict[str, Any]:
     """
     Nhận dạng biển số từ ảnh tĩnh
@@ -220,6 +221,7 @@ async def ocr_image(
         file: File ảnh (JPG, PNG, etc.)
         confidence_threshold: Ngưỡng confidence (0-1)
         draw_bbox: Có vẽ bounding box không
+        return_padded_image: Trả về ảnh đã padding (cho ảnh nhỏ)
     
     Returns:
         JSON response với thông tin biển số nhận dạng được
@@ -426,6 +428,23 @@ async def ocr_image(
                 }
             }
             response['plates'].append(plate_info)
+        
+        # Add padded image to response if requested and image was small
+        if return_padded_image and used_padding:
+            try:
+                import base64
+                # Encode padded image to base64
+                _, buffer = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                img_base64 = base64.b64encode(buffer).decode('utf-8')
+                response['padded_image'] = {
+                    'data': f'data:image/jpeg;base64,{img_base64}',
+                    'width': image.shape[1],
+                    'height': image.shape[0],
+                    'note': 'Ảnh đã được thêm padding đen để dễ nhìn hơn'
+                }
+                logger.info("📸 Padded image included in response")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to encode padded image: {e}")
         
         # Log results
         if response['plates']:

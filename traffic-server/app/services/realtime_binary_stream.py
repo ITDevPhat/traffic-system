@@ -1621,7 +1621,7 @@ class BinaryAnnotStream:
                     if plate_text:
                         label += f" | {plate_text}"
                     
-                    font_scale = 0.8
+                    font_scale = 0.7
                     font_thickness = 2
                     (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, font_thickness)
                     label_y1 = max(y1 - th - 12, 0)

@@ -49,6 +49,7 @@ export async function ocrImage(
   options?: {
     confidenceThreshold?: number;
     drawBbox?: boolean;
+    returnPaddedImage?: boolean;
   }
 ): Promise<OCRResult> {
   const formData = new FormData();
@@ -60,6 +61,10 @@ export async function ocrImage(
   
   if (options?.drawBbox !== undefined) {
     formData.append('draw_bbox', options.drawBbox.toString());
+  }
+  
+  if (options?.returnPaddedImage !== undefined) {
+    formData.append('return_padded_image', options.returnPaddedImage.toString());
   }
   
   const response = await fetch(`${API_URL}/api/ocr/image`, {

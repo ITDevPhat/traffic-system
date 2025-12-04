@@ -111,10 +111,18 @@ export default function OCRImagePage() {
     try {
       const result = await ocrImage(selectedFile, {
         confidenceThreshold,
-        drawBbox: false
+        drawBbox: false,
+        returnPaddedImage: true  // Request padded image for small images
       });
 
       setOcrResult(result);
+      
+      // If padded image is returned, use it as preview
+      if (result.padded_image?.data) {
+        setPreviewUrl(result.padded_image.data);
+        toast.info('Ảnh nhỏ đã được thêm padding đen để dễ nhìn hơn', { autoClose: 3000 });
+      }
+      
       toast.success(`Phát hiện ${result.detection_results.plates_recognized} biển số`);
 
       // Draw bounding boxes on canvas

@@ -6,7 +6,26 @@ export const MENU_ITEMS = [{
   key: 'detection',
   label: 'Realtime Detection',
   icon: 'ri:road-map-line',
-  url: '/detection'
+  children: [
+    {
+      key: 'detection-live',
+      label: 'Quan sát Camera',
+      url: '/detection/cameras',
+      parentKey: 'detection'  // ← Sửa từ 'detection-menu' thành 'detection'
+    },
+    {
+      key: 'detection-grid',
+      label: 'Trích thông tin biển số xe',
+      url: '/detection/ocr',
+      parentKey: 'detection'  // ← Sửa từ 'detection-menu' thành 'detection'
+    },
+    {
+      key: 'detection-cameras',
+      label: 'Giao thông vi phạm',
+      url: '/detection/traffic-light',
+      parentKey: 'detection'  // ← Sửa từ 'detection-menu' thành 'detection'
+    }
+  ]
 }, {
   key: 'dashboards',
   label: 'Dashboards',
