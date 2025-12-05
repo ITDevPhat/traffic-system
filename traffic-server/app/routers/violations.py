@@ -102,3 +102,94 @@ async def delete_violation(
     
     return {"message": "Đã xóa vi phạm thành công", "violation_id": violation_id}
 
+
+
+# === STOPLINE CONFIGURATION ===
+from pydantic import BaseModel, Field
+
+# In-memory storage for stoplines (per camera)
+stoplines_storage = {}
+
+class StoplineRequest(BaseModel):
+    """Request to save stopline configuration"""
+    camera_id: str = Field(..., min_length=1, description="Camera identifier")
+    stopline: dict = Field(..., description="Stopline coordinates {x1, y1, x2, y2}")
+
+
+@router.post("/stopline")
+async def save_stopline(request: StoplineRequest):
+    """
+    Save stopline configuration for violation detection.
+    
+    Args:
+        request: StoplineRequest with camera_id and stopline coordinates
+    
+    Returns:
+        JSON confirmation
+    """
+    try:
+        # Validate stopline format
+        stopline = request.stopline
+        required_keys = ['x1', 'y1', 'x2', 'y2']
+        if not all(key in stopline for key in required_keys):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Stopline must contain: {required_keys}"
+            )
+        
+        # Store in memory
+        stoplines_storage[request.camera_id] = {
+            'x1': int(stopline['x1']),
+            'y1': int(stopline['y1']),
+            'x2': int(stopline['x2']),
+            'y2': int(stopline['y2'])
+        }
+        
+        return {
+            "ok": True,
+            "message": "Stopline saved successfully",
+            "camera_id": request.camera_id,
+            "stopline": stoplines_storage[request.camera_id]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/stopline/{camera_id}")
+async def get_stopline(camera_id: str):
+    """
+    Get stopline configuration for a camera.
+    
+    Args:
+        camera_id: Camera identifier
+    
+    Returns:
+        Stopline coordinates or null if not configured
+    """
+    stopline = stoplines_storage.get(camera_id)
+    return {
+        "camera_id": camera_id,
+        "stopline": stopline
+    }
+
+
+@router.delete("/stopline/{camera_id}")
+async def delete_stopline(camera_id: str):
+    """
+    Delete stopline configuration for a camera.
+    
+    Args:
+        camera_id: Camera identifier
+    
+    Returns:
+        JSON confirmation
+    """
+    if camera_id in stoplines_storage:
+        del stoplines_storage[camera_id]
+        return {
+            "ok": True,
+            "message": "Stopline deleted successfully",
+            "camera_id": camera_id
+        }
+    else:
+        raise HTTPException(status_code=404, detail="Stopline not found")

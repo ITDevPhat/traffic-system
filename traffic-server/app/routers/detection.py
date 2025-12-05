@@ -102,3 +102,52 @@ async def get_detection_status(
         }
     }
 
+
+
+@router.get("/probe-video")
+async def probe_video(path: str = Query(..., description="Video file path")):
+    """
+    Probe video file to get dimensions and metadata.
+    
+    Args:
+        path: Path to video file
+    
+    Returns:
+        JSON with video width, height, fps, duration
+    """
+    import cv2
+    import os
+    
+    try:
+        # Check if file exists
+        if not os.path.exists(path):
+            raise HTTPException(status_code=404, detail=f"Video file not found: {path}")
+        
+        # Open video
+        cap = cv2.VideoCapture(path)
+        
+        if not cap.isOpened():
+            raise HTTPException(status_code=400, detail="Failed to open video file")
+        
+        # Get video properties
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        duration = frame_count / fps if fps > 0 else 0
+        
+        cap.release()
+        
+        return {
+            "ok": True,
+            "width": width,
+            "height": height,
+            "fps": fps,
+            "frame_count": frame_count,
+            "duration": duration,
+            "path": path
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error probing video: {str(e)}")

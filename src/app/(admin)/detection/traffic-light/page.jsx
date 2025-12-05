@@ -269,7 +269,36 @@ function DetectionPageBinaryContent() {
     roiDrawing: true
   });
 
+  // Traffic light + violation state
+  const [lightState, setLightState] = useState('UNKNOWN');
+  const [lastLightChangeTs, setLastLightChangeTs] = useState(null);
+  const [violations, setViolations] = useState([]);
+  const vehicleStatesRef = useRef(new Map());
+  const lightStateRef = useRef({ state: 'UNKNOWN', changedAt: 0 });
+  const redStartRef = useRef(null);
+
   const [roiPolygons, setRoiPolygons] = useState([]);
+
+  // === TRAFFIC LIGHT ROI (CANVAS OVERLAY WITH DRAG & RESIZE) ===
+  const [tlRoi, setTlRoi] = useState(null); // {x, y, w, h} in video pixels
+  const [isDrawingTL, setIsDrawingTL] = useState(false);
+  const [isMovingTL, setIsMovingTL] = useState(false);
+  const [resizeHandle, setResizeHandle] = useState(null); // 'tl', 'tr', 'bl', 'br'
+  const [startPos, setStartPos] = useState(null); // mouse anchor
+  const [tlRoiActive, setTlRoiActive] = useState(false);
+  const [isSelectingTLMode, setIsSelectingTLMode] = useState(false); // UI mode
+  const [trafficLightState, setTrafficLightState] = useState("UNKNOWN");
+  const [trafficLightFrame, setTrafficLightFrame] = useState(null);
+  const [trafficLightConfidence, setTrafficLightConfidence] = useState(null);
+  const tlSocketRef = useRef(null);
+  const tlCanvasRef = useRef(null); // Canvas for TL ROI drawing
+
+  // === STOPLINE (2-POINT LINE) ===
+  const [stopline, setStopline] = useState(null); // {x1, y1, x2, y2} in video pixels
+  const [isDrawingStopline, setIsDrawingStopline] = useState(false);
+  const [isMovingStopline, setIsMovingStopline] = useState(false);
+  const [stoplineHandle, setStoplineHandle] = useState(null); // 'p1' or 'p2' for endpoints
+  const [stoplineActive, setStoplineActive] = useState(false);
   const [isDrawingRoi, setIsDrawingRoi] = useState(false);
   const [draftRoiPoints, setDraftRoiPoints] = useState([]);
   const [draftRoiName, setDraftRoiName] = useState('');
@@ -456,6 +485,131 @@ function DetectionPageBinaryContent() {
       });
   }, []);
 
+  const clamp01 = (value) => Math.min(Math.max(value ?? 0, 0), 1);
+
+  const stoplineBounds = useMemo(() => {
+    if (!roiPolygons || roiPolygons.length === 0) return null;
+    const stoplineRoi =
+      roiPolygons.find((roi) => /stop/i.test(roi.label || '')) || roiPolygons[0];
+    if (!stoplineRoi?.points || stoplineRoi.points.length === 0) return null;
+
+    const width = frameDimensions.width || 1;
+    const height = frameDimensions.height || 1;
+    const xs = stoplineRoi.points.map((p) => clamp01(p.x) * width);
+    const ys = stoplineRoi.points.map((p) => clamp01(p.y) * height);
+
+    return {
+      label: stoplineRoi.label || 'Stopline',
+      minX: Math.min(...xs),
+      maxX: Math.max(...xs),
+      minY: Math.min(...ys),
+      maxY: Math.max(...ys),
+    };
+  }, [roiPolygons, frameDimensions.width, frameDimensions.height]);
+
+  const classifyPosition = useCallback(
+    (frontPoint) => {
+      if (!stoplineBounds || !frontPoint) return 'UNKNOWN';
+      const { minY, maxY } = stoplineBounds;
+      const tolerance = 6; // pixels
+      if (frontPoint.y < minY - tolerance) return 'AFTER_LINE';
+      if (frontPoint.y > maxY + tolerance) return 'BEFORE_LINE';
+      return 'ON_LINE';
+    },
+    [stoplineBounds]
+  );
+
+  const handleLightState = useCallback((stateRaw) => {
+    const state = (stateRaw || 'UNKNOWN').toString().toUpperCase();
+    if (state === lightStateRef.current.state) return;
+
+    const ts = Date.now();
+    lightStateRef.current = { state, changedAt: ts };
+    setLightState(state);
+    setLastLightChangeTs(ts);
+
+    if (state === 'RED') {
+      redStartRef.current = ts;
+      vehicleStatesRef.current.forEach((v) => {
+        v.positionAtRed = v.lastPosition || 'UNKNOWN';
+      });
+    } else {
+      redStartRef.current = null;
+      vehicleStatesRef.current.forEach((v) => {
+        v.positionAtRed = null;
+        v.crossedAt = null;
+      });
+    }
+  }, []);
+
+  const processTrafficLightLogic = useCallback(
+    (pkt) => {
+      if (!pkt || !Array.isArray(pkt.detections)) return;
+
+      // Update light state from packet
+      if (pkt.light_state) {
+        handleLightState(pkt.light_state);
+      }
+
+      if (!stoplineBounds) return;
+
+      const now = Date.now();
+      const isRed = lightStateRef.current.state === 'RED';
+      const updatedViolations = [];
+
+      pkt.detections.forEach((det) => {
+        const trackId = det?.track_id ?? det?.id ?? null;
+        const bbox = det?.bbox;
+        if (!trackId || !Array.isArray(bbox) || bbox.length < 4) return;
+
+        const [x1, y1, x2] = bbox;
+        const cx = 0.5 * (x1 + x2);
+        const frontPoint = { x: cx, y: y1 }; // Assume vehicles move upward in image
+
+        const position = classifyPosition(frontPoint);
+        const current = vehicleStatesRef.current.get(trackId) || {
+          firstSeenAt: now,
+          lastPosition: 'UNKNOWN',
+          positionAtRed: isRed ? position : null,
+          crossedAt: null,
+          violation: false,
+          lastFrame: pkt.frame_idx ?? 0,
+        };
+
+        const crossed =
+          (current.lastPosition === 'BEFORE_LINE' && (position === 'ON_LINE' || position === 'AFTER_LINE')) ||
+          (current.lastPosition === 'ON_LINE' && position === 'AFTER_LINE');
+
+        if (isRed && crossed && !current.violation) {
+          const posAtRed = current.positionAtRed || 'UNKNOWN';
+          const startedBeforeRed = posAtRed !== 'AFTER_LINE';
+
+          if (startedBeforeRed) {
+            current.violation = true;
+            current.crossedAt = now;
+            updatedViolations.push({
+              trackId,
+              frame: pkt.frame_idx ?? frameIdxRef.current,
+              light: lightStateRef.current.state,
+              positionAtRed: posAtRed,
+              stopline: stoplineBounds.label,
+              time: new Date().toLocaleTimeString(),
+            });
+          }
+        }
+
+        current.lastPosition = position;
+        current.lastFrame = pkt.frame_idx ?? current.lastFrame;
+        vehicleStatesRef.current.set(trackId, current);
+      });
+
+      if (updatedViolations.length > 0) {
+        setViolations((prev) => [...updatedViolations, ...prev].slice(0, 20));
+      }
+    },
+    [classifyPosition, handleLightState, stoplineBounds]
+  );
+
   const connectWebSocket = useCallback((src) => {
     if (wsRef.current) {
       wsRef.current.close();
@@ -571,16 +725,12 @@ function DetectionPageBinaryContent() {
             // Update FPS and frame index
             if (typeof pkt.fps === 'number') fpsRef.current = pkt.fps;
             if (typeof pkt.frame_idx === 'number') frameIdxRef.current = pkt.frame_idx;
-            
+
             // Store detections metadata (for future violations rendering)
             if (pkt.detections && Array.isArray(pkt.detections)) {
-              // TODO: Store in state/ref for violations overlay rendering
-              // For now, just log occasionally
-              if (pkt.frame_idx % 30 === 0 && pkt.detections.length > 0) {
-                console.log(`?? Frame ${pkt.frame_idx}: ${pkt.detections.length} detections`, pkt.detections[0]);
-              }
+              processTrafficLightLogic(pkt);
             }
-            
+
             // Next message should be binary JPEG
             setExpectBinary(true);
           } else if (pkt.type === 'error') {
@@ -621,6 +771,7 @@ function DetectionPageBinaryContent() {
     frameDimensions.height,
     frameDimensions.width,
     scheduleDecode,
+    processTrafficLightLogic,
   ]);
 
   // Warmup phase: 5 seconds before starting detection
@@ -855,6 +1006,25 @@ function DetectionPageBinaryContent() {
       const data = await response.json();
       if (data.ok) {
         setSource(data.temp_path);
+        
+        // Probe video to get dimensions
+        try {
+          const probeResponse = await fetch(`${API_URL}/api/detection/probe-video?path=${encodeURIComponent(data.temp_path)}`);
+          if (probeResponse.ok) {
+            const probeData = await probeResponse.json();
+            if (probeData.width && probeData.height) {
+              console.log('📹 Video dimensions:', probeData.width, 'x', probeData.height);
+              setFrameDimensions({ width: probeData.width, height: probeData.height });
+              
+              // Set default TL ROI after dimensions are known
+              setTlRoi({ x: 833, y: 14, w: 52, h: 101 });
+              console.log('🚦 Default TL ROI set:', { x: 833, y: 14, w: 52, h: 101 });
+            }
+          }
+        } catch (probeError) {
+          console.warn('Failed to probe video dimensions:', probeError);
+        }
+        
         setVideoLoaded(true);
         safeToast.success(`Video ready: ${file.name}`, { autoClose: 2000 });
       } else {
@@ -1032,8 +1202,6 @@ function DetectionPageBinaryContent() {
     }
   };
 
-  const clamp01 = (value) => Math.min(Math.max(value ?? 0, 0), 1);
-
   const startDrawingRoi = () => {
     if (isDrawingRoi) {
       safeToast.info('Finish the current ROI before starting a new one.');
@@ -1207,6 +1375,545 @@ function DetectionPageBinaryContent() {
     wsRef.current.send(JSON.stringify({ command: 'set_roi', rois: roiPayload }));
     lastRoiSignatureRef.current = roiPayloadSignature;
   }, [connected, modules.roi, roiPayload, roiPayloadSignature, isDrawingRoi, clearRoiOnServer]);
+
+  // === TRAFFIC LIGHT ROI FUNCTIONS ===
+  // === SAVE TRAFFIC LIGHT ROI (PIXEL-BASED) ===
+  const saveTrafficLightROI = async () => {
+    try {
+      const roi_pixel = {
+        x1: parseInt(tlRoi.x1) || 0,
+        y1: parseInt(tlRoi.y1) || 0,
+        x2: parseInt(tlRoi.x2) || 0,
+        y2: parseInt(tlRoi.y2) || 0,
+      };
+
+      // Validation
+      if (roi_pixel.x2 <= roi_pixel.x1 || roi_pixel.y2 <= roi_pixel.y1) {
+        safeToast.error('Invalid ROI: x2 must be > x1 and y2 must be > y1');
+        return;
+      }
+
+      const response = await fetch(`${API_URL}/api/traffic-light/roi`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          camera_id: "cam01",
+          roi_pixel
+        })
+      });
+
+      if (response.ok) {
+        setTlRoiActive(true);
+        safeToast.success('Traffic Light ROI saved!');
+        startTrafficLightWS();
+      } else {
+        const error = await response.json();
+        safeToast.error(`Failed to save ROI: ${error.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error saving TL ROI:', error);
+      safeToast.error('Failed to save Traffic Light ROI');
+    }
+  };
+
+  const startTrafficLightWS = () => {
+    if (tlSocketRef.current) {
+      tlSocketRef.current.close();
+    }
+
+    const wsUrl = `${API_URL.replace("http", "ws")}/api/traffic-light/ws/traffic-light?camera_id=cam01`;
+    
+    tlSocketRef.current = new WebSocket(wsUrl);
+
+    tlSocketRef.current.onopen = () => {
+      console.log('🚦 Traffic Light WebSocket connected');
+      safeToast.success('Traffic Light detection started!');
+    };
+
+    tlSocketRef.current.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        
+        if (data.error) {
+          safeToast.error(`TL Error: ${data.error}`);
+          return;
+        }
+
+        if (data.state) {
+          setTrafficLightState(data.state);
+        }
+        
+        if (data.confidence !== undefined) {
+          setTrafficLightConfidence(data.confidence);
+        }
+        
+        if (data.roi_frame) {
+          setTrafficLightFrame("data:image/jpeg;base64," + data.roi_frame);
+        }
+      } catch (error) {
+        console.error('Error parsing TL message:', error);
+      }
+    };
+
+    tlSocketRef.current.onerror = (error) => {
+      console.warn("TL WebSocket error:", error);
+      safeToast.warning('Traffic Light connection error');
+    };
+
+    tlSocketRef.current.onclose = () => {
+      console.log("TL socket closed");
+    };
+  };
+
+  const stopTrafficLightWS = () => {
+    if (tlSocketRef.current) {
+      tlSocketRef.current.close();
+      tlSocketRef.current = null;
+      setTrafficLightState("UNKNOWN");
+      setTrafficLightFrame(null);
+      setTrafficLightConfidence(null);
+      setTlRoiActive(false);
+      safeToast.info('Traffic Light detection stopped');
+    }
+  };
+
+  // Cleanup TL WebSocket on unmount
+  useEffect(() => {
+    return () => {
+      if (tlSocketRef.current) {
+        tlSocketRef.current.close();
+      }
+    };
+  }, []);
+
+  // === TRAFFIC LIGHT ROI CANVAS DRAWING & INTERACTION ===
+  
+  // Sync canvas size with video resolution
+  useEffect(() => {
+    const canvas = tlCanvasRef.current;
+    const mainCanvas = canvasRef.current;
+    
+    if (canvas && mainCanvas) {
+      canvas.width = frameDimensions.width;
+      canvas.height = frameDimensions.height;
+      drawTLROI();
+    }
+  }, [frameDimensions]);
+
+  // Draw TL ROI on canvas
+  const drawTLROI = useCallback(() => {
+    const canvas = tlCanvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (!tlRoi) return;
+
+    // Draw rectangle
+    ctx.strokeStyle = '#FFD700'; // Gold
+    ctx.lineWidth = 3;
+    ctx.strokeRect(tlRoi.x, tlRoi.y, tlRoi.w, tlRoi.h);
+    
+    ctx.fillStyle = 'rgba(255, 215, 0, 0.25)';
+    ctx.fillRect(tlRoi.x, tlRoi.y, tlRoi.w, tlRoi.h);
+
+    // Draw resize handles (corners)
+    const handleSize = 10;
+    ctx.fillStyle = '#FFD700';
+    
+    // Top-left
+    ctx.fillRect(tlRoi.x - handleSize/2, tlRoi.y - handleSize/2, handleSize, handleSize);
+    // Top-right
+    ctx.fillRect(tlRoi.x + tlRoi.w - handleSize/2, tlRoi.y - handleSize/2, handleSize, handleSize);
+    // Bottom-left
+    ctx.fillRect(tlRoi.x - handleSize/2, tlRoi.y + tlRoi.h - handleSize/2, handleSize, handleSize);
+    // Bottom-right
+    ctx.fillRect(tlRoi.x + tlRoi.w - handleSize/2, tlRoi.y + tlRoi.h - handleSize/2, handleSize, handleSize);
+
+    // Label
+    ctx.fillStyle = '#FFD700';
+    ctx.fillRect(tlRoi.x, tlRoi.y - 28, 200, 28);
+    ctx.fillStyle = '#000';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText(`🚦 TL ROI (${Math.round(tlRoi.w)}×${Math.round(tlRoi.h)})`, tlRoi.x + 5, tlRoi.y - 8);
+  }, [tlRoi]);
+
+  // Redraw when ROI changes
+  useEffect(() => {
+    drawTLROI();
+    drawStopline();
+  }, [drawTLROI]);
+
+  // === STOPLINE DRAWING FUNCTIONS ===
+  const drawStopline = useCallback(() => {
+    const canvas = tlCanvasRef.current;
+    if (!canvas || !stopline) return;
+
+    const ctx = canvas.getContext('2d');
+    
+    // Draw line
+    ctx.strokeStyle = '#ff0000'; // Red
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(stopline.x1, stopline.y1);
+    ctx.lineTo(stopline.x2, stopline.y2);
+    ctx.stroke();
+
+    // Draw endpoints
+    const handleSize = 10;
+    ctx.fillStyle = '#ff0000';
+    ctx.fillRect(stopline.x1 - handleSize/2, stopline.y1 - handleSize/2, handleSize, handleSize);
+    ctx.fillRect(stopline.x2 - handleSize/2, stopline.y2 - handleSize/2, handleSize, handleSize);
+
+    // Label
+    const midX = (stopline.x1 + stopline.x2) / 2;
+    const midY = (stopline.y1 + stopline.y2) / 2;
+    ctx.fillStyle = '#ff0000';
+    ctx.fillRect(midX - 60, midY - 28, 120, 28);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText('🛑 Stopline', midX - 50, midY - 8);
+  }, [stopline]);
+
+  // Check if point is on stopline endpoint
+  const hitStoplineHandle = (x, y) => {
+    if (!stopline) return null;
+    
+    const handleSize = 15;
+    if (Math.abs(x - stopline.x1) < handleSize && Math.abs(y - stopline.y1) < handleSize) {
+      return 'p1';
+    }
+    if (Math.abs(x - stopline.x2) < handleSize && Math.abs(y - stopline.y2) < handleSize) {
+      return 'p2';
+    }
+    return null;
+  };
+
+  // Check if point is near stopline
+  const hitStopline = (x, y) => {
+    if (!stopline) return false;
+    
+    // Distance from point to line segment
+    const A = x - stopline.x1;
+    const B = y - stopline.y1;
+    const C = stopline.x2 - stopline.x1;
+    const D = stopline.y2 - stopline.y1;
+    
+    const dot = A * C + B * D;
+    const lenSq = C * C + D * D;
+    const param = lenSq !== 0 ? dot / lenSq : -1;
+    
+    let xx, yy;
+    if (param < 0) {
+      xx = stopline.x1;
+      yy = stopline.y1;
+    } else if (param > 1) {
+      xx = stopline.x2;
+      yy = stopline.y2;
+    } else {
+      xx = stopline.x1 + param * C;
+      yy = stopline.y1 + param * D;
+    }
+    
+    const dx = x - xx;
+    const dy = y - yy;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    
+    return distance < 10; // 10px threshold
+  };
+
+  // Convert mouse position to video pixel coordinates
+  const getVideoCoords = (e, element) => {
+    const rect = element.getBoundingClientRect();
+    const scaleX = frameDimensions.width / rect.width;
+    const scaleY = frameDimensions.height / rect.height;
+    
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY
+    };
+  };
+
+  // Check if point is inside ROI
+  const hitTestROI = (x, y) => {
+    if (!tlRoi) return false;
+    return x >= tlRoi.x && x <= tlRoi.x + tlRoi.w &&
+           y >= tlRoi.y && y <= tlRoi.y + tlRoi.h;
+  };
+
+  // Check if point is on resize handle
+  const hitResizeHandle = (x, y) => {
+    if (!tlRoi) return null;
+    
+    const handleSize = 15; // Hit area
+    const corners = {
+      tl: { x: tlRoi.x, y: tlRoi.y },
+      tr: { x: tlRoi.x + tlRoi.w, y: tlRoi.y },
+      bl: { x: tlRoi.x, y: tlRoi.y + tlRoi.h },
+      br: { x: tlRoi.x + tlRoi.w, y: tlRoi.y + tlRoi.h }
+    };
+
+    for (const [handle, pos] of Object.entries(corners)) {
+      if (Math.abs(x - pos.x) < handleSize && Math.abs(y - pos.y) < handleSize) {
+        return handle;
+      }
+    }
+    return null;
+  };
+
+  // Mouse down handler
+  const handleTLMouseDown = (e) => {
+    const canvas = tlCanvasRef.current;
+    if (!canvas) return;
+
+    const { x, y } = getVideoCoords(e, canvas);
+
+    // Stopline mode
+    if (isDrawingStopline) {
+      if (stopline) {
+        // Check if clicking on endpoint
+        const handle = hitStoplineHandle(x, y);
+        if (handle) {
+          setStoplineHandle(handle);
+          setStartPos({ x, y });
+          return;
+        }
+
+        // Check if clicking on line
+        if (hitStopline(x, y)) {
+          setIsMovingStopline(true);
+          setStartPos({ x, y });
+          return;
+        }
+      }
+
+      // Start drawing new stopline
+      if (!stopline) {
+        setStopline({ x1: x, y1: y, x2: x, y2: y });
+        setStartPos({ x, y });
+      }
+      return;
+    }
+
+    // TL ROI mode
+    if (!isSelectingTLMode) return;
+
+    // Check if clicking on existing ROI
+    if (tlRoi) {
+      const handle = hitResizeHandle(x, y);
+      if (handle) {
+        setResizeHandle(handle);
+        setStartPos({ x, y });
+        return;
+      }
+
+      if (hitTestROI(x, y)) {
+        setIsMovingTL(true);
+        setStartPos({ x, y });
+        return;
+      }
+    }
+
+    // Start drawing new ROI
+    setTlRoi({ x, y, w: 0, h: 0 });
+    setStartPos({ x, y });
+    setIsDrawingTL(true);
+  };
+
+  // Mouse move handler
+  const handleTLMouseMove = (e) => {
+    if (!startPos) return;
+
+    const canvas = tlCanvasRef.current;
+    if (!canvas) return;
+
+    const { x, y } = getVideoCoords(e, canvas);
+
+    // Stopline mode
+    if (isDrawingStopline && stopline) {
+      if (stoplineHandle) {
+        // Moving endpoint
+        const newStopline = { ...stopline };
+        if (stoplineHandle === 'p1') {
+          newStopline.x1 = x;
+          newStopline.y1 = y;
+        } else {
+          newStopline.x2 = x;
+          newStopline.y2 = y;
+        }
+        setStopline(newStopline);
+      } else if (isMovingStopline) {
+        // Moving entire line
+        const dx = x - startPos.x;
+        const dy = y - startPos.y;
+        setStopline({
+          x1: stopline.x1 + dx,
+          y1: stopline.y1 + dy,
+          x2: stopline.x2 + dx,
+          y2: stopline.y2 + dy
+        });
+        setStartPos({ x, y });
+      } else {
+        // Drawing new line
+        setStopline(prev => ({ ...prev, x2: x, y2: y }));
+      }
+      return;
+    }
+
+    // TL ROI mode
+    if (!isSelectingTLMode) return;
+
+    if (isDrawingTL) {
+      // Drawing new ROI
+      const newRoi = {
+        x: Math.min(startPos.x, x),
+        y: Math.min(startPos.y, y),
+        w: Math.abs(x - startPos.x),
+        h: Math.abs(y - startPos.y)
+      };
+      setTlRoi(newRoi);
+    } else if (isMovingTL && tlRoi) {
+      // Moving ROI
+      const dx = x - startPos.x;
+      const dy = y - startPos.y;
+      const moved = {
+        ...tlRoi,
+        x: Math.max(0, Math.min(tlRoi.x + dx, frameDimensions.width - tlRoi.w)),
+        y: Math.max(0, Math.min(tlRoi.y + dy, frameDimensions.height - tlRoi.h))
+      };
+      setTlRoi(moved);
+      setStartPos({ x, y });
+    } else if (resizeHandle && tlRoi) {
+      // Resizing ROI
+      let newRoi = { ...tlRoi };
+      
+      switch (resizeHandle) {
+        case 'tl': // Top-left
+          newRoi.w = tlRoi.w + (tlRoi.x - x);
+          newRoi.h = tlRoi.h + (tlRoi.y - y);
+          newRoi.x = x;
+          newRoi.y = y;
+          break;
+        case 'tr': // Top-right
+          newRoi.w = x - tlRoi.x;
+          newRoi.h = tlRoi.h + (tlRoi.y - y);
+          newRoi.y = y;
+          break;
+        case 'bl': // Bottom-left
+          newRoi.w = tlRoi.w + (tlRoi.x - x);
+          newRoi.h = y - tlRoi.y;
+          newRoi.x = x;
+          break;
+        case 'br': // Bottom-right
+          newRoi.w = x - tlRoi.x;
+          newRoi.h = y - tlRoi.y;
+          break;
+      }
+
+      // Ensure minimum size
+      if (newRoi.w > 20 && newRoi.h > 20) {
+        setTlRoi(newRoi);
+      }
+    }
+  };
+
+  // Mouse up handler
+  const handleTLMouseUp = () => {
+    setIsDrawingTL(false);
+    setIsMovingTL(false);
+    setResizeHandle(null);
+    setIsMovingStopline(false);
+    setStoplineHandle(null);
+    setStartPos(null);
+  };
+
+  // Save stopline to backend
+  const saveStopline = async () => {
+    if (!stopline) {
+      safeToast.error('No stopline to save');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/api/violation/stopline`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          camera_id: "cam01",
+          stopline: {
+            x1: Math.round(stopline.x1),
+            y1: Math.round(stopline.y1),
+            x2: Math.round(stopline.x2),
+            y2: Math.round(stopline.y2)
+          }
+        })
+      });
+
+      if (response.ok) {
+        setStoplineActive(true);
+        setIsDrawingStopline(false);
+        safeToast.success('Stopline saved!');
+      } else {
+        const error = await response.json();
+        safeToast.error(`Failed to save stopline: ${error.detail || error.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error saving stopline:', error);
+      safeToast.error('Failed to save stopline');
+    }
+  };
+
+  // Delete stopline
+  const deleteStopline = () => {
+    setStopline(null);
+    setStoplineActive(false);
+    setIsDrawingStopline(false);
+    safeToast.info('Stopline deleted');
+  };
+
+  // Save TL ROI and start detection
+  const confirmTLROI = async () => {
+    if (!tlRoi || tlRoi.w < 20 || tlRoi.h < 20) {
+      safeToast.error('ROI too small! Minimum size is 20x20 pixels.');
+      return;
+    }
+
+    try {
+      // Convert pixel coordinates to normalized [0, 1]
+      const roi = {
+        x: tlRoi.x / frameDimensions.width,
+        y: tlRoi.y / frameDimensions.height,
+        width: tlRoi.w / frameDimensions.width,
+        height: tlRoi.h / frameDimensions.height
+      };
+
+      console.log('📤 Sending TL ROI:', roi);
+
+      const response = await fetch(`${API_URL}/api/traffic-light/roi`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          camera_id: "cam01",
+          roi
+        })
+      });
+
+      if (response.ok) {
+        setTlRoiActive(true);
+        setIsSelectingTLMode(false);
+        safeToast.success('Traffic Light ROI saved!');
+        startTrafficLightWS();
+      } else {
+        const error = await response.json();
+        console.error('❌ Backend error:', error);
+        safeToast.error(`Failed to save ROI: ${error.detail || error.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error saving TL ROI:', error);
+      safeToast.error('Failed to save Traffic Light ROI');
+    }
+  };
 
   return (
     <>
@@ -1619,12 +2326,44 @@ function DetectionPageBinaryContent() {
               borderRadius: '8px',
               overflow: 'hidden'
             }}>
+                  {/* Main video canvas (z-index: 0) */}
                   <canvas
                     ref={canvasRef}
-                style={{width:'100%', height:'100%', background:'#000'}}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width:'100%', 
+                  height:'100%', 
+                  background:'#000',
+                  zIndex: 0
+                }}
                 width={frameDimensions.width}
                 height={frameDimensions.height}
               />
+
+              {/* Traffic Light ROI Canvas (z-index: 10) */}
+              <canvas
+                ref={tlCanvasRef}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: '100%',
+                  pointerEvents: (isSelectingTLMode || isDrawingStopline) ? 'auto' : 'none',
+                  cursor: (isSelectingTLMode || isDrawingStopline) ? 'crosshair' : 'default',
+                  zIndex: 10
+                }}
+                width={frameDimensions.width}
+                height={frameDimensions.height}
+                onMouseDown={handleTLMouseDown}
+                onMouseMove={handleTLMouseMove}
+                onMouseUp={handleTLMouseUp}
+                onMouseLeave={handleTLMouseUp}
+              />
+
+              {/* Polygon ROI Overlay (z-index: 6) */}
               <RoiOverlay
                 ref={overlayRef}
                 frameDimensions={frameDimensions}
@@ -1635,7 +2374,136 @@ function DetectionPageBinaryContent() {
                 mousePos={mousePos}
                 onMouseMove={handleRoiOverlayMouseMove}
               />
-              
+
+              {/* TL ROI Selection Instructions */}
+              {isSelectingTLMode && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '10px',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    background: 'rgba(255, 215, 0, 0.95)',
+                    color: '#000',
+                    padding: '12px 24px',
+                    borderRadius: '8px',
+                    fontWeight: 'bold',
+                    fontSize: '14px',
+                    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                    zIndex: 15,
+                    textAlign: 'center'
+                  }}
+                >
+                  {!tlRoi && '🖱️ Click & drag to draw Traffic Light ROI'}
+                  {tlRoi && !isDrawingTL && !isMovingTL && !resizeHandle && '✅ Drag to move • Corners to resize'}
+                  {isDrawingTL && '✏️ Drawing ROI...'}
+                  {isMovingTL && '🔄 Moving ROI...'}
+                  {resizeHandle && '↔️ Resizing ROI...'}
+                </div>
+              )}
+
+
+
+              {(stoplineBounds || lightState !== 'UNKNOWN' || violations.length > 0) && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '10px',
+                    right: '10px',
+                    background: 'rgba(17, 24, 39, 0.85)',
+                    color: '#fff',
+                    padding: '12px',
+                    borderRadius: '10px',
+                    width: '320px',
+                    zIndex: 9,
+                    boxShadow: '0 10px 30px rgba(0,0,0,0.35)',
+                    border: '1px solid rgba(255,255,255,0.08)'
+                  }}
+                >
+                  <div className="d-flex justify-content-between align-items-center mb-2">
+                    <div className="fw-bold d-flex align-items-center gap-2">
+                      <span>🚦 Light</span>
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          padding: '4px 8px',
+                          borderRadius: '999px',
+                          background:
+                            lightState === 'RED'
+                              ? '#ef4444'
+                              : lightState === 'GREEN'
+                                ? '#22c55e'
+                                : lightState === 'YELLOW'
+                                  ? '#eab308'
+                                  : '#6b7280',
+                          color: lightState === 'YELLOW' ? '#000' : '#fff',
+                          minWidth: '72px',
+                          textAlign: 'center',
+                          fontWeight: 700,
+                        }}
+                      >
+                        {lightState}
+                      </span>
+                    </div>
+                    <small className="text-muted" style={{ color: '#d1d5db' }}>
+                      {lastLightChangeTs ? `Updated: ${new Date(lastLightChangeTs).toLocaleTimeString()}` : 'Waiting...'}
+                    </small>
+                  </div>
+
+                  {stoplineBounds && (
+                    <div className="mb-2" style={{ fontSize: '0.9rem', color: '#e5e7eb' }}>
+                      <strong>Stopline:</strong> {stoplineBounds.label}
+                    </div>
+                  )}
+
+                  <div
+                    style={{
+                      background: 'rgba(255,255,255,0.05)',
+                      borderRadius: '8px',
+                      padding: '8px'
+                    }}
+                  >
+                    <div className="d-flex justify-content-between align-items-center mb-1">
+                      <strong>Violations</strong>
+                      <span className="badge bg-danger">{violations.length}</span>
+                    </div>
+                    {violations.length === 0 ? (
+                      <div className="text-muted" style={{ fontSize: '0.85rem' }}>
+                        No red-light violations yet.
+                      </div>
+                    ) : (
+                      <div style={{ maxHeight: '160px', overflowY: 'auto' }}>
+                        {violations.slice(0, 5).map((v, idx) => (
+                          <div
+                            key={`${v.trackId}-${v.frame}-${idx}`}
+                            style={{
+                              padding: '6px 8px',
+                              borderRadius: '6px',
+                              background: 'rgba(239,68,68,0.1)',
+                              border: '1px solid rgba(239,68,68,0.25)',
+                              marginBottom: '6px'
+                            }}
+                          >
+                            <div className="d-flex justify-content-between">
+                              <div>
+                                <div style={{ fontWeight: 700 }}>ID #{v.trackId}</div>
+                                <div style={{ fontSize: '0.85rem', color: '#fca5a5' }}>
+                                  {v.stopline} • Frame {v.frame}
+                                </div>
+                              </div>
+                              <div style={{ fontSize: '0.8rem', color: '#e5e7eb' }}>{v.time}</div>
+                            </div>
+                            <div style={{ fontSize: '0.85rem', color: '#e5e7eb' }}>
+                              State: {v.light} • Position when red: {v.positionAtRed}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Debug Overlay (Press 'D' to toggle) */}
               {showDebugOverlay && (
                 <div style={{
@@ -1741,7 +2609,326 @@ function DetectionPageBinaryContent() {
               )}
                     </div>
 
-            
+            {/* ==== TRAFFIC LIGHT ROI CONTROL & PREVIEW PANEL ==== */}
+            <Card className="mt-4" style={{ 
+              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+              border: 'none',
+              boxShadow: '0 8px 32px rgba(102, 126, 234, 0.3)'
+            }}>
+              <Card.Body>
+                <Row className="align-items-center">
+                  <Col md={8}>
+                    <h5 className="text-white mb-3">
+                      🚦 Traffic Light Detection (Separate ROI)
+                    </h5>
+                    
+                    <div className="d-flex gap-2 flex-wrap mb-3">
+                      {!isSelectingTLMode && !tlRoiActive && (
+                        <Button
+                          onClick={() => {
+                            setIsSelectingTLMode(true);
+                            setTlRoi(null);
+                          }}
+                          variant="light"
+                          size="sm"
+                          className="fw-bold"
+                          disabled={!videoLoaded}
+                        >
+                          🖱️ Draw Traffic Light ROI
+                        </Button>
+                      )}
+                      
+                      {isSelectingTLMode && (
+                        <>
+                          <Button
+                            onClick={confirmTLROI}
+                            variant="success"
+                            size="sm"
+                            className="fw-bold"
+                            disabled={!tlRoi || tlRoi.w < 20 || tlRoi.h < 20}
+                          >
+                            ✅ Confirm & Start Detection
+                          </Button>
+                          
+                          <Button
+                            onClick={() => {
+                              setIsSelectingTLMode(false);
+                              setTlRoi(null);
+                            }}
+                            variant="danger"
+                            size="sm"
+                          >
+                            ❌ Cancel
+                          </Button>
+                          
+                          {tlRoi && (
+                            <Button
+                              onClick={() => setTlRoi(null)}
+                              variant="warning"
+                              size="sm"
+                            >
+                              🔄 Clear ROI
+                            </Button>
+                          )}
+                        </>
+                      )}
+                      
+                      {tlRoiActive && (
+                        <>
+                          <Button
+                            onClick={() => {
+                              setIsSelectingTLMode(true);
+                              setTlRoiActive(false);
+                              stopTrafficLightWS();
+                            }}
+                            variant="warning"
+                            size="sm"
+                          >
+                            ✏️ Redraw ROI
+                          </Button>
+                          
+                          <Button
+                            onClick={stopTrafficLightWS}
+                            variant="danger"
+                            size="sm"
+                          >
+                            ⏹️ Stop Detection
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                    
+                    {tlRoi && isSelectingTLMode && (
+                      <>
+                        <Alert variant="success" className="mb-2">
+                          <small>
+                            ✅ <strong>ROI Selected:</strong> {Math.round(tlRoi.w)}×{Math.round(tlRoi.h)} pixels
+                            <br/>�r Position: ({Math.round(tlRoi.x)}, {Math.round(tlRoi.y)})
+                            <br/>💡 Drag to move • Corners to resize • Edit values below
+                          </small>
+                        </Alert>
+                        
+                        <div className="mb-3">
+                          <Form.Label className="text-white fw-bold mb-2" style={{ fontSize: '0.9rem' }}>
+                            Fine-tune ROI Coordinates (Pixels)
+                          </Form.Label>
+                          <Row className="g-2">
+                            <Col xs={3}>
+                              <Form.Control
+                                type="number"
+                                value={Math.round(tlRoi.x)}
+                                onChange={(e) => {
+                                  const newX = parseInt(e.target.value) || 0;
+                                  setTlRoi(prev => ({ ...prev, x: Math.max(0, Math.min(newX, frameDimensions.width - prev.w)) }));
+                                }}
+                                size="sm"
+                              />
+                              <Form.Text className="text-white-50" style={{ fontSize: '0.75rem' }}>X</Form.Text>
+                            </Col>
+                            <Col xs={3}>
+                              <Form.Control
+                                type="number"
+                                value={Math.round(tlRoi.y)}
+                                onChange={(e) => {
+                                  const newY = parseInt(e.target.value) || 0;
+                                  setTlRoi(prev => ({ ...prev, y: Math.max(0, Math.min(newY, frameDimensions.height - prev.h)) }));
+                                }}
+                                size="sm"
+                              />
+                              <Form.Text className="text-white-50" style={{ fontSize: '0.75rem' }}>Y</Form.Text>
+                            </Col>
+                            <Col xs={3}>
+                              <Form.Control
+                                type="number"
+                                value={Math.round(tlRoi.w)}
+                                onChange={(e) => {
+                                  const newW = parseInt(e.target.value) || 20;
+                                  setTlRoi(prev => ({ ...prev, w: Math.max(20, Math.min(newW, frameDimensions.width - prev.x)) }));
+                                }}
+                                size="sm"
+                              />
+                              <Form.Text className="text-white-50" style={{ fontSize: '0.75rem' }}>Width</Form.Text>
+                            </Col>
+                            <Col xs={3}>
+                              <Form.Control
+                                type="number"
+                                value={Math.round(tlRoi.h)}
+                                onChange={(e) => {
+                                  const newH = parseInt(e.target.value) || 20;
+                                  setTlRoi(prev => ({ ...prev, h: Math.max(20, Math.min(newH, frameDimensions.height - prev.y)) }));
+                                }}
+                                size="sm"
+                              />
+                              <Form.Text className="text-white-50" style={{ fontSize: '0.75rem' }}>Height</Form.Text>
+                            </Col>
+                          </Row>
+                        </div>
+                      </>
+                    )}
+                    
+                    {!isSelectingTLMode && !tlRoiActive && (
+                      <Alert variant="info" className="mb-0">
+                        <small>
+                          💡 <strong>How to use:</strong>
+                          <br/>1. Click "Draw Traffic Light ROI"
+                          <br/>2. Click & drag on video to draw rectangle
+                          <br/>3. Adjust position/size as needed
+                          <br/>4. Click "Confirm & Start Detection"
+                        </small>
+                      </Alert>
+                    )}
+                  </Col>
+                  
+                  <Col md={4}>
+                    <div className="bg-white rounded p-3">
+                      <h6 className="mb-2 text-dark">Traffic Light Status</h6>
+                      
+                      {trafficLightFrame ? (
+                        <div className="mb-2">
+                          <img
+                            src={trafficLightFrame}
+                            alt="Traffic Light ROI"
+                            className="w-100 rounded border border-secondary"
+                            style={{ maxHeight: '120px', objectFit: 'contain' }}
+                          />
+                        </div>
+                      ) : (
+                        <div 
+                          className="mb-2 d-flex align-items-center justify-content-center bg-secondary rounded"
+                          style={{ height: '120px' }}
+                        >
+                          <span className="text-white">No ROI frame yet</span>
+                        </div>
+                      )}
+                      
+                      <div className="d-flex justify-content-between align-items-center">
+                        <span className="fw-bold text-dark">State:</span>
+                        <span
+                          className="px-3 py-1 rounded fw-bold"
+                          style={{
+                            background: 
+                              trafficLightState === "RED" ? '#ef4444' :
+                              trafficLightState === "GREEN" ? '#22c55e' :
+                              trafficLightState === "YELLOW" ? '#eab308' :
+                              '#6b7280',
+                            color: trafficLightState === "YELLOW" ? '#000' : '#fff'
+                          }}
+                        >
+                          {trafficLightState}
+                        </span>
+                      </div>
+                      
+                      {trafficLightConfidence !== null && (
+                        <div className="mt-2 text-dark">
+                          <small>
+                            Confidence: <strong>{(trafficLightConfidence * 100).toFixed(1)}%</strong>
+                          </small>
+                        </div>
+                      )}
+                    </div>
+                  </Col>
+                </Row>
+              </Card.Body>
+            </Card>
+
+            {/* ==== STOPLINE CONTROL PANEL ==== */}
+            <Card className="mt-4" style={{ 
+              background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+              border: 'none',
+              boxShadow: '0 8px 32px rgba(239, 68, 68, 0.3)'
+            }}>
+              <Card.Body>
+                <h5 className="text-white mb-3">
+                  🛑 Stopline Configuration
+                </h5>
+                
+                <div className="d-flex gap-2 flex-wrap mb-3">
+                  {!isDrawingStopline && !stoplineActive && (
+                    <Button
+                      onClick={() => {
+                        setIsDrawingStopline(true);
+                        setStopline(null);
+                      }}
+                      variant="light"
+                      size="sm"
+                      className="fw-bold"
+                      disabled={!videoLoaded}
+                    >
+                      ✏️ Draw Stopline
+                    </Button>
+                  )}
+                  
+                  {isDrawingStopline && (
+                    <>
+                      <Button
+                        onClick={saveStopline}
+                        variant="success"
+                        size="sm"
+                        className="fw-bold"
+                        disabled={!stopline}
+                      >
+                        ✅ Save Stopline
+                      </Button>
+                      
+                      <Button
+                        onClick={() => {
+                          setIsDrawingStopline(false);
+                          setStopline(null);
+                        }}
+                        variant="danger"
+                        size="sm"
+                      >
+                        ❌ Cancel
+                      </Button>
+                    </>
+                  )}
+                  
+                  {stoplineActive && (
+                    <>
+                      <Button
+                        onClick={() => {
+                          setIsDrawingStopline(true);
+                          setStoplineActive(false);
+                        }}
+                        variant="warning"
+                        size="sm"
+                      >
+                        ✏️ Edit Stopline
+                      </Button>
+                      
+                      <Button
+                        onClick={deleteStopline}
+                        variant="danger"
+                        size="sm"
+                      >
+                        🗑️ Delete
+                      </Button>
+                    </>
+                  )}
+                </div>
+                
+                {stopline && isDrawingStopline && (
+                  <Alert variant="success" className="mb-0">
+                    <small>
+                      ✅ <strong>Stopline:</strong> ({Math.round(stopline.x1)}, {Math.round(stopline.y1)}) → ({Math.round(stopline.x2)}, {Math.round(stopline.y2)})
+                      <br/>💡 Drag line to move • Drag endpoints to adjust • Click Save when ready
+                    </small>
+                  </Alert>
+                )}
+                
+                {!isDrawingStopline && !stoplineActive && (
+                  <Alert variant="info" className="mb-0">
+                    <small>
+                      💡 <strong>How to use:</strong>
+                      <br/>1. Click "Draw Stopline"
+                      <br/>2. Click two points on video to draw line
+                      <br/>3. Adjust position as needed
+                      <br/>4. Click "Save Stopline"
+                    </small>
+                  </Alert>
+                )}
+              </Card.Body>
+            </Card>
 
 
                                   </div>

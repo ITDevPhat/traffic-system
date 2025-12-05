@@ -10,7 +10,7 @@ Version: 1.0.0
 import asyncio
 import logging
 from typing import Optional, Dict
-from app.services.traffic_light_worker import TrafficLightWorker, ROIConfig
+from app.services.traffic_light_worker import TrafficLightWorker
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class TrafficLightWorkerManager:
     async def create_worker(
         self,
         camera_id: str,
-        roi: ROIConfig,
+        roi: dict,
         video_stream,
         model=None
     ) -> TrafficLightWorker:
