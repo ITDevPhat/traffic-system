@@ -1,0 +1,138 @@
+[33mcommit 38fc7e7e5dda92ff921441c73126c4f7165eedf3[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m
+Merge: 6848828 2695ac2
+Author: itdevphat <nguyenthanhphat.work@gmail.com>
+Date:   Fri Dec 5 18:58:30 2025 +0700
+
+    bug traffic
+
+[33mcommit 6848828499ce8a193930dcc81d05af2e088df9f2[m
+Author: itdevphat <nguyenthanhphat.work@gmail.com>
+Date:   Fri Dec 5 16:35:59 2025 +0700
+
+    Just test features
+
+[33mcommit 2695ac2821b656122e8bbcf0de8455de8ba1f899[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Merge: 580d763 70d6797
+Author: Nguyen Thanh Phat <92991374+ITDevPhat@users.noreply.github.com>
+Date:   Fri Dec 5 16:33:14 2025 +0700
+
+    Merge pull request #6 from ITDevPhat/codex/implement-red-light-violation-detection-logic
+    
+    Fix red-light engine initial state handling
+
+[33mcommit 70d6797b80355f23e21b606f9ea5a870d7f75790[m[33m ([m[1;31morigin/codex/implement-red-light-violation-detection-logic[m[33m)[m
+Author: Nguyen Thanh Phat <92991374+ITDevPhat@users.noreply.github.com>
+Date:   Fri Dec 5 16:32:56 2025 +0700
+
+    Fix red-light engine initial state handling
+
+[33mcommit 580d763469aae8aef5aa4fa2edec33ccc83bb0c2[m
+Author: itdevphat <nguyenthanhphat.work@gmail.com>
+Date:   Fri Dec 5 09:04:02 2025 +0700
+
+    Ok base light
+
+[33mcommit aac8cea1fb61c645a24236d9bf367db295298eb7[m
+Author: itdevphat <nguyenthanhphat.work@gmail.com>
+Date:   Fri Dec 5 01:06:49 2025 +0700
+
+    Ok 3 trang
+
+[33mcommit 58d022f01879653494d5f6a26e945cb4515635da[m
+Author: itdevphat <nguyenthanhphat.work@gmail.com>
+Date:   Fri Dec 5 00:17:10 2025 +0700
+
+    refactor: routes, fix websocket cleanup, optimize bbox tracking
+
+[33mcommit 0189f42755183d39003b503098a0084c775c8094[m
+Author: itdevphat <nguyenthanhphat.work@gmail.com>
+Date:   Tue Nov 11 06:48:42 2025 +0700
+
+    Ok 11.11
+
+[33mcommit ff85e6f5d94191cfa7898c4c315be154fb9d0062[m
+Merge: 6ff67ab 5d87a46
+Author: Nguyen Thanh Phat <92991374+ITDevPhat@users.noreply.github.com>
+Date:   Fri Nov 7 22:28:10 2025 +0700
+
+    Merge pull request #5 from ITDevPhat/codex/optimize-bytetrack-in-detection-pipeline
+    
+    Preload realtime detector and add backend warmup gate
+
+[33mcommit 5d87a4605526219ae248486235e3df97846bcf27[m[33m ([m[1;31morigin/codex/optimize-bytetrack-in-detection-pipeline[m[33m)[m
+Author: Nguyen Thanh Phat <92991374+ITDevPhat@users.noreply.github.com>
+Date:   Fri Nov 7 22:09:22 2025 +0700
+
+    Warm up realtime stream backend and preload models
+
+[33mcommit 6ff67abf270036592949d21d5548225bc1eb4658[m
+Author: itdevphat <nguyenthanhphat.work@gmail.com>
+Date:   Fri Nov 7 06:52:40 2025 +0700
+
+    Bytetrack err
+
+[33mcommit a3275217e96c684ba4a24b616697973624140685[m
+Author: itdevphat <nguyenthanhphat.work@gmail.com>
+Date:   Thu Nov 6 18:47:32 2025 +0700
+
+    YOLO + BYTE TRAKC OK
+
+[33mcommit e46716b7dd207fcdb70266f56ed5ef76333273cd[m
+Author: itdevphat <nguyenthanhphat.work@gmail.com>
+Date:   Wed Nov 5 14:23:43 2025 +0700
+
+    still error BBOX
+
+[33mcommit a7c5dd2b97d1c361b218bc2dc79f3f79301a228e[m
+Author: itdevphat <nguyenthanhphat.work@gmail.com>
+Date:   Wed Nov 5 00:50:54 2025 +0700
+
+    NEW  onnx + engine boost performance
+
+[33mcommit 65768fb72ee66eb7c070b9ee5c597e49160cc351[m
+Merge: ac7af6e ec14d70
+Author: Nguyen Thanh Phat <92991374+ITDevPhat@users.noreply.github.com>
+Date:   Tue Nov 4 16:53:06 2025 +0700
+
+    Merge pull request #3 from ITDevPhat/codex/fix-fps-lag-issue-and-optimize-performance
+    
+    Add ROI drawing and GPU enforcement to realtime detection
+
+[33mcommit ec14d7087b68895c3270811667b58d245a226993[m[33m ([m[1;31morigin/codex/fix-fps-lag-issue-and-optimize-performance[m[33m)[m
+Author: Nguyen Thanh Phat <92991374+ITDevPhat@users.noreply.github.com>
+Date:   Tue Nov 4 16:52:27 2025 +0700
+
+    Add ROI controls and GPU enforcement to realtime detection
+
+[33mcommit ac7af6e8e090d8150aeec91c6f6c7328a973cda0[m
+Author: itdevphat <nguyenthanhphat.work@gmail.com>
+Date:   Tue Nov 4 15:17:47 2025 +0700
+
+    new UI detect
+
+[33mcommit 374dea3d16aefb847e4cce1cb442b22f4cdb87bb[m
+Merge: 0635b2e b900d80
+Author: Nguyen Thanh Phat <92991374+ITDevPhat@users.noreply.github.com>
+Date:   Mon Nov 3 21:32:02 2025 +0700
+
+    Merge pull request #2 from ITDevPhat/codex/Agent
+    
+    Refactor detection pipeline into configurable modules
+
+[33mcommit b900d8090086c0f708ef779b9b73d9a9c6c9f8fb[m[33m ([m[1;31morigin/codex/hieu-du-an-hien-tai[m[33m, [m[1;31morigin/codex/Agent[m[33m)[m
+Author: Nguyen Thanh Phat <92991374+ITDevPhat@users.noreply.github.com>
+Date:   Mon Nov 3 21:24:29 2025 +0700
+
+    Refactor detection pipeline into configurable modules
+
+[33mcommit 0635b2e074e589dd37df7e1b53f35b1a8beb9f4d[m
+Author: itdevphat <nguyenthanhphat.work@gmail.com>
+Date:   Mon Nov 3 14:58:23 2025 +0700
+
+    Good tracking
+
+[33mcommit 59adcea6c2868d5b8be3f6d539d6b00bd361cb4a[m
+Author: itdevphat <nguyenthanhphat.work@gmail.com>
+Date:   Tue Oct 28 23:37:42 2025 +0700
+
+    xong phan base

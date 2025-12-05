@@ -123,26 +123,54 @@ class TrafficLightWorker:
         return None
 
     def _detect_state(self, frame: np.ndarray) -> tuple[str, Optional[float], Optional[np.ndarray]]:
-        x1, y1, x2, y2 = normalized_rect_to_pixels(self.roi_norm, frame.shape[:2])
-        x1, y1 = max(x1, 0), max(y1, 0)
-        x2, y2 = min(x2, frame.shape[1]), min(y2, frame.shape[0])
-        crop = frame[y1:y2, x1:x2]
-        if crop.size == 0:
-            return "YELLOW", None, None
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            frame_height, frame_width = frame.shape[:2]
+            
+            # Convert normalized ROI to pixel coordinates
+            x1, y1, x2, y2 = normalized_rect_to_pixels(self.roi_norm, frame.shape[:2])
+            
+            # Clamp to frame bounds
+            x1 = max(0, min(x1, frame_width - 1))
+            y1 = max(0, min(y1, frame_height - 1))
+            x2 = max(x1 + 1, min(x2, frame_width))
+            y2 = max(y1 + 1, min(y2, frame_height))
+            
+            logger.debug("🎯 ROI crop: (%d,%d) -> (%d,%d) from frame %dx%d", 
+                        x1, y1, x2, y2, frame_width, frame_height)
+            
+            crop = frame[y1:y2, x1:x2]
+            
+            if crop is None or crop.size == 0:
+                logger.warning("⚠️ Empty ROI crop for camera %s: (%d,%d,%d,%d)", 
+                              self.camera_id, x1, y1, x2, y2)
+                return "UNKNOWN", None, None
 
-        if self._model is None:
-            return "YELLOW", None, crop
+            # Make a copy to ensure the crop is contiguous
+            crop = crop.copy()
+            
+            logger.debug("✅ ROI crop successful: %dx%d", crop.shape[1], crop.shape[0])
 
-        results = self._model.predict(crop, conf=0.25, imgsz=320, half=True, verbose=False)
-        if not results or not results[0].boxes:
-            return "YELLOW", None, crop
+            if self._model is None:
+                logger.warning("⚠️ No model loaded, returning UNKNOWN with crop")
+                return "UNKNOWN", None, crop
 
-        boxes = results[0].boxes
-        conf = float(boxes.conf.max().item()) if boxes.conf.numel() else None
-        cls_id = int(boxes.cls[boxes.conf.argmax()].item()) if boxes.conf.numel() else -1
+            results = self._model.predict(crop, conf=0.25, imgsz=320, half=True, verbose=False)
+            if not results or not results[0].boxes:
+                return "UNKNOWN", None, crop
 
-        if cls_id == 0:
-            return "GREEN", conf, crop
-        if cls_id == 1:
-            return "RED", conf, crop
-        return "YELLOW", conf, crop
+            boxes = results[0].boxes
+            conf = float(boxes.conf.max().item()) if boxes.conf.numel() else None
+            cls_id = int(boxes.cls[boxes.conf.argmax()].item()) if boxes.conf.numel() else -1
+
+            if cls_id == 0:
+                return "GREEN", conf, crop
+            if cls_id == 1:
+                return "RED", conf, crop
+            return "YELLOW", conf, crop
+            
+        except Exception as e:
+            logger.error("❌ Error in _detect_state: %s", e, exc_info=True)
+            return "UNKNOWN", None, None

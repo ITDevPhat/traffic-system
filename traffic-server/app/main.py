@@ -66,6 +66,7 @@ from app.routers import auth as auth_router
 from app.routers import ocr_image  # OCR Static Image API
 from app.routers import traffic_light_ws  # Traffic Light Detection WS
 from app.routers import traffic_light_router  # Traffic Light ROI Detection API
+from app.routers import traffic_light  # Traffic Light Config + Worker WebSocket
 from app.services.realtime_binary_stream import (
     preload_realtime_resources,
     DEFAULT_REALTIME_MODEL_PATH,
@@ -163,6 +164,8 @@ app.include_router(ocr_image.router, tags=["OCR"])
 app.include_router(traffic_light_ws.router, tags=["Traffic Light"])
 # Traffic Light ROI Detection - REST API + WebSocket
 app.include_router(traffic_light_router.router, tags=["Traffic Light ROI"])
+# Traffic Light Config + Worker WebSocket (for ROI frame streaming)
+app.include_router(traffic_light.router, tags=["Traffic Light Config"])
 # Auth routes
 app.include_router(auth_router.router, prefix=f"{settings.API_V1_PREFIX}")
 

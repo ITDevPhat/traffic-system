@@ -10,13 +10,125 @@ from app.services.realtime_binary_stream import (
 import json
 import logging
 import asyncio
+import base64
+import cv2
+import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Import ROI storage from router
+from app.routers.traffic_light_router import roi_storage
 
 router = APIRouter(
     prefix="/api/traffic-light",
     tags=["Traffic Light Detection"],
 )
+
+
+def crop_tl_roi(frame: np.ndarray, camera_id: str) -> tuple:
+    """
+    Crop traffic light ROI from frame
+    
+    Returns:
+        (roi_frame, roi_data) or (None, None) if no ROI
+    """
+    roi_data = roi_storage.get(camera_id)
+    if not roi_data:
+        return None, None
+    
+    h, w = frame.shape[:2]
+    
+    if roi_data.get("type") == "pixel":
+        x1 = roi_data["x1"]
+        y1 = roi_data["y1"]
+        x2 = roi_data["x2"]
+        y2 = roi_data["y2"]
+    else:
+        # Normalized
+        x1 = int(roi_data["x"] * w)
+        y1 = int(roi_data["y"] * h)
+        x2 = int((roi_data["x"] + roi_data["width"]) * w)
+        y2 = int((roi_data["y"] + roi_data["height"]) * h)
+    
+    # Clamp to frame bounds
+    x1 = max(0, min(x1, w - 1))
+    y1 = max(0, min(y1, h - 1))
+    x2 = max(x1 + 1, min(x2, w))
+    y2 = max(y1 + 1, min(y2, h))
+    
+    roi_frame = frame[y1:y2, x1:x2]
+    
+    if roi_frame.size == 0:
+        logger.warning(f"⚠️ Empty ROI crop: ({x1},{y1}) -> ({x2},{y2})")
+        return None, None
+    
+    return roi_frame, {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
+
+
+def encode_roi_frame(roi_frame: np.ndarray, quality: int = 80) -> str:
+    """Encode ROI frame to base64 JPEG"""
+    if roi_frame is None or roi_frame.size == 0:
+        return None
+    
+    _, buffer = cv2.imencode('.jpg', roi_frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    return base64.b64encode(buffer).decode('utf-8')
+
+
+def detect_traffic_light_state(roi_frame: np.ndarray) -> tuple:
+    """
+    Simple traffic light detection based on color analysis
+    
+    Returns:
+        (state, confidence)
+    """
+    if roi_frame is None or roi_frame.size == 0:
+        return "UNKNOWN", 0.0
+    
+    # Convert to HSV
+    hsv = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2HSV)
+    
+    # Define color ranges
+    # Red (two ranges because red wraps around in HSV)
+    red_lower1 = np.array([0, 100, 100])
+    red_upper1 = np.array([10, 255, 255])
+    red_lower2 = np.array([160, 100, 100])
+    red_upper2 = np.array([180, 255, 255])
+    
+    # Yellow
+    yellow_lower = np.array([15, 100, 100])
+    yellow_upper = np.array([35, 255, 255])
+    
+    # Green
+    green_lower = np.array([40, 100, 100])
+    green_upper = np.array([80, 255, 255])
+    
+    # Create masks
+    red_mask1 = cv2.inRange(hsv, red_lower1, red_upper1)
+    red_mask2 = cv2.inRange(hsv, red_lower2, red_upper2)
+    red_mask = cv2.bitwise_or(red_mask1, red_mask2)
+    yellow_mask = cv2.inRange(hsv, yellow_lower, yellow_upper)
+    green_mask = cv2.inRange(hsv, green_lower, green_upper)
+    
+    # Count pixels
+    total_pixels = roi_frame.shape[0] * roi_frame.shape[1]
+    red_pixels = cv2.countNonZero(red_mask)
+    yellow_pixels = cv2.countNonZero(yellow_mask)
+    green_pixels = cv2.countNonZero(green_mask)
+    
+    # Determine state
+    max_pixels = max(red_pixels, yellow_pixels, green_pixels)
+    
+    if max_pixels < total_pixels * 0.01:  # Less than 1% colored pixels
+        return "UNKNOWN", 0.0
+    
+    confidence = min(max_pixels / (total_pixels * 0.1), 1.0)  # Normalize
+    
+    if red_pixels == max_pixels:
+        return "RED", confidence
+    elif yellow_pixels == max_pixels:
+        return "YELLOW", confidence
+    else:
+        return "GREEN", confidence
 
 
 @router.websocket("/realtime")
@@ -31,6 +143,7 @@ async def ws_traffic_light_realtime(
     model_path: str = Query(DEFAULT_REALTIME_MODEL_PATH, description="Model path"),
     enable_traffic_light: bool = Query(True, description="Enable traffic light detection"),
     enable_violation: bool = Query(True, description="Enable violation detection"),
+    camera_id: str = Query("cam01", description="Camera ID for ROI lookup"),
 ):
     """
     Traffic Light Detection WebSocket - Separate pipeline
@@ -83,6 +196,8 @@ async def ws_traffic_light_realtime(
             frame_count = 0
             consecutive_errors = 0
             max_consecutive_errors = 3
+            last_tl_update = 0
+            tl_update_interval = 0.5  # Update TL every 500ms
             
             while True:
                 # Check connection
@@ -103,6 +218,54 @@ async def ws_traffic_light_realtime(
                     
                     if websocket.client_state.name == 'DISCONNECTED':
                         break
+                    
+                    # Use camera_id from query param (already available from function signature)
+                    
+                    # Add traffic light ROI data to header
+                    import time
+                    current_time = time.time()
+                    
+                    if enable_traffic_light and (current_time - last_tl_update) >= tl_update_interval:
+                        # Decode JPEG to get frame for TL detection
+                        frame_array = np.frombuffer(jpeg_bytes, dtype=np.uint8)
+                        frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
+                        
+                        if frame is not None:
+                            # Log ROI storage status periodically
+                            if frame_count % 100 == 0:
+                                logger.info(f"🔍 ROI storage keys: {list(roi_storage.keys())}, looking for: {camera_id}")
+                            
+                            # Crop and detect traffic light
+                            roi_frame, roi_data = crop_tl_roi(frame, camera_id)
+                            
+                            if roi_frame is not None:
+                                # Detect state
+                                state, confidence = detect_traffic_light_state(roi_frame)
+                                
+                                # Encode ROI frame
+                                roi_frame_b64 = encode_roi_frame(roi_frame, quality=80)
+                                
+                                # Add to header
+                                header['traffic_light'] = {
+                                    'state': state,
+                                    'confidence': confidence,
+                                    'roi_frame': roi_frame_b64,
+                                    'roi_bounds': roi_data
+                                }
+                                
+                                if frame_count % 50 == 0:
+                                    logger.info(f"🚦 TL state: {state} ({confidence:.2f}), ROI frame: {len(roi_frame_b64) if roi_frame_b64 else 0} bytes")
+                            else:
+                                header['traffic_light'] = {
+                                    'state': 'UNKNOWN',
+                                    'confidence': 0.0,
+                                    'roi_frame': None,
+                                    'error': f'No ROI configured for camera_id={camera_id}'
+                                }
+                                if frame_count % 100 == 0:
+                                    logger.warning(f"⚠️ No ROI for camera_id={camera_id}, available: {list(roi_storage.keys())}")
+                        
+                        last_tl_update = current_time
                     
                     try:
                         # Send header with traffic light data

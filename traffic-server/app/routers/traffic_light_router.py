@@ -3,7 +3,8 @@ Traffic Light ROI Detection Router
 Handles ROI-based traffic light detection with dedicated workers
 """
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Query
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+from typing import Optional
 from typing import Literal, Optional
 from datetime import datetime
 import logging
@@ -36,10 +37,21 @@ class ROI(BaseModel):
         return v
 
 
+class ROIPixel(BaseModel):
+    """Pixel-based ROI coordinates"""
+    x1: int = Field(..., description="Top-left X")
+    y1: int = Field(..., description="Top-left Y")
+    x2: int = Field(..., description="Bottom-right X")
+    y2: int = Field(..., description="Bottom-right Y")
+
+
 class ROIRequest(BaseModel):
     """Request to start TL detection"""
     camera_id: str = Field(..., min_length=1, description="Camera identifier")
-    roi: ROI = Field(..., description="Region of interest for traffic light")
+    roi: Optional[ROI] = Field(None, description="Region of interest (normalized)")
+    roi_pixel: Optional[ROIPixel] = Field(None, description="Region of interest (pixels)")
+    frame_width: Optional[int] = Field(None, description="Frame width for pixel to normalized conversion")
+    frame_height: Optional[int] = Field(None, description="Frame height for pixel to normalized conversion")
     
     @field_validator('camera_id')
     @classmethod
@@ -48,6 +60,12 @@ class ROIRequest(BaseModel):
         if '..' in v or '/' in v or '\\' in v:
             raise ValueError("Invalid camera_id: contains illegal characters")
         return v
+    
+    @model_validator(mode='after')
+    def check_roi_provided(self):
+        if not self.roi and not self.roi_pixel:
+            raise ValueError("Either 'roi' or 'roi_pixel' must be provided")
+        return self
 
 
 class StopRequest(BaseModel):
@@ -86,13 +104,17 @@ class WSMessage(BaseModel):
 # API Endpoints
 # =========================================================
 
+# In-memory storage for ROI configurations (shared with traffic_light_ws.py)
+roi_storage = {}
+
+
 @router.post("/roi")
 async def set_roi(request: ROIRequest):
     """
     Start traffic light detection on specified ROI
     
     Args:
-        request: ROI configuration with camera_id and normalized coordinates
+        request: ROI configuration with camera_id and coordinates (normalized or pixels)
         
     Returns:
         Success response with worker_id
@@ -100,64 +122,101 @@ async def set_roi(request: ROIRequest):
     Raises:
         HTTPException: 400 for validation errors, 500 for server errors
     """
+    from app.config.roi_config import save_traffic_light_roi
+    
     try:
-        # TODO: Implement worker creation in task 3
-        # For now, return a placeholder response
-        logger.info(f"ROI request received for camera {request.camera_id}: {request.roi}")
+        roi_data = None
+        roi_norm = None
         
-        # Validate ROI coordinates are within bounds
-        if request.roi.x < 0 or request.roi.x > 1:
-            raise HTTPException(
-                status_code=400,
-                detail={"error": "ROI validation failed", "field": "roi.x", "message": "x must be in [0, 1]"}
-            )
-        if request.roi.y < 0 or request.roi.y > 1:
-            raise HTTPException(
-                status_code=400,
-                detail={"error": "ROI validation failed", "field": "roi.y", "message": "y must be in [0, 1]"}
-            )
-        if request.roi.width < 0.02 or request.roi.width > 1:
-            raise HTTPException(
-                status_code=400,
-                detail={"error": "ROI validation failed", "field": "roi.width", "message": "width must be in [0.02, 1]"}
-            )
-        if request.roi.height < 0.02 or request.roi.height > 1:
-            raise HTTPException(
-                status_code=400,
-                detail={"error": "ROI validation failed", "field": "roi.height", "message": "height must be in [0.02, 1]"}
-            )
+        # Get frame dimensions from request or use defaults
+        frame_width = request.frame_width or 1920
+        frame_height = request.frame_height or 1080
         
-        # Check if ROI extends beyond frame
-        if request.roi.x + request.roi.width > 1.0:
-            raise HTTPException(
-                status_code=400,
-                detail={"error": "ROI validation failed", "field": "roi", "message": "ROI extends beyond frame width"}
-            )
-        if request.roi.y + request.roi.height > 1.0:
-            raise HTTPException(
-                status_code=400,
-                detail={"error": "ROI validation failed", "field": "roi", "message": "ROI extends beyond frame height"}
-            )
+        logger.info(f"📐 Using frame dimensions: {frame_width}x{frame_height}")
+        
+        # Convert roi_pixel to storage format AND normalized format
+        if request.roi_pixel:
+            logger.info(f"🚦 ROI pixel request for camera {request.camera_id}: {request.roi_pixel}")
+            
+            x1 = request.roi_pixel.x1
+            y1 = request.roi_pixel.y1
+            x2 = request.roi_pixel.x2
+            y2 = request.roi_pixel.y2
+            
+            roi_data = {
+                "type": "pixel",
+                "x1": x1,
+                "y1": y1,
+                "x2": x2,
+                "y2": y2
+            }
+            
+            # Convert to normalized for worker
+            roi_norm = {
+                "x": x1 / frame_width,
+                "y": y1 / frame_height,
+                "width": (x2 - x1) / frame_width,
+                "height": (y2 - y1) / frame_height
+            }
+            logger.info(f"🔄 Converted to normalized: {roi_norm}")
+            
+        elif request.roi:
+            logger.info(f"🚦 ROI normalized request for camera {request.camera_id}: {request.roi}")
+            
+            # Validate ROI coordinates
+            if request.roi.x + request.roi.width > 1.0:
+                raise HTTPException(status_code=400, detail="ROI extends beyond frame width")
+            if request.roi.y + request.roi.height > 1.0:
+                raise HTTPException(status_code=400, detail="ROI extends beyond frame height")
+            
+            roi_data = {
+                "type": "normalized",
+                "x": request.roi.x,
+                "y": request.roi.y,
+                "width": request.roi.width,
+                "height": request.roi.height
+            }
+            roi_norm = roi_data
+        
+        # Store ROI for this camera (for traffic_light_ws.py to use)
+        roi_storage[request.camera_id] = roi_data
+        logger.info(f"✅ ROI stored for camera {request.camera_id}: {roi_data}")
+        logger.info(f"📦 Current roi_storage keys: {list(roi_storage.keys())}")
+        
+        # Also save to persistent storage for traffic_light.py worker
+        if roi_norm:
+            try:
+                save_traffic_light_roi(request.camera_id, roi_norm)
+                logger.info(f"💾 ROI saved to persistent storage for camera {request.camera_id}")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to save ROI to persistent storage: {e}")
         
         return {
+            "ok": True,
             "status": "ok",
             "worker_id": f"{request.camera_id}_tl_worker",
-            "message": "Traffic light detection started"
+            "message": "Traffic light ROI saved",
+            "camera_id": request.camera_id,
+            "roi": roi_data,
+            "roi_normalized": roi_norm
         }
         
     except HTTPException:
         raise
     except ValueError as e:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "Validation error", "message": str(e)}
-        )
+        raise HTTPException(status_code=400, detail={"error": "Validation error", "message": str(e)})
     except Exception as e:
-        logger.error(f"Error starting TL detection: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "Internal server error", "message": str(e)}
-        )
+        logger.error(f"Error saving TL ROI: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail={"error": "Internal server error", "message": str(e)})
+
+
+@router.get("/roi/{camera_id}")
+async def get_roi(camera_id: str):
+    """Get stored ROI for a camera"""
+    roi = roi_storage.get(camera_id)
+    if not roi:
+        raise HTTPException(status_code=404, detail=f"No ROI found for camera {camera_id}")
+    return {"camera_id": camera_id, "roi": roi}
 
 
 @router.post("/stop")

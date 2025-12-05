@@ -631,6 +631,7 @@ function DetectionPageBinaryContent() {
     params.append('enable_roi', modules.roi);
     params.append('enable_roi_drawing', modules.roiDrawing);
     params.append('force_gpu', settings.force_gpu);
+    params.append('camera_id', 'cam01'); // Camera ID for ROI lookup
 
     // Use dedicated traffic light WebSocket endpoint
     const wsUrl = `${API_URL.replace('http', 'ws')}/api/traffic-light/realtime?${params.toString()}`;
@@ -729,6 +730,20 @@ function DetectionPageBinaryContent() {
             // Store detections metadata (for future violations rendering)
             if (pkt.detections && Array.isArray(pkt.detections)) {
               processTrafficLightLogic(pkt);
+            }
+
+            // Handle traffic light data from realtime stream
+            if (pkt.traffic_light) {
+              const tl = pkt.traffic_light;
+              if (tl.state) {
+                setTrafficLightState(tl.state);
+              }
+              if (tl.confidence !== undefined) {
+                setTrafficLightConfidence(tl.confidence);
+              }
+              if (tl.roi_frame) {
+                setTrafficLightFrame("data:image/jpeg;base64," + tl.roi_frame);
+              }
             }
 
             // Next message should be binary JPEG
@@ -1380,16 +1395,24 @@ function DetectionPageBinaryContent() {
   // === SAVE TRAFFIC LIGHT ROI (PIXEL-BASED) ===
   const saveTrafficLightROI = async () => {
     try {
+      if (!tlRoi) {
+        safeToast.error('No Traffic Light ROI defined. Please draw ROI first.');
+        return;
+      }
+
+      // Convert {x, y, w, h} format to {x1, y1, x2, y2}
       const roi_pixel = {
-        x1: parseInt(tlRoi.x1) || 0,
-        y1: parseInt(tlRoi.y1) || 0,
-        x2: parseInt(tlRoi.x2) || 0,
-        y2: parseInt(tlRoi.y2) || 0,
+        x1: parseInt(tlRoi.x) || 0,
+        y1: parseInt(tlRoi.y) || 0,
+        x2: parseInt(tlRoi.x + tlRoi.w) || 0,
+        y2: parseInt(tlRoi.y + tlRoi.h) || 0,
       };
+
+      console.log('🚦 Saving TL ROI:', { tlRoi, roi_pixel });
 
       // Validation
       if (roi_pixel.x2 <= roi_pixel.x1 || roi_pixel.y2 <= roi_pixel.y1) {
-        safeToast.error('Invalid ROI: x2 must be > x1 and y2 must be > y1');
+        safeToast.error('Invalid ROI: width and height must be positive');
         return;
       }
 
@@ -1398,17 +1421,21 @@ function DetectionPageBinaryContent() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           camera_id: "cam01",
-          roi_pixel
+          roi_pixel,
+          frame_width: frameDimensions.width || 1920,
+          frame_height: frameDimensions.height || 1080
         })
       });
 
       if (response.ok) {
+        const result = await response.json();
+        console.log('✅ TL ROI saved:', result);
         setTlRoiActive(true);
         safeToast.success('Traffic Light ROI saved!');
         startTrafficLightWS();
       } else {
         const error = await response.json();
-        safeToast.error(`Failed to save ROI: ${error.error || 'Unknown error'}`);
+        safeToast.error(`Failed to save ROI: ${error.detail || error.error || 'Unknown error'}`);
       }
     } catch (error) {
       console.error('Error saving TL ROI:', error);
@@ -1493,22 +1520,43 @@ function DetectionPageBinaryContent() {
     const canvas = tlCanvasRef.current;
     const mainCanvas = canvasRef.current;
     
-    if (canvas && mainCanvas) {
+    if (canvas && mainCanvas && frameDimensions.width > 0 && frameDimensions.height > 0) {
+      console.log('📐 Syncing canvas dimensions:', frameDimensions);
       canvas.width = frameDimensions.width;
       canvas.height = frameDimensions.height;
-      drawTLROI();
+      
+      // Set default TL ROI if not already set
+      if (!tlRoi && frameDimensions.width > 833 && frameDimensions.height > 115) {
+        const defaultRoi = { x: 833, y: 14, w: 52, h: 101 };
+        setTlRoi(defaultRoi);
+        console.log('🚦 Default TL ROI set:', defaultRoi);
+      }
     }
-  }, [frameDimensions]);
+  }, [frameDimensions, tlRoi]);
 
   // Draw TL ROI on canvas
   const drawTLROI = useCallback(() => {
     const canvas = tlCanvasRef.current;
-    if (!canvas) return;
+    if (!canvas) {
+      console.warn('⚠️ TL Canvas not available');
+      return;
+    }
 
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    if (!tlRoi) return;
+    if (!tlRoi) {
+      // Only log once when ROI is missing
+      if (canvas.width > 0) {
+        console.log('ℹ️ No TL ROI to draw (canvas ready:', canvas.width, 'x', canvas.height, ')');
+      }
+      return;
+    }
+
+    // Log only when actually drawing
+    if (Math.random() < 0.01) { // 1% chance to log
+      console.log('🎨 Drawing TL ROI:', tlRoi, 'on canvas:', canvas.width, 'x', canvas.height);
+    }
 
     // Draw rectangle
     ctx.strokeStyle = '#FFD700'; // Gold
@@ -1539,12 +1587,6 @@ function DetectionPageBinaryContent() {
     ctx.fillText(`🚦 TL ROI (${Math.round(tlRoi.w)}×${Math.round(tlRoi.h)})`, tlRoi.x + 5, tlRoi.y - 8);
   }, [tlRoi]);
 
-  // Redraw when ROI changes
-  useEffect(() => {
-    drawTLROI();
-    drawStopline();
-  }, [drawTLROI]);
-
   // === STOPLINE DRAWING FUNCTIONS ===
   const drawStopline = useCallback(() => {
     const canvas = tlCanvasRef.current;
@@ -1552,45 +1594,68 @@ function DetectionPageBinaryContent() {
 
     const ctx = canvas.getContext('2d');
     
-    // Draw line
-    ctx.strokeStyle = '#ff0000'; // Red
+    // Draw line with shadow for visibility
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+    ctx.shadowBlur = 4;
+    ctx.strokeStyle = '#FF4444'; // Bright red
     ctx.lineWidth = 4;
     ctx.beginPath();
     ctx.moveTo(stopline.x1, stopline.y1);
     ctx.lineTo(stopline.x2, stopline.y2);
     ctx.stroke();
+    ctx.shadowBlur = 0;
 
-    // Draw endpoints
-    const handleSize = 10;
-    ctx.fillStyle = '#ff0000';
-    ctx.fillRect(stopline.x1 - handleSize/2, stopline.y1 - handleSize/2, handleSize, handleSize);
-    ctx.fillRect(stopline.x2 - handleSize/2, stopline.y2 - handleSize/2, handleSize, handleSize);
+    // Draw endpoints (larger for easier grabbing)
+    const handleSize = 12;
+    ctx.fillStyle = '#FF4444';
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    
+    // Endpoint 1
+    ctx.beginPath();
+    ctx.arc(stopline.x1, stopline.y1, handleSize/2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    
+    // Endpoint 2
+    ctx.beginPath();
+    ctx.arc(stopline.x2, stopline.y2, handleSize/2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
 
     // Label
     const midX = (stopline.x1 + stopline.x2) / 2;
     const midY = (stopline.y1 + stopline.y2) / 2;
-    ctx.fillStyle = '#ff0000';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+    ctx.shadowBlur = 4;
+    ctx.fillStyle = '#FF4444';
     ctx.fillRect(midX - 60, midY - 28, 120, 28);
+    ctx.shadowBlur = 0;
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 14px sans-serif';
     ctx.fillText('🛑 Stopline', midX - 50, midY - 8);
   }, [stopline]);
 
+  // Redraw when ROI or stopline changes
+  useEffect(() => {
+    drawTLROI();
+    drawStopline();
+  }, [drawTLROI, drawStopline]);
+
   // Check if point is on stopline endpoint
   const hitStoplineHandle = (x, y) => {
     if (!stopline) return null;
     
-    const handleSize = 15;
-    if (Math.abs(x - stopline.x1) < handleSize && Math.abs(y - stopline.y1) < handleSize) {
-      return 'p1';
-    }
-    if (Math.abs(x - stopline.x2) < handleSize && Math.abs(y - stopline.y2) < handleSize) {
-      return 'p2';
-    }
+    const handleSize = 20; // Larger hit area for easier grabbing
+    const dist1 = Math.sqrt((x - stopline.x1) ** 2 + (y - stopline.y1) ** 2);
+    const dist2 = Math.sqrt((x - stopline.x2) ** 2 + (y - stopline.y2) ** 2);
+    
+    if (dist1 < handleSize) return 'p1';
+    if (dist2 < handleSize) return 'p2';
     return null;
   };
 
-  // Check if point is near stopline
+  // Check if point is near stopline (for moving entire line)
   const hitStopline = (x, y) => {
     if (!stopline) return false;
     
@@ -1620,7 +1685,7 @@ function DetectionPageBinaryContent() {
     const dy = y - yy;
     const distance = Math.sqrt(dx * dx + dy * dy);
     
-    return distance < 10; // 10px threshold
+    return distance < 15; // 15px threshold for easier selection
   };
 
   // Convert mouse position to video pixel coordinates
@@ -1836,26 +1901,33 @@ function DetectionPageBinaryContent() {
     }
 
     try {
-      const response = await fetch(`${API_URL}/api/violation/stopline`, {
+      const stoplineData = {
+        x1: Math.round(stopline.x1),
+        y1: Math.round(stopline.y1),
+        x2: Math.round(stopline.x2),
+        y2: Math.round(stopline.y2)
+      };
+
+      console.log('📤 Saving stopline:', stoplineData);
+
+      const response = await fetch(`${API_URL}/api/violations/stopline`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           camera_id: "cam01",
-          stopline: {
-            x1: Math.round(stopline.x1),
-            y1: Math.round(stopline.y1),
-            x2: Math.round(stopline.x2),
-            y2: Math.round(stopline.y2)
-          }
+          stopline: stoplineData
         })
       });
 
       if (response.ok) {
+        const result = await response.json();
+        console.log('✅ Stopline saved:', result);
         setStoplineActive(true);
         setIsDrawingStopline(false);
         safeToast.success('Stopline saved!');
       } else {
         const error = await response.json();
+        console.error('❌ Stopline save error:', error);
         safeToast.error(`Failed to save stopline: ${error.detail || error.error || 'Unknown error'}`);
       }
     } catch (error) {
@@ -1880,26 +1952,31 @@ function DetectionPageBinaryContent() {
     }
 
     try {
-      // Convert pixel coordinates to normalized [0, 1]
-      const roi = {
-        x: tlRoi.x / frameDimensions.width,
-        y: tlRoi.y / frameDimensions.height,
-        width: tlRoi.w / frameDimensions.width,
-        height: tlRoi.h / frameDimensions.height
+      // Send pixel coordinates (backend will convert to normalized)
+      const roi_pixel = {
+        x1: Math.round(tlRoi.x),
+        y1: Math.round(tlRoi.y),
+        x2: Math.round(tlRoi.x + tlRoi.w),
+        y2: Math.round(tlRoi.y + tlRoi.h)
       };
 
-      console.log('📤 Sending TL ROI:', roi);
+      console.log('📤 Sending TL ROI (pixels):', roi_pixel);
+      console.log('📐 Frame dimensions:', frameDimensions);
 
       const response = await fetch(`${API_URL}/api/traffic-light/roi`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           camera_id: "cam01",
-          roi
+          roi_pixel,
+          frame_width: frameDimensions.width || 1920,
+          frame_height: frameDimensions.height || 1080
         })
       });
 
       if (response.ok) {
+        const result = await response.json();
+        console.log('✅ TL ROI saved:', result);
         setTlRoiActive(true);
         setIsSelectingTLMode(false);
         safeToast.success('Traffic Light ROI saved!');
