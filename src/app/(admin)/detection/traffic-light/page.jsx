@@ -269,6 +269,14 @@ function DetectionPageBinaryContent() {
     roiDrawing: true
   });
 
+  // Traffic light + violation state
+  const [lightState, setLightState] = useState('UNKNOWN');
+  const [lastLightChangeTs, setLastLightChangeTs] = useState(null);
+  const [violations, setViolations] = useState([]);
+  const vehicleStatesRef = useRef(new Map());
+  const lightStateRef = useRef({ state: 'UNKNOWN', changedAt: 0 });
+  const redStartRef = useRef(null);
+
   const [roiPolygons, setRoiPolygons] = useState([]);
   const [isDrawingRoi, setIsDrawingRoi] = useState(false);
   const [draftRoiPoints, setDraftRoiPoints] = useState([]);
@@ -456,6 +464,131 @@ function DetectionPageBinaryContent() {
       });
   }, []);
 
+  const clamp01 = (value) => Math.min(Math.max(value ?? 0, 0), 1);
+
+  const stoplineBounds = useMemo(() => {
+    if (!roiPolygons || roiPolygons.length === 0) return null;
+    const stoplineRoi =
+      roiPolygons.find((roi) => /stop/i.test(roi.label || '')) || roiPolygons[0];
+    if (!stoplineRoi?.points || stoplineRoi.points.length === 0) return null;
+
+    const width = frameDimensions.width || 1;
+    const height = frameDimensions.height || 1;
+    const xs = stoplineRoi.points.map((p) => clamp01(p.x) * width);
+    const ys = stoplineRoi.points.map((p) => clamp01(p.y) * height);
+
+    return {
+      label: stoplineRoi.label || 'Stopline',
+      minX: Math.min(...xs),
+      maxX: Math.max(...xs),
+      minY: Math.min(...ys),
+      maxY: Math.max(...ys),
+    };
+  }, [roiPolygons, frameDimensions.width, frameDimensions.height]);
+
+  const classifyPosition = useCallback(
+    (frontPoint) => {
+      if (!stoplineBounds || !frontPoint) return 'UNKNOWN';
+      const { minY, maxY } = stoplineBounds;
+      const tolerance = 6; // pixels
+      if (frontPoint.y < minY - tolerance) return 'AFTER_LINE';
+      if (frontPoint.y > maxY + tolerance) return 'BEFORE_LINE';
+      return 'ON_LINE';
+    },
+    [stoplineBounds]
+  );
+
+  const handleLightState = useCallback((stateRaw) => {
+    const state = (stateRaw || 'UNKNOWN').toString().toUpperCase();
+    if (state === lightStateRef.current.state) return;
+
+    const ts = Date.now();
+    lightStateRef.current = { state, changedAt: ts };
+    setLightState(state);
+    setLastLightChangeTs(ts);
+
+    if (state === 'RED') {
+      redStartRef.current = ts;
+      vehicleStatesRef.current.forEach((v) => {
+        v.positionAtRed = v.lastPosition || 'UNKNOWN';
+      });
+    } else {
+      redStartRef.current = null;
+      vehicleStatesRef.current.forEach((v) => {
+        v.positionAtRed = null;
+        v.crossedAt = null;
+      });
+    }
+  }, []);
+
+  const processTrafficLightLogic = useCallback(
+    (pkt) => {
+      if (!pkt || !Array.isArray(pkt.detections)) return;
+
+      // Update light state from packet
+      if (pkt.light_state) {
+        handleLightState(pkt.light_state);
+      }
+
+      if (!stoplineBounds) return;
+
+      const now = Date.now();
+      const isRed = lightStateRef.current.state === 'RED';
+      const updatedViolations = [];
+
+      pkt.detections.forEach((det) => {
+        const trackId = det?.track_id ?? det?.id ?? null;
+        const bbox = det?.bbox;
+        if (!trackId || !Array.isArray(bbox) || bbox.length < 4) return;
+
+        const [x1, y1, x2] = bbox;
+        const cx = 0.5 * (x1 + x2);
+        const frontPoint = { x: cx, y: y1 }; // Assume vehicles move upward in image
+
+        const position = classifyPosition(frontPoint);
+        const current = vehicleStatesRef.current.get(trackId) || {
+          firstSeenAt: now,
+          lastPosition: 'UNKNOWN',
+          positionAtRed: isRed ? position : null,
+          crossedAt: null,
+          violation: false,
+          lastFrame: pkt.frame_idx ?? 0,
+        };
+
+        const crossed =
+          (current.lastPosition === 'BEFORE_LINE' && (position === 'ON_LINE' || position === 'AFTER_LINE')) ||
+          (current.lastPosition === 'ON_LINE' && position === 'AFTER_LINE');
+
+        if (isRed && crossed && !current.violation) {
+          const posAtRed = current.positionAtRed || 'UNKNOWN';
+          const startedBeforeRed = posAtRed !== 'AFTER_LINE';
+
+          if (startedBeforeRed) {
+            current.violation = true;
+            current.crossedAt = now;
+            updatedViolations.push({
+              trackId,
+              frame: pkt.frame_idx ?? frameIdxRef.current,
+              light: lightStateRef.current.state,
+              positionAtRed: posAtRed,
+              stopline: stoplineBounds.label,
+              time: new Date().toLocaleTimeString(),
+            });
+          }
+        }
+
+        current.lastPosition = position;
+        current.lastFrame = pkt.frame_idx ?? current.lastFrame;
+        vehicleStatesRef.current.set(trackId, current);
+      });
+
+      if (updatedViolations.length > 0) {
+        setViolations((prev) => [...updatedViolations, ...prev].slice(0, 20));
+      }
+    },
+    [classifyPosition, handleLightState, stoplineBounds]
+  );
+
   const connectWebSocket = useCallback((src) => {
     if (wsRef.current) {
       wsRef.current.close();
@@ -571,16 +704,12 @@ function DetectionPageBinaryContent() {
             // Update FPS and frame index
             if (typeof pkt.fps === 'number') fpsRef.current = pkt.fps;
             if (typeof pkt.frame_idx === 'number') frameIdxRef.current = pkt.frame_idx;
-            
+
             // Store detections metadata (for future violations rendering)
             if (pkt.detections && Array.isArray(pkt.detections)) {
-              // TODO: Store in state/ref for violations overlay rendering
-              // For now, just log occasionally
-              if (pkt.frame_idx % 30 === 0 && pkt.detections.length > 0) {
-                console.log(`?? Frame ${pkt.frame_idx}: ${pkt.detections.length} detections`, pkt.detections[0]);
-              }
+              processTrafficLightLogic(pkt);
             }
-            
+
             // Next message should be binary JPEG
             setExpectBinary(true);
           } else if (pkt.type === 'error') {
@@ -621,6 +750,7 @@ function DetectionPageBinaryContent() {
     frameDimensions.height,
     frameDimensions.width,
     scheduleDecode,
+    processTrafficLightLogic,
   ]);
 
   // Warmup phase: 5 seconds before starting detection
@@ -1031,8 +1161,6 @@ function DetectionPageBinaryContent() {
       safeToast.error(`❌ Hot-swap failed: ${error.message}`);
     }
   };
-
-  const clamp01 = (value) => Math.min(Math.max(value ?? 0, 0), 1);
 
   const startDrawingRoi = () => {
     if (isDrawingRoi) {
@@ -1635,7 +1763,107 @@ function DetectionPageBinaryContent() {
                 mousePos={mousePos}
                 onMouseMove={handleRoiOverlayMouseMove}
               />
-              
+
+              {(stoplineBounds || lightState !== 'UNKNOWN' || violations.length > 0) && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '10px',
+                    right: '10px',
+                    background: 'rgba(17, 24, 39, 0.85)',
+                    color: '#fff',
+                    padding: '12px',
+                    borderRadius: '10px',
+                    width: '320px',
+                    zIndex: 9,
+                    boxShadow: '0 10px 30px rgba(0,0,0,0.35)',
+                    border: '1px solid rgba(255,255,255,0.08)'
+                  }}
+                >
+                  <div className="d-flex justify-content-between align-items-center mb-2">
+                    <div className="fw-bold d-flex align-items-center gap-2">
+                      <span>🚦 Light</span>
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          padding: '4px 8px',
+                          borderRadius: '999px',
+                          background:
+                            lightState === 'RED'
+                              ? '#ef4444'
+                              : lightState === 'GREEN'
+                                ? '#22c55e'
+                                : lightState === 'YELLOW'
+                                  ? '#eab308'
+                                  : '#6b7280',
+                          color: lightState === 'YELLOW' ? '#000' : '#fff',
+                          minWidth: '72px',
+                          textAlign: 'center',
+                          fontWeight: 700,
+                        }}
+                      >
+                        {lightState}
+                      </span>
+                    </div>
+                    <small className="text-muted" style={{ color: '#d1d5db' }}>
+                      {lastLightChangeTs ? `Updated: ${new Date(lastLightChangeTs).toLocaleTimeString()}` : 'Waiting...'}
+                    </small>
+                  </div>
+
+                  {stoplineBounds && (
+                    <div className="mb-2" style={{ fontSize: '0.9rem', color: '#e5e7eb' }}>
+                      <strong>Stopline:</strong> {stoplineBounds.label}
+                    </div>
+                  )}
+
+                  <div
+                    style={{
+                      background: 'rgba(255,255,255,0.05)',
+                      borderRadius: '8px',
+                      padding: '8px'
+                    }}
+                  >
+                    <div className="d-flex justify-content-between align-items-center mb-1">
+                      <strong>Violations</strong>
+                      <span className="badge bg-danger">{violations.length}</span>
+                    </div>
+                    {violations.length === 0 ? (
+                      <div className="text-muted" style={{ fontSize: '0.85rem' }}>
+                        No red-light violations yet.
+                      </div>
+                    ) : (
+                      <div style={{ maxHeight: '160px', overflowY: 'auto' }}>
+                        {violations.slice(0, 5).map((v, idx) => (
+                          <div
+                            key={`${v.trackId}-${v.frame}-${idx}`}
+                            style={{
+                              padding: '6px 8px',
+                              borderRadius: '6px',
+                              background: 'rgba(239,68,68,0.1)',
+                              border: '1px solid rgba(239,68,68,0.25)',
+                              marginBottom: '6px'
+                            }}
+                          >
+                            <div className="d-flex justify-content-between">
+                              <div>
+                                <div style={{ fontWeight: 700 }}>ID #{v.trackId}</div>
+                                <div style={{ fontSize: '0.85rem', color: '#fca5a5' }}>
+                                  {v.stopline} • Frame {v.frame}
+                                </div>
+                              </div>
+                              <div style={{ fontSize: '0.8rem', color: '#e5e7eb' }}>{v.time}</div>
+                            </div>
+                            <div style={{ fontSize: '0.85rem', color: '#e5e7eb' }}>
+                              State: {v.light} • Position when red: {v.positionAtRed}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Debug Overlay (Press 'D' to toggle) */}
               {showDebugOverlay && (
                 <div style={{
