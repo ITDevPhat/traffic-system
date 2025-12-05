@@ -64,6 +64,7 @@ from app.routers import realtime_ws_binary  # Binary WS for 30 FPS
 from app.routers import realtime_detection  # JSON WS for detection grid
 from app.routers import auth as auth_router
 from app.routers import ocr_image  # OCR Static Image API
+from app.routers import traffic_light_ws  # Traffic Light Detection WS
 from app.services.realtime_binary_stream import (
     preload_realtime_resources,
     DEFAULT_REALTIME_MODEL_PATH,
@@ -156,6 +157,8 @@ app.include_router(realtime_ws_binary.router, tags=["Realtime Binary"])
 app.include_router(realtime_detection.router, prefix=f"{settings.API_V1_PREFIX}/realtime", tags=["Realtime Detection"])
 # OCR Static Image API
 app.include_router(ocr_image.router, tags=["OCR"])
+# Traffic Light Detection - Separate pipeline
+app.include_router(traffic_light_ws.router, tags=["Traffic Light"])
 # Auth routes
 app.include_router(auth_router.router, prefix=f"{settings.API_V1_PREFIX}")
 

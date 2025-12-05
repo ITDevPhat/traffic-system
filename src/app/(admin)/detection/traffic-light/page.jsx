@@ -1,6 +1,6 @@
 'use client';
 import React, { useRef, useEffect, useState, Suspense, useMemo, useCallback } from 'react';
-import { Button, Form, Row, Col, Card, Badge } from 'react-bootstrap';
+import { Button, Form, Row, Col, Card, Badge, Modal, Alert } from 'react-bootstrap';
 import { toast } from 'react-toastify';
 import { useSearchParams } from 'next/navigation';
 import PageTitle from '@/components/PageTitle';
@@ -225,6 +225,7 @@ function DetectionPageBinaryContent() {
 
   const [connected, setConnected] = useState(false);
   const [detecting, setDetecting] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [fps, setFps] = useState(0);
   const [frameIdx, setFrameIdx] = useState(0);
   const [source, setSource] = useState(''); // video file only
@@ -275,6 +276,7 @@ function DetectionPageBinaryContent() {
   const [activeRoiId, setActiveRoiId] = useState(null);
   const [mousePos, setMousePos] = useState(null);
   const [showDebugOverlay, setShowDebugOverlay] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
 
   // Keyboard event handler for debug overlay (D key)
   useEffect(() => {
@@ -476,8 +478,9 @@ function DetectionPageBinaryContent() {
     params.append('enable_roi_drawing', modules.roiDrawing);
     params.append('force_gpu', settings.force_gpu);
 
-    const wsUrl = `${API_URL.replace('http', 'ws')}/api/detection/realtime?${params.toString()}`;
-    console.log('?? Connecting to:', wsUrl);
+    // Use dedicated traffic light WebSocket endpoint
+    const wsUrl = `${API_URL.replace('http', 'ws')}/api/traffic-light/realtime?${params.toString()}`;
+    console.log('🚦 Connecting to Traffic Light WS:', wsUrl);
     
     const ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';  // Critical for binary frames
@@ -690,26 +693,30 @@ function DetectionPageBinaryContent() {
       const ctx = c.getContext('2d');
       if (ctx && ctx.imageSmoothingEnabled) ctx.imageSmoothingEnabled = false;
 
-      const next = nextBitmapRef.current;
-      if (next) {
-        // Swap buffers
-        nextBitmapRef.current = null;
-        const prev = displayBitmapRef.current;
-        displayBitmapRef.current = next;
-        try {
-          // Always draw the image (server sends annotated frames)
-          // BBox visibility is controlled by server settings
-          ctx.drawImage(displayBitmapRef.current, 0, 0, c.width, c.height);
-        } catch {}
-        if (prev) {
-          try { prev.close(); } catch {}
+      // Skip rendering if paused (keep last frame frozen)
+      if (!isPaused) {
+        const next = nextBitmapRef.current;
+        if (next) {
+          // Swap buffers
+          nextBitmapRef.current = null;
+          const prev = displayBitmapRef.current;
+          displayBitmapRef.current = next;
+          try {
+            // Always draw the image (server sends annotated frames)
+            // BBox visibility is controlled by server settings
+            ctx.drawImage(displayBitmapRef.current, 0, 0, c.width, c.height);
+          } catch {}
+          if (prev) {
+            try { prev.close(); } catch {}
+          }
         }
       }
+      // Continue loop even when paused (to resume smoothly)
       rafIdRef.current = requestAnimationFrame(loop);
     };
     rafIdRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafIdRef.current);
-  }, []);
+  }, [isPaused]);
 
   // Throttle UI state updates (reduce React re-render jank)
   useEffect(() => {
@@ -1344,17 +1351,35 @@ function DetectionPageBinaryContent() {
                     )}
                   </Col>
                   
+                  {/* Pause/Resume Button */}
+                  {detecting && (
+                    <Col xs="auto">
+                      <Button
+                        size="sm"
+                        onClick={() => setIsPaused(!isPaused)}
+                        className="rounded-pill"
+                        variant={isPaused ? 'success' : 'warning'}
+                        style={{
+                          fontWeight: 500,
+                          minWidth: '80px'
+                        }}
+                      >
+                        {isPaused ? '▶️ Resume' : '⏸️ Pause'}
+                      </Button>
+                    </Col>
+                  )}
+                  
                   <Col xs="auto">
                     <Badge 
-                      bg={detecting ? 'success' : 'secondary'}
+                      bg={detecting ? (isPaused ? 'warning' : 'success') : 'secondary'}
                       className="px-3 py-2"
                       style={{
                         fontSize: '0.85rem',
                         fontWeight: 500,
-                        animation: detecting ? 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' : 'none'
+                        animation: (detecting && !isPaused) ? 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' : 'none'
                       }}
                     >
-                  {detecting ? '● LIVE (BINARY)' : '○ Offline'}
+                      {detecting ? (isPaused ? '⏸️ PAUSED' : '● LIVE') : '○ Offline'}
                     </Badge>
                   </Col>
                   
@@ -1376,11 +1401,54 @@ function DetectionPageBinaryContent() {
               </Card.Body>
             </Card>
 
-        <Card className="mb-3 shadow-sm">
-                <Card.Body>
-        <Row>
-          <Col md={12}>
-            <h6 className="mb-3">🔧 Detection Modules {detecting && <small className="text-success">(live updates enabled)</small>}</h6>
+        {/* Settings Modal Button - Fixed bottom left */}
+        <Button
+          onClick={() => setShowSettingsModal(true)}
+          style={{
+            position: 'fixed',
+            bottom: '20px',
+            left: '80px',
+            zIndex: 1000,
+            width: '60px',
+            height: '60px',
+            borderRadius: '50%',
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            border: 'none',
+            boxShadow: '0 4px 15px rgba(102, 126, 234, 0.4)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '24px',
+            transition: 'all 0.3s ease'
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'scale(1.1)';
+            e.currentTarget.style.boxShadow = '0 6px 20px rgba(102, 126, 234, 0.6)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'scale(1)';
+            e.currentTarget.style.boxShadow = '0 4px 15px rgba(102, 126, 234, 0.4)';
+          }}
+          title="Detection Settings"
+        >
+          ⚙️
+        </Button>
+
+        {/* Settings Modal */}
+        <Modal 
+          show={showSettingsModal} 
+          onHide={() => setShowSettingsModal(false)}
+          size="lg"
+          centered
+        >
+          <Modal.Header closeButton>
+            <Modal.Title>
+              🔧 Detection Settings
+              {detecting && <Badge bg="success" className="ms-2">Live Updates</Badge>}
+            </Modal.Title>
+          </Modal.Header>
+          <Modal.Body>
+            <h6 className="mb-3">Detection Modules</h6>
             <div className="d-flex gap-3 flex-wrap">
               <Form.Check
                 type="switch"
@@ -1436,10 +1504,11 @@ function DetectionPageBinaryContent() {
                 💡 Tip: Most settings update live! Only YOLO/Tracking modules need restart
               </small>
             )}
-          </Col>
-        </Row>
-        <hr />
-        <Row>
+            
+            <hr className="my-3" />
+            
+            <h6 className="mb-3">Detection Parameters</h6>
+            <Row>
               <Col md={3}>
                 <Form.Group className="mb-2">
                   <Form.Label>
@@ -1524,8 +1593,21 @@ function DetectionPageBinaryContent() {
                       </Form.Group>
                     </Col>
                   </Row>
-                </Card.Body>
-              </Card>
+                  
+                  {detecting && (
+                    <Alert variant="info" className="mt-3 mb-0">
+                      <small>
+                        💡 <strong>Tip:</strong> Most settings update live! Only YOLO/Tracking modules need restart.
+                      </small>
+                    </Alert>
+                  )}
+                </Modal.Body>
+                <Modal.Footer>
+                  <Button variant="secondary" onClick={() => setShowSettingsModal(false)}>
+                    Close
+                  </Button>
+                </Modal.Footer>
+              </Modal>
 
               <div style={{
               position:'relative',
