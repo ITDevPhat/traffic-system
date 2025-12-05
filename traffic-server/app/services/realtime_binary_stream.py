@@ -81,7 +81,7 @@ CLASS_COLORS = {
     0: (34, 126, 230),   # bus - orange (#e67e22 in BGR)
     1: (219, 152, 52),   # car - blue (#3498db in BGR)
     2: (113, 204, 46),   # bike - green (#2ecc71 in BGR)
-    3: (60, 76, 231)     # truck - red (#e74c3c in BGR)
+    3: (219, 112, 147)   # truck - purple (#9370db in BGR)
 }
 
 ROI_COLORS = [
@@ -1617,7 +1617,7 @@ class BinaryAnnotStream:
                     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 1, cv2.LINE_AA)
                     
                     # Draw label with background (larger, bold)
-                    label = f"{cls_name} #{tid}"
+                    label = f"{cls_name}"
                     if plate_text:
                         label += f" | {plate_text}"
                     
