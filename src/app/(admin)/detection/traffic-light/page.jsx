@@ -804,6 +804,8 @@ function DetectionPageBinaryContent() {
               const tl = pkt.traffic_light;
               if (tl.state) {
                 setTrafficLightState(tl.state);
+                // Sync with lightStateRef for violation logic
+                handleLightState(tl.state);
               }
               if (tl.confidence !== undefined) {
                 setTrafficLightConfidence(tl.confidence);
@@ -2484,7 +2486,7 @@ function DetectionPageBinaryContent() {
               </Modal>
 
               {/* Light State + Violations Panel - Above video */}
-              {(stoplineBounds || lightState !== 'GREEN' || violations.length > 0 || tlRoiActive) && (
+              {(stoplineBounds || trafficLightState !== 'GREEN' || violations.length > 0 || tlRoiActive) && (
                 <div className="mb-3" style={{
                   background: 'rgba(17, 24, 39, 0.95)',
                   color: '#fff',
@@ -2503,19 +2505,19 @@ function DetectionPageBinaryContent() {
                           padding: '6px 16px',
                           borderRadius: '6px',
                           background:
-                            lightState === 'RED'
+                            trafficLightState === 'RED'
                               ? '#ef4444'
-                              : lightState === 'GREEN'
+                              : trafficLightState === 'GREEN'
                                 ? '#22c55e'
-                                : lightState === 'YELLOW'
+                                : trafficLightState === 'YELLOW'
                                   ? '#eab308'
                                   : '#6b7280',
-                          color: lightState === 'YELLOW' ? '#000' : '#fff',
+                          color: trafficLightState === 'YELLOW' ? '#000' : '#fff',
                           fontWeight: 700,
                           fontSize: '15px'
                         }}
                       >
-                        {lightState}
+                        {trafficLightState}
                       </span>
                     </div>
 
