@@ -65,10 +65,12 @@ from app.routers import realtime_detection  # JSON WS for detection grid
 from app.routers import auth as auth_router
 from app.routers import ocr_image  # OCR Static Image API
 from app.routers import traffic_light_ws  # Traffic Light Detection WS
+from app.routers import traffic_light_router  # Traffic Light ROI Detection API
 from app.services.realtime_binary_stream import (
     preload_realtime_resources,
     DEFAULT_REALTIME_MODEL_PATH,
 )
+from app.services.traffic_light_manager import worker_manager
 
 # =========================================================
 # 📝 Cấu hình logging - Reduced for production
@@ -159,6 +161,8 @@ app.include_router(realtime_detection.router, prefix=f"{settings.API_V1_PREFIX}/
 app.include_router(ocr_image.router, tags=["OCR"])
 # Traffic Light Detection - Separate pipeline
 app.include_router(traffic_light_ws.router, tags=["Traffic Light"])
+# Traffic Light ROI Detection - REST API + WebSocket
+app.include_router(traffic_light_router.router, tags=["Traffic Light ROI"])
 # Auth routes
 app.include_router(auth_router.router, prefix=f"{settings.API_V1_PREFIX}")
 
@@ -204,6 +208,23 @@ def on_startup():
             logger.warning("⚠️  Skipped realtime detector preload (model missing or load error)")
     except Exception as exc:
         logger.error("❌ Failed to preload realtime detector: %s", exc)
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    """
+    Cleanup resources when application shuts down.
+    """
+    logger.info("🛑 Shutting down application...")
+    
+    # Cleanup all traffic light workers
+    try:
+        await worker_manager.cleanup_all()
+        logger.info("✅ Traffic light workers cleaned up")
+    except Exception as e:
+        logger.error(f"❌ Error cleaning up traffic light workers: {e}")
+    
+    logger.info("👋 Application shutdown complete")
 
 
 @app.get("/")
