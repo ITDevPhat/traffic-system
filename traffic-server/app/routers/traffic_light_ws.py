@@ -82,7 +82,7 @@ def detect_traffic_light_state(roi_frame: np.ndarray) -> tuple:
         (state, confidence)
     """
     if roi_frame is None or roi_frame.size == 0:
-        return "UNKNOWN", 0.0
+        return "GREEN", 0.0
     
     # Convert to HSV
     hsv = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2HSV)
@@ -119,7 +119,7 @@ def detect_traffic_light_state(roi_frame: np.ndarray) -> tuple:
     max_pixels = max(red_pixels, yellow_pixels, green_pixels)
     
     if max_pixels < total_pixels * 0.01:  # Less than 1% colored pixels
-        return "UNKNOWN", 0.0
+        return "GREEN", 0.0
     
     confidence = min(max_pixels / (total_pixels * 0.1), 1.0)  # Normalize
     
