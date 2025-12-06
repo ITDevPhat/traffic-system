@@ -11,9 +11,12 @@ follows the time-based rule set described in the product brief:
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 Position = str  # "BEFORE" | "ON" | "AFTER"
@@ -61,10 +64,10 @@ class RedLightViolationEngine:
         x2 = self.stopline_rect.get("x2", 0)
         y2 = self.stopline_rect.get("y2", 0)
 
-        if x1 <= px <= x2 and y1 <= py <= y2:
-            return "ON"
-        if py > y2:
+        if py < y1:
             return "BEFORE"
+        if y1 <= py <= y2 and x1 <= px <= x2:
+            return "ON"
         return "AFTER"
 
     def _ensure_vehicle(self, track_id: int) -> tuple[VehicleViolationState, bool]:
@@ -80,10 +83,16 @@ class RedLightViolationEngine:
                 v.position_when_red = v.position_vs_line
         self.last_light_state = light_state
 
-    def update(self, vehicle_tracks: List[Dict[str, object]], light_state: LightState, timestamp: datetime) -> List[ViolationRecord]:
+    def update(
+        self, vehicle_tracks: List[Dict[str, object]], light_state: LightState, timestamp: datetime
+    ) -> List[ViolationRecord]:
         """Process the current frame and return any new violations."""
         self._update_light(light_state, timestamp)
         violations: List[ViolationRecord] = []
+
+        logger.info(
+            f"[VIOLATION] tracks={len(vehicle_tracks)}, light={light_state}, stopline={self.stopline_rect}"
+        )
 
         for track in vehicle_tracks:
             track_id_raw = track.get("track_id") or track.get("id")
@@ -97,29 +106,53 @@ class RedLightViolationEngine:
             vehicle, is_new = self._ensure_vehicle(track_id)
             vehicle.last_update_time = timestamp
 
+            previous_position = vehicle.position_vs_line
             position = self._position_vs_stopline(self._front_point(tuple(bbox)))
-            previous_position = position if is_new else vehicle.position_vs_line
             vehicle.position_vs_line = position
 
             if is_new and self.last_light_state == "RED" and self.last_red_on:
                 vehicle.position_when_red = position
 
             crossed = previous_position == "BEFORE" and position in {"ON", "AFTER"}
+            if crossed:
+                logger.info(
+                    f"[VIOLATION] Track {track_id} crossed stopline: {previous_position} -> {position}"
+                )
 
-            if crossed and light_state == "RED" and vehicle.position_when_red == "BEFORE" and self.last_red_on:
+            y1_line = self.stopline_rect.get("y1", 0)
+            y2_bbox = float(bbox[3])
+            touched = y2_bbox >= y1_line
+            if touched:
+                logger.info(
+                    f"[VIOLATION] Track {track_id} touched stopline 50% at y2={y2_bbox}, stopline_y1={y1_line}"
+                )
+
+            should_violate = (
+                light_state == "RED"
+                and vehicle.position_when_red == "BEFORE"
+                and (crossed or touched)
+                and not vehicle.violated
+                and self.last_red_on is not None
+            )
+
+            if should_violate:
                 vehicle.violated = True
-                violations.append(
-                    ViolationRecord(
-                        camera_id=self.camera_id,
-                        track_id=vehicle.track_id,
-                        violation_type="RED_LIGHT",
-                        timestamp=timestamp,
-                        details={
-                            "stopline": self.stopline_rect,
-                            "light_state": light_state,
-                            "red_since": self.last_red_on.isoformat(),
-                        },
-                    )
+                violation_record = ViolationRecord(
+                    camera_id=self.camera_id,
+                    track_id=vehicle.track_id,
+                    violation_type="RED_LIGHT",
+                    timestamp=timestamp,
+                    details={
+                        "stopline": self.stopline_rect,
+                        "light_state": light_state,
+                        "red_since": self.last_red_on.isoformat(),
+                        "position_when_red": vehicle.position_when_red,
+                        "position_now": position,
+                    },
+                )
+                violations.append(violation_record)
+                logger.warning(
+                    f"🚨 RED LIGHT VIOLATION — camera={self.camera_id}, track={track_id}"
                 )
 
         self._prune_stale(timestamp)
