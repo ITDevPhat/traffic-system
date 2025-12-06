@@ -1713,9 +1713,17 @@ class BinaryAnnotStream:
         self.t_cap.start()
         self.t_det.start()
         self.t_enc.start()
-        
+
+        try:
+            if self.camera_id and self.camera_id != "default":
+                from app.services.traffic_light_manager import frame_buffer
+
+                frame_buffer.set_state(self.camera_id, "RUNNING")
+        except Exception:
+            logger.debug("Unable to mark TL pipeline running", exc_info=True)
+
         logger.info("✅ All threads started")
-    
+
     def stop(self):
         """Signal all threads to stop"""
         logger.info("🛑 Stop signal sent")
@@ -1727,6 +1735,14 @@ class BinaryAnnotStream:
                     t.join(timeout=1.5)
             except Exception:
                 pass
+
+        try:
+            if self.camera_id and self.camera_id != "default":
+                from app.services.traffic_light_manager import frame_buffer
+
+                frame_buffer.set_state(self.camera_id, "STOPPED")
+        except Exception:
+            logger.debug("Unable to mark TL pipeline stopped", exc_info=True)
     
     def close(self):
         """Stop threads (idempotent) then release all resources safely"""
@@ -1738,10 +1754,24 @@ class BinaryAnnotStream:
     # --------- Controls ---------
     def pause(self):
         self.pause_ev.set()
+        try:
+            if self.camera_id and self.camera_id != "default":
+                from app.services.traffic_light_manager import frame_buffer
+
+                frame_buffer.set_state(self.camera_id, "PAUSED")
+        except Exception:
+            logger.debug("Unable to mark TL pipeline paused", exc_info=True)
         logger.info("⏸️  Paused")
 
     def resume(self):
         self.pause_ev.clear()
+        try:
+            if self.camera_id and self.camera_id != "default":
+                from app.services.traffic_light_manager import frame_buffer
+
+                frame_buffer.set_state(self.camera_id, "RUNNING")
+        except Exception:
+            logger.debug("Unable to mark TL pipeline resumed", exc_info=True)
         logger.info("▶️  Resumed")
 
     def seek_relative(self, seconds: float):

@@ -1,13 +1,10 @@
-"""Stateful red-light violation engine.
+"""Temporal red-light violation engine.
 
-This engine fuses vehicle tracks, the stabilized traffic light state, and a
-stopline ROI to determine which vehicles run a red light. The implementation
-follows the time-based rule set described in the product brief:
-
-- Track each vehicle's position relative to the stopline (BEFORE/ON/AFTER)
-- Record when the light turns RED
-- Flag a violation when a vehicle crosses the stopline after the light turns
-  RED and it was still BEFORE the line at the red onset time
+Implements full temporal logic:
+- Track vehicle position relative to stopline (BEFORE/ON/AFTER)
+- Capture each vehicle's position when the light turns RED
+- Emit a violation only when a vehicle that was BEFORE the line at red-onset
+  later crosses to AFTER the line during the same red phase
 """
 from __future__ import annotations
 
@@ -16,122 +13,139 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 
-Position = str  # "BEFORE" | "ON" | "AFTER"
+Position = str  # "BEFORE_LINE" | "ON_LINE" | "AFTER_LINE"
 LightState = str  # "RED" | "GREEN" | "YELLOW"
 
 
 @dataclass
-class VehicleViolationState:
+class VehicleState:
+    """Per-vehicle temporal state."""
+
     track_id: int
-    position_vs_line: Position = "BEFORE"
+    last_position: Position = "BEFORE_LINE"
+    position_when_red: Optional[Position] = None
     violated: bool = False
-    position_when_red: Position = "BEFORE"
-    first_seen_time: datetime = field(default_factory=datetime.utcnow)
-    last_update_time: datetime = field(default_factory=datetime.utcnow)
-
-
-@dataclass
-class ViolationRecord:
-    camera_id: str
-    track_id: int
-    violation_type: str
-    timestamp: datetime
-    details: Dict[str, object]
+    last_seen: datetime = field(default_factory=datetime.utcnow)
 
 
 class RedLightViolationEngine:
-    """Red-light violation detection with per-vehicle state tracking."""
+    """Full temporal logic for red-light violations."""
 
-    def __init__(self, camera_id: str, stopline_rect: Dict[str, float]):
+    def __init__(self, camera_id: str, stopline_rect: Dict[str, float], tolerance: float = 2.0):
         self.camera_id = camera_id
         self.stopline_rect = stopline_rect
-        self.vehicles: Dict[int, VehicleViolationState] = {}
+        self.tolerance = tolerance
+        self.vehicles: Dict[int, VehicleState] = {}
         self.last_light_state: Optional[LightState] = None
-        self.last_red_on: Optional[datetime] = None
-
-    def _front_point(self, bbox: Tuple[float, float, float, float]) -> Tuple[float, float]:
-        x1, y1, x2, _ = bbox
-        cx = (x1 + x2) / 2.0
-        return cx, y1
-
-    def _position_vs_stopline(self, point: Tuple[float, float]) -> Position:
-        px, py = point
-        x1 = self.stopline_rect.get("x1", 0)
-        y1 = self.stopline_rect.get("y1", 0)
-        x2 = self.stopline_rect.get("x2", 0)
-        y2 = self.stopline_rect.get("y2", 0)
-
-        if x1 <= px <= x2 and y1 <= py <= y2:
-            return "ON"
-        if py > y2:
-            return "BEFORE"
-        return "AFTER"
-
-    def _ensure_vehicle(self, track_id: int) -> tuple[VehicleViolationState, bool]:
-        if track_id not in self.vehicles:
-            self.vehicles[track_id] = VehicleViolationState(track_id=track_id)
-            return self.vehicles[track_id], True
-        return self.vehicles[track_id], False
-
-    def _update_light(self, light_state: LightState, timestamp: datetime) -> None:
-        if light_state != self.last_light_state and light_state == "RED":
-            self.last_red_on = timestamp
-            for v in self.vehicles.values():
-                v.position_when_red = v.position_vs_line
-        self.last_light_state = light_state
-
-    def update(self, vehicle_tracks: List[Dict[str, object]], light_state: LightState, timestamp: datetime) -> List[ViolationRecord]:
-        """Process the current frame and return any new violations."""
-        self._update_light(light_state, timestamp)
-        violations: List[ViolationRecord] = []
-
-        for track in vehicle_tracks:
-            track_id_raw = track.get("track_id") or track.get("id")
-            if track_id_raw is None:
-                continue
-            track_id = int(track_id_raw)
-            bbox = track.get("bbox")
-            if bbox is None or len(bbox) != 4:
-                continue
-
-            vehicle, is_new = self._ensure_vehicle(track_id)
-            vehicle.last_update_time = timestamp
-
-            position = self._position_vs_stopline(self._front_point(tuple(bbox)))
-            previous_position = position if is_new else vehicle.position_vs_line
-            vehicle.position_vs_line = position
-
-            if is_new and self.last_light_state == "RED" and self.last_red_on:
-                vehicle.position_when_red = position
-
-            crossed = previous_position == "BEFORE" and position in {"ON", "AFTER"}
-
-            if crossed and light_state == "RED" and vehicle.position_when_red == "BEFORE" and self.last_red_on:
-                vehicle.violated = True
-                violations.append(
-                    ViolationRecord(
-                        camera_id=self.camera_id,
-                        track_id=vehicle.track_id,
-                        violation_type="RED_LIGHT",
-                        timestamp=timestamp,
-                        details={
-                            "stopline": self.stopline_rect,
-                            "light_state": light_state,
-                            "red_since": self.last_red_on.isoformat(),
-                        },
-                    )
-                )
-
-        self._prune_stale(timestamp)
-        return violations
-
-    def _prune_stale(self, now: datetime, ttl_s: float = 5.0) -> None:
-        stale_ids = [tid for tid, v in self.vehicles.items() if (now - v.last_update_time).total_seconds() > ttl_s]
-        for tid in stale_ids:
-            del self.vehicles[tid]
+        self.red_on_timestamp: Optional[datetime] = None
 
     def reset_stopline(self, stopline_rect: Dict[str, float]) -> None:
         self.stopline_rect = stopline_rect
         self.vehicles.clear()
         self.last_light_state = None
-        self.last_red_on = None
+        self.red_on_timestamp = None
+
+    def _stopline_y(self) -> Optional[float]:
+        y1 = self.stopline_rect.get("y1")
+        y2 = self.stopline_rect.get("y2")
+        if y1 is None or y2 is None:
+            return None
+        return (float(y1) + float(y2)) / 2.0
+
+    def _front_point(self, bbox: Tuple[float, float, float, float]) -> Tuple[float, float]:
+        x1, _, x2, y2 = bbox
+        cx = (x1 + x2) / 2.0
+        return cx, y2  # bottom-center represents forward motion direction
+
+    def _position_vs_stopline(self, front_y: float, stopline_y: float) -> Position:
+        if front_y < stopline_y - self.tolerance:
+            return "BEFORE_LINE"
+        if abs(front_y - stopline_y) <= self.tolerance:
+            return "ON_LINE"
+        return "AFTER_LINE"
+
+    def _get_vehicle(self, track_id: int) -> VehicleState:
+        if track_id not in self.vehicles:
+            self.vehicles[track_id] = VehicleState(track_id=track_id)
+        return self.vehicles[track_id]
+
+    def _handle_light_transition(self, light_state: LightState, timestamp: datetime) -> None:
+        if light_state == "RED" and self.last_light_state != "RED":
+            self.red_on_timestamp = timestamp
+            for vehicle in self.vehicles.values():
+                vehicle.position_when_red = None
+                vehicle.violated = False
+        elif light_state in {"GREEN", "YELLOW"} and self.last_light_state == "RED":
+            self.red_on_timestamp = None
+            for vehicle in self.vehicles.values():
+                vehicle.position_when_red = None
+                vehicle.violated = False
+        self.last_light_state = light_state
+
+    def update(
+        self,
+        vehicle_tracks: List[Dict[str, object]],
+        light_state: LightState,
+        timestamp: datetime,
+        stopline_rect: Optional[Dict[str, float]] = None,
+    ) -> List[Dict[str, object]]:
+        """Process current frame and return new violation payloads."""
+
+        if stopline_rect:
+            self.stopline_rect = stopline_rect
+
+        stopline_y = self._stopline_y()
+        if stopline_y is None:
+            return []
+
+        self._handle_light_transition(light_state, timestamp)
+
+        violations: List[Dict[str, object]] = []
+
+        for track in vehicle_tracks:
+            track_id_raw = track.get("track_id") or track.get("id")
+            bbox = track.get("bbox")
+            if track_id_raw is None or bbox is None or len(bbox) != 4:
+                continue
+
+            track_id = int(track_id_raw)
+            vehicle = self._get_vehicle(track_id)
+            vehicle.last_seen = timestamp
+
+            _, front_y = self._front_point(tuple(map(float, bbox)))
+            position = self._position_vs_stopline(front_y, stopline_y)
+
+            if light_state == "RED" and vehicle.position_when_red is None:
+                vehicle.position_when_red = position
+
+            previous_position = vehicle.last_position
+            vehicle.last_position = position
+
+            crossed = previous_position in {"BEFORE_LINE", "ON_LINE"} and position == "AFTER_LINE"
+
+            if (
+                light_state == "RED"
+                and vehicle.position_when_red == "BEFORE_LINE"
+                and crossed
+                and not vehicle.violated
+            ):
+                vehicle.violated = True
+                violations.append(
+                    {
+                        "track_id": track_id,
+                        "violation_type": "RED_LIGHT",
+                        "timestamp": timestamp.isoformat(),
+                        "bbox": list(map(float, bbox)),
+                        "position_when_red": vehicle.position_when_red,
+                        "t_cross": timestamp.isoformat(),
+                        "stopline": self.stopline_rect,
+                    }
+                )
+
+        self._prune_stale(timestamp)
+        return violations
+
+    def _prune_stale(self, now: datetime, ttl_s: float = 2.0) -> None:
+        stale_ids = [tid for tid, v in self.vehicles.items() if (now - v.last_seen).total_seconds() > ttl_s]
+        for tid in stale_ids:
+            del self.vehicles[tid]
