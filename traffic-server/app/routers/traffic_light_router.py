@@ -107,6 +107,12 @@ class WSMessage(BaseModel):
 # In-memory storage for ROI configurations (shared with traffic_light_ws.py)
 roi_storage = {}
 
+def clear_roi(camera_id: str) -> None:
+    """Clear ROI for a specific camera"""
+    if camera_id in roi_storage:
+        del roi_storage[camera_id]
+        logger.info(f"🗑️ Cleared ROI for camera {camera_id}")
+
 
 @router.post("/roi")
 async def set_roi(request: ROIRequest):
@@ -213,7 +219,26 @@ async def set_roi(request: ROIRequest):
 @router.get("/roi/{camera_id}")
 async def get_roi(camera_id: str):
     """Get stored ROI for a camera"""
+    from app.config.roi_config import get_traffic_light_roi
+
     roi = roi_storage.get(camera_id)
+    
+    # Fallback: Try loading from disk
+    if not roi:
+        saved_roi = get_traffic_light_roi(camera_id)
+        if saved_roi:
+            # Wrap in normalized format matched to roi_storage
+            roi = {
+                "type": "normalized",
+                "x": saved_roi["x"],
+                "y": saved_roi["y"],
+                "width": saved_roi["width"],
+                "height": saved_roi["height"]
+            }
+            # Cache it in memory
+            roi_storage[camera_id] = roi
+            logger.info(f"📂 Loaded ROI from file for {camera_id}")
+
     if not roi:
         raise HTTPException(status_code=404, detail=f"No ROI found for camera {camera_id}")
     return {"camera_id": camera_id, "roi": roi}

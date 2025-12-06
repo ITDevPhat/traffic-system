@@ -156,7 +156,7 @@ function DetectionPageBinaryContent() {
   const isMountedRef = useRef(true);
   const overlayRef = useRef(null);
   const lastRoiSignatureRef = useRef('');
-  
+
   // Safe toast wrapper - only show toast if component is mounted
   // Use try-catch to prevent errors if toast is unavailable
   const safeToast = useMemo(() => ({
@@ -212,7 +212,7 @@ function DetectionPageBinaryContent() {
       }
     },
   }), []);
-  
+
   // Rendering pipeline refs
   const lastBufferRef = useRef(null);
   const decodingRef = useRef(false);
@@ -240,13 +240,13 @@ function DetectionPageBinaryContent() {
   const [autoStart, setAutoStart] = useState(false); // Flag to auto-start detection
   const [warmupProgress, setWarmupProgress] = useState(0); // Warmup progress 0-100
   const [isWarmingUp, setIsWarmingUp] = useState(false); // Warmup phase
-  
+
   // Model version management
   const [modelVersions, setModelVersions] = useState({});
   const [currentVersion, setCurrentVersion] = useState('11s');
   const [currentFormat, setCurrentFormat] = useState('onnx');
   const [isLoadingVersions, setIsLoadingVersions] = useState(false);
-  
+
   // Optimized settings defaults
   const [settings, setSettings] = useState({
     conf: 0.5,           // Increased from 0.35
@@ -257,10 +257,10 @@ function DetectionPageBinaryContent() {
     veh_detect_hz: 25,
     force_gpu: true
   });
-  
+
   const [frameDimensions, setFrameDimensions] = useState({ width: 1280, height: 720 });
   const [expectBinary, setExpectBinary] = useState(false);
-  
+
   // Module toggles
   const [modules, setModules] = useState({
     yolo: true,
@@ -378,10 +378,10 @@ function DetectionPageBinaryContent() {
 
     if (videoParam && !videoLoaded) {
       console.log(`🎬 Auto-loading video from URL: ${videoParam} (ID: ${videoId})`);
-      
+
       // Decode video path from URL
       const videoPath = decodeURIComponent(videoParam);
-      
+
       // Set video source - use the path directly
       // If it's a full path like "/videos/video.mp4", use it directly
       // If it's just filename, prepend /videos/
@@ -389,7 +389,7 @@ function DetectionPageBinaryContent() {
       if (videoPath && !videoPath.startsWith('/')) {
         finalPath = `/videos/${videoPath}`;
       }
-      
+
       setSource(finalPath);
       setVideoLoaded(true);
       setAutoStart(true); // Flag to auto-start after models load and warmup
@@ -410,23 +410,23 @@ function DetectionPageBinaryContent() {
     if (modelLoaded || isLoadingModels) return;
 
     setIsLoadingModels(true);
-    
+
     // Longer timeout for model loading (GPU initialization can take time)
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second timeout for GPU init
-    
+
     const videoParam = searchParams?.get('video');
     if (!videoParam) {
       safeToast.info('Loading models (GPU)...', { autoClose: 2000 });
     }
-    
+
     try {
-      const res = await fetch(`${API_URL}/api/detection/models/load`, { 
-          method: 'POST',
+      const res = await fetch(`${API_URL}/api/detection/models/load`, {
+        method: 'POST',
         signal: controller.signal
       });
       clearTimeout(timeoutId);
-      
+
       if (!res.ok) {
         // Try to parse JSON error response
         let errorMessage = 'Failed to load models';
@@ -444,14 +444,14 @@ function DetectionPageBinaryContent() {
         }
         throw new Error(errorMessage);
       }
-      
+
       const data = await res.json();
       if ((data?.device || '').toLowerCase() !== 'cuda') {
         safeToast.error('GPU required. CUDA not detected.');
         return;
       }
       setModelLoaded(true);
-      
+
       const videoParam = searchParams?.get('video');
       if (videoParam) {
         console.log('✅ Models loaded - ready for auto-start');
@@ -462,7 +462,7 @@ function DetectionPageBinaryContent() {
     } catch (e) {
       console.error('Model loading error:', e);
       clearTimeout(timeoutId);
-      
+
       if (e.name === 'AbortError') {
         safeToast.error('Model loading timeout! Check backend.');
       } else {
@@ -506,11 +506,11 @@ function DetectionPageBinaryContent() {
       .then((bitmap) => {
         // Replace any pending next bitmap
         if (nextBitmapRef.current) {
-          try { nextBitmapRef.current.close(); } catch {}
+          try { nextBitmapRef.current.close(); } catch { }
         }
         nextBitmapRef.current = bitmap;
       })
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => {
         decodingRef.current = false;
         // If a newer buffer arrived while decoding, process it now
@@ -531,7 +531,7 @@ function DetectionPageBinaryContent() {
         maxY: Math.max(stopline.y1, stopline.y2),
       };
     }
-    
+
     // Fallback to ROI polygon if no 2-point stopline
     if (!roiPolygons || roiPolygons.length === 0) return null;
     const stoplineRoi =
@@ -570,10 +570,10 @@ function DetectionPageBinaryContent() {
       if (!stoplineBounds || !bbox || bbox.length < 4) return false;
       const [x1, y1, x2, y2] = bbox;
       const { minY, maxY } = stoplineBounds;
-      
+
       // Add tolerance for line-based stopline (thicker detection zone)
       const tolerance = 20; // pixels - wider zone for better detection
-      
+
       // Check if bbox overlaps with stopline Y range (with tolerance)
       return !(y2 < minY - tolerance || y1 > maxY + tolerance);
     },
@@ -588,7 +588,7 @@ function DetectionPageBinaryContent() {
     lightStateRef.current = { state, changedAt: ts };
     setLightState(state);
     setLastLightChangeTs(ts);
-    
+
     console.log(`🚦 Light state changed: ${state}`);
 
     if (state === 'RED') {
@@ -689,15 +689,18 @@ function DetectionPageBinaryContent() {
     params.append('enable_roi', modules.roi);
     params.append('enable_roi_drawing', modules.roiDrawing);
     params.append('force_gpu', settings.force_gpu);
-    params.append('camera_id', 'cam01'); // Camera ID for ROI lookup
+    // Determine camera_id based on source video for correct config loading
+    const isCam02 = src && src.toLowerCase().includes('viphamgiaothong');
+    const cameraId = isCam02 ? 'cam02' : 'cam01';
+    params.append('camera_id', cameraId);
 
     // Use dedicated traffic light WebSocket endpoint
     const wsUrl = `${API_URL.replace('http', 'ws')}/api/traffic-light/realtime?${params.toString()}`;
     console.log('🚦 Connecting to Traffic Light WS:', wsUrl);
-    
+
     const ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';  // Critical for binary frames
-    
+
     ws.onopen = () => {
       if (!isMountedRef.current) return;
       console.log('? Binary WebSocket connected!');
@@ -706,7 +709,7 @@ function DetectionPageBinaryContent() {
       setExpectBinary(false);
       safeToast.success('Connected! Waiting for frames...');
     };
-    
+
     ws.onclose = () => {
       if (!isMountedRef.current) return;
       console.log('? WebSocket closed');
@@ -715,7 +718,7 @@ function DetectionPageBinaryContent() {
       lastRoiSignatureRef.current = '';
       safeToast.info('WebSocket disconnected');
     };
-    
+
     ws.onerror = (error) => {
       if (!isMountedRef.current) return;
       console.error('? WebSocket error:', error);
@@ -731,8 +734,8 @@ function DetectionPageBinaryContent() {
       if (typeof event.data === 'string') {
         try {
           const pkt = JSON.parse(event.data);
-          
-        if (pkt.type === 'info') {
+
+          if (pkt.type === 'info') {
             // Set canvas size once
             const c = canvasRef.current;
             if (c) {
@@ -743,83 +746,99 @@ function DetectionPageBinaryContent() {
               setFrameDimensions({ width: newWidth, height: newHeight });
               const ctx = c.getContext('2d');
               if (ctx && ctx.imageSmoothingEnabled) ctx.imageSmoothingEnabled = false;
-                console.log(`?? Canvas: ${newWidth}x${newHeight}`);
-                console.log('?? Info:', pkt);
-                
-                // Auto-load ROI for video3 after detection starts
-                if (source && source.toLowerCase().includes('video3')) {
-                  // Set default TL ROI
-                  const defaultTlRoi = { x: 833, y: 14, w: 52, h: 101 };
-                  setTlRoi(defaultTlRoi);
-                  setTlRoiActive(true);
-                  
-                  // Set default Stopline
-                  const defaultStopline = { x1: 37, y1: 334, x2: 804, y2: 320 };
-                  setStopline(defaultStopline);
-                  setStoplineActive(true);
-                  
-                  // Auto-save TL ROI to backend
-                  const roi_pixel = {
-                    x1: Math.round(defaultTlRoi.x),
-                    y1: Math.round(defaultTlRoi.y),
-                    x2: Math.round(defaultTlRoi.x + defaultTlRoi.w),
-                    y2: Math.round(defaultTlRoi.y + defaultTlRoi.h)
-                  };
-                  
-                  fetch(`${API_URL}/api/traffic-light/roi`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      camera_id: "cam01",
-                      roi_pixel,
-                      frame_width: newWidth,
-                      frame_height: newHeight
+              console.log(`?? Canvas: ${newWidth}x${newHeight}`);
+              console.log('?? Info:', pkt);
+
+              // Auto-load ROI for viphamgiaothong (cam02)
+              if (source && source.toLowerCase().includes('viphamgiaothong')) {
+                console.log('🎬 Video Viphamgiaothong detected - Loading cam02.json config...');
+
+                // Values from cam02.json
+                const cam02Roi = { x: 939, y: 113, w: 147, h: 75 };
+                setTlRoi(cam02Roi);
+                setTlRoiActive(true);
+
+                const cam02Stopline = { x1: 143, y1: 927, x2: 1278, y2: 939 };
+                setStopline(cam02Stopline);
+                setStoplineActive(true);
+
+                safeToast.success('✅ Loaded cam02 configuration', { autoClose: 2000 });
+              }
+
+              // Auto-load ROI for video3 after detection starts
+              if (source && source.toLowerCase().includes('video3')) {
+                // Set default TL ROI
+                const defaultTlRoi = { x: 833, y: 14, w: 52, h: 101 };
+                setTlRoi(defaultTlRoi);
+                setTlRoiActive(true);
+
+                // Set default Stopline
+                const defaultStopline = { x1: 37, y1: 334, x2: 804, y2: 320 };
+                setStopline(defaultStopline);
+                setStoplineActive(true);
+
+                // Auto-save TL ROI to backend
+                const roi_pixel = {
+                  x1: Math.round(defaultTlRoi.x),
+                  y1: Math.round(defaultTlRoi.y),
+                  x2: Math.round(defaultTlRoi.x + defaultTlRoi.w),
+                  y2: Math.round(defaultTlRoi.y + defaultTlRoi.h)
+                };
+
+                fetch(`${API_URL}/api/traffic-light/roi`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    camera_id: "cam01",
+                    roi_pixel,
+                    frame_width: newWidth,
+                    frame_height: newHeight
+                  })
+                }).then(res => {
+                  if (res.ok) {
+                    console.log('✅ TL ROI auto-saved for video3');
+                    safeToast.success('✅ Auto-loaded ROI & Stopline', { autoClose: 2000 });
+                  }
+                }).catch(err => {
+                  console.warn('Failed to auto-save TL ROI:', err);
+                });
+
+                console.log('🚦 Auto-loaded ROI & Stopline for video3');
+              }
+              if (pkt.rois && typeof pkt.rois === 'object') {
+                const entries = Object.entries(pkt.rois);
+                if (entries.length > 0) {
+                  const width = newWidth || frameDimensions.width || 1;
+                  const height = newHeight || frameDimensions.height || 1;
+                  const imported = entries
+                    .map(([name, raw], idx) => {
+                      const coords = Array.isArray(raw)
+                        ? raw
+                        : (raw?.coordinates || raw?.points || []);
+                      if (!Array.isArray(coords)) return null;
+                      const points = coords
+                        .map((pt) => {
+                          if (!Array.isArray(pt) || pt.length < 2) return null;
+                          return {
+                            x: clamp01(pt[0] / width),
+                            y: clamp01(pt[1] / height)
+                          };
+                        })
+                        .filter(Boolean);
+                      if (points.length < 3) return null;
+                      return {
+                        id: `roi-server-${idx}`,
+                        label: String(name),
+                        color: ROI_COLORS[idx % ROI_COLORS.length],
+                        points,
+                      };
                     })
-                  }).then(res => {
-                    if (res.ok) {
-                      console.log('✅ TL ROI auto-saved for video3');
-                      safeToast.success('✅ Auto-loaded ROI & Stopline', { autoClose: 2000 });
-                    }
-                  }).catch(err => {
-                    console.warn('Failed to auto-save TL ROI:', err);
-                  });
-                  
-                  console.log('🚦 Auto-loaded ROI & Stopline for video3');
-                }
-                if (pkt.rois && typeof pkt.rois === 'object') {
-                  const entries = Object.entries(pkt.rois);
-                  if (entries.length > 0) {
-                    const width = newWidth || frameDimensions.width || 1;
-                    const height = newHeight || frameDimensions.height || 1;
-                    const imported = entries
-                      .map(([name, raw], idx) => {
-                        const coords = Array.isArray(raw)
-                          ? raw
-                          : (raw?.coordinates || raw?.points || []);
-                        if (!Array.isArray(coords)) return null;
-                        const points = coords
-                          .map((pt) => {
-                            if (!Array.isArray(pt) || pt.length < 2) return null;
-                            return {
-                              x: clamp01(pt[0] / width),
-                              y: clamp01(pt[1] / height)
-                            };
-                          })
-                          .filter(Boolean);
-                        if (points.length < 3) return null;
-                        return {
-                          id: `roi-server-${idx}`,
-                          label: String(name),
-                          color: ROI_COLORS[idx % ROI_COLORS.length],
-                          points,
-                        };
-                      })
-                      .filter(Boolean);
-                    if (imported.length > 0) {
-                      setRoiPolygons((prev) => (prev.length > 0 ? prev : imported));
-                    }
+                    .filter(Boolean);
+                  if (imported.length > 0) {
+                    setRoiPolygons((prev) => (prev.length > 0 ? prev : imported));
                   }
                 }
+              }
             }
           } else if (pkt.type === 'frame') {
             // Update FPS and frame index
@@ -866,9 +885,9 @@ function DetectionPageBinaryContent() {
         } catch (e) {
           console.error('Failed to parse text message:', e);
         }
-      return;
-    }
-    
+        return;
+      }
+
       // Binary message (JPEG ArrayBuffer)
       if (event.data instanceof ArrayBuffer) {
         // Latest-wins: keep only the newest buffer, decode off-main-thread
@@ -892,7 +911,7 @@ function DetectionPageBinaryContent() {
 
   // Warmup phase: 5 seconds before starting detection
   const warmupIntervalRef = useRef(null);
-  
+
   const startWarmup = useCallback(() => {
     setIsWarmingUp(true);
     setWarmupProgress(0);
@@ -900,9 +919,9 @@ function DetectionPageBinaryContent() {
     const warmupDuration = 5000; // 5 seconds
     const updateInterval = 50; // Update every 50ms for smooth progress (100 updates total)
     const progressStep = (100 / warmupDuration) * updateInterval;
-    
+
     let currentProgress = 0;
-    
+
     warmupIntervalRef.current = setInterval(() => {
       currentProgress += progressStep;
       if (currentProgress >= 100) {
@@ -913,7 +932,7 @@ function DetectionPageBinaryContent() {
         }
         setIsWarmingUp(false);
         setWarmupProgress(100);
-        
+
         // Start detection after warmup
         if (source && isMountedRef.current) {
           console.log('🚀 Auto-starting detection after warmup');
@@ -926,7 +945,7 @@ function DetectionPageBinaryContent() {
       }
     }, updateInterval);
   }, [connectWebSocket, safeToast, source]);
-  
+
   // Cleanup warmup on unmount
   useEffect(() => {
     return () => {
@@ -947,7 +966,7 @@ function DetectionPageBinaryContent() {
         startWarmup(); // Call warmup function directly
         safeToast.info('🔥 Warming up models (5s)...', { autoClose: 5000 });
       }, 500);
-      
+
       return () => clearTimeout(timer);
     }
   }, [autoStart, videoLoaded, modelLoaded, detecting, isLoadingModels, isWarmingUp, source, safeToast, startWarmup]);
@@ -972,7 +991,7 @@ function DetectionPageBinaryContent() {
             // Always draw the image (server sends annotated frames)
             // BBox visibility is controlled by server settings
             ctx.drawImage(displayBitmapRef.current, 0, 0, c.width, c.height);
-            
+
             // Draw violation overlay (red bbox + label)
             const detections = currentDetectionsRef.current;
             if (detections && detections.length > 0) {
@@ -980,16 +999,16 @@ function DetectionPageBinaryContent() {
                 const trackId = det?.track_id ?? det?.id ?? null;
                 const bbox = det?.bbox;
                 if (!trackId || !bbox || bbox.length < 4) return;
-                
+
                 const vehicleState = vehicleStatesRef.current.get(trackId);
                 if (vehicleState && vehicleState.violation) {
                   const [x1, y1, x2, y2] = bbox;
-                  
+
                   // Draw red bbox
                   ctx.strokeStyle = '#FF0000';
                   ctx.lineWidth = 4;
                   ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-                  
+
                   // Draw "VI PHẠM" label
                   ctx.fillStyle = '#FF0000';
                   ctx.fillRect(x1, y1 - 25, 100, 25);
@@ -999,9 +1018,9 @@ function DetectionPageBinaryContent() {
                 }
               });
             }
-          } catch {}
+          } catch { }
           if (prev) {
-            try { prev.close(); } catch {}
+            try { prev.close(); } catch { }
           }
         }
       }
@@ -1028,7 +1047,7 @@ function DetectionPageBinaryContent() {
         const res = await fetch(`${API_URL}/api/detection/models/available`);
         if (!res.ok) return;
         const data = await res.json();
-        
+
         // Get vehicle models with format info
         const vehModels = Array.isArray(data?.models?.vehicle) ? data.models.vehicle : [];
         const modelOptions = vehModels.map((model) => ({
@@ -1036,9 +1055,9 @@ function DetectionPageBinaryContent() {
           path: `models/${model.path}`,
           format: model.format
         }));
-        
+
         setAvailableModels(modelOptions);
-        
+
         if (modelOptions.length > 0) {
           // Prefer ONNX models, then 11s models, then first available
           const preferOnnx = modelOptions.find(m => m.format === 'onnx' && /11s/i.test(m.name));
@@ -1054,7 +1073,7 @@ function DetectionPageBinaryContent() {
 
   const startDetection = async () => {
     // If models not loaded yet, try to load them first
-      if (!modelLoaded) {
+    if (!modelLoaded) {
       if (!isLoadingModels) {
         safeToast.info('Loading models first...', { autoClose: 1500 });
         await loadModels();
@@ -1062,21 +1081,21 @@ function DetectionPageBinaryContent() {
         safeToast.warning('Models still loading, please wait...');
         return;
       }
-      
+
       // Check again after loading
       if (!modelLoaded) {
         safeToast.error('Failed to load models. Check GPU.');
-          return;
-        }
+        return;
+      }
     }
-    
+
     let currentSource = source;
     if (!videoLoaded) {
       safeToast.warning('Please upload a video first.');
-        return;
-      }
-      
-      setDetecting(true);
+      return;
+    }
+
+    setDetecting(true);
     connectWebSocket(currentSource);
     safeToast.info('Detection started!');
   };
@@ -1090,8 +1109,8 @@ function DetectionPageBinaryContent() {
     // Clear decode/display buffers
     lastBufferRef.current = null;
     decodingRef.current = false;
-    if (nextBitmapRef.current) { try { nextBitmapRef.current.close(); } catch {} nextBitmapRef.current = null; }
-    if (displayBitmapRef.current) { try { displayBitmapRef.current.close(); } catch {} displayBitmapRef.current = null; }
+    if (nextBitmapRef.current) { try { nextBitmapRef.current.close(); } catch { } nextBitmapRef.current = null; }
+    if (displayBitmapRef.current) { try { displayBitmapRef.current.close(); } catch { } displayBitmapRef.current = null; }
     setDetecting(false);
     setConnected(false);
     lastRoiSignatureRef.current = '';
@@ -1126,16 +1145,16 @@ function DetectionPageBinaryContent() {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      
+
       const response = await fetch(`${API_URL}/api/detection/upload-temp-video`, {
         method: 'POST',
         body: formData,
         signal: controller.signal
       });
-      
+
       clearTimeout(timeoutId);
       safeToast.dismiss(); // Dismiss all toasts
-      
+
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(`HTTP ${response.status}: ${errorText}`);
@@ -1160,7 +1179,7 @@ function DetectionPageBinaryContent() {
         } catch (probeError) {
           console.warn('Failed to probe video dimensions:', probeError);
         }
-        
+
         setVideoLoaded(true);
         safeToast.success(`Video ready: ${file.name}`, { autoClose: 2000 });
       } else {
@@ -1169,9 +1188,9 @@ function DetectionPageBinaryContent() {
     } catch (error) {
       clearTimeout(timeoutId);
       safeToast.dismiss(); // Dismiss all toasts
-      
+
       console.error('Upload error:', error);
-      
+
       if (error.name === 'AbortError') {
         safeToast.error('Upload timeout! Try smaller video.');
       } else {
@@ -1184,7 +1203,7 @@ function DetectionPageBinaryContent() {
 
   const updateSettings = (key, value) => {
     setSettings(prev => ({ ...prev, [key]: value }));
-    
+
     // Send live settings update if detection is running
     if (detecting && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       const cmd = {
@@ -1193,7 +1212,7 @@ function DetectionPageBinaryContent() {
       };
       console.log('📤 Sending live settings update:', cmd);
       wsRef.current.send(JSON.stringify(cmd));
-      
+
       // Show immediate feedback
       safeToast.info(`⚙️ ${key} updated to ${value}`, { autoClose: 1500 });
     }
@@ -1206,14 +1225,14 @@ function DetectionPageBinaryContent() {
     // Module toggle validation and confirmation
     const moduleNames = {
       yolo: 'YOLO Detection',
-      tracking: 'Object Tracking', 
+      tracking: 'Object Tracking',
       bboxDrawing: 'Bounding Box Drawing',
       roi: 'ROI Processing',
       roiDrawing: 'ROI Drawing'
     };
 
     const moduleName = moduleNames[module] || module;
-    
+
     // If detecting and BBox toggle changed, send command to server
     if (detecting && module === 'bboxDrawing' && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       // Send command to toggle bbox drawing
@@ -1249,7 +1268,7 @@ function DetectionPageBinaryContent() {
       setIsLoadingVersions(true);
       const response = await fetch(`${API_URL}/api/detection/models/versions`);
       const result = await response.json();
-      
+
       if (result.ok) {
         setModelVersions(result.versions);
         setCurrentVersion(result.current_version);
@@ -1268,7 +1287,7 @@ function DetectionPageBinaryContent() {
   const handleSwitchModelVersion = async (version, format) => {
     try {
       safeToast.info(`🔄 Switching to ${version.toUpperCase()} (${format.toUpperCase()})...`, { autoClose: 2000 });
-      
+
       const response = await fetch(`${API_URL}/api/detection/models/switch-version`, {
         method: 'POST',
         headers: {
@@ -1281,17 +1300,17 @@ function DetectionPageBinaryContent() {
       });
 
       const result = await response.json();
-      
+
       if (result.ok) {
         setCurrentVersion(version);
         setCurrentFormat(format);
         setSelectedModel(result.model_path);
-        
+
         safeToast.success(
-          `✅ Switched to ${version.toUpperCase()} (${format.toUpperCase()})!`, 
+          `✅ Switched to ${version.toUpperCase()} (${format.toUpperCase()})!`,
           { autoClose: 3000 }
         );
-        
+
         console.log(`✅ Model switch successful: ${result.model_path}`);
         console.log(`🎯 Optimization: ${result.optimizations}`);
       } else {
@@ -1311,7 +1330,7 @@ function DetectionPageBinaryContent() {
 
     try {
       safeToast.info('♻️ Hot-swapping model...', { autoClose: 2000 });
-      
+
       const response = await fetch(`${API_URL}/api/detection/models/hot-swap`, {
         method: 'POST',
         headers: {
@@ -1324,7 +1343,7 @@ function DetectionPageBinaryContent() {
       });
 
       const result = await response.json();
-      
+
       if (result.ok) {
         const modelType = result.model_type === 'onnx' ? 'ONNX' : 'PyTorch';
         safeToast.success(`♻️ Model hot-swapped to ${modelType}!`, { autoClose: 3000 });
@@ -1396,29 +1415,29 @@ function DetectionPageBinaryContent() {
     if (!isDrawingRoi) return;
     const rect = overlayRef.current?.getBoundingClientRect();
     if (!rect || rect.width === 0 || rect.height === 0) return;
-    
+
     const mouseX = event.clientX - rect.left;
     const mouseY = event.clientY - rect.top;
     const nx = clamp01(mouseX / rect.width);
     const ny = clamp01(mouseY / rect.height);
-    
+
     event.preventDefault();
     event.stopPropagation();
-    
+
     // Check for snapping to start point (close polygon)
     if (draftRoiPoints.length >= 3) {
       const startPoint = draftRoiPoints[0];
       const startX = startPoint.x * rect.width;
       const startY = startPoint.y * rect.height;
       const snapDistance = Math.sqrt((mouseX - startX) ** 2 + (mouseY - startY) ** 2);
-      
+
       if (snapDistance <= 15) {
         // Snap to start point and complete polygon
         completeRoi();
         return;
       }
     }
-    
+
     setDraftRoiPoints((prev) => [...prev, { x: nx, y: ny }]);
   };
 
@@ -1427,7 +1446,7 @@ function DetectionPageBinaryContent() {
     if (!isDrawingRoi) return;
     const rect = overlayRef.current?.getBoundingClientRect();
     if (!rect || rect.width === 0 || rect.height === 0) return;
-    
+
     const mouseX = event.clientX - rect.left;
     const mouseY = event.clientY - rect.top;
     setMousePos({ x: mouseX, y: mouseY });
@@ -1570,7 +1589,7 @@ function DetectionPageBinaryContent() {
     }
 
     const wsUrl = `${API_URL.replace("http", "ws")}/api/traffic-light/ws/traffic-light?camera_id=cam01`;
-    
+
     tlSocketRef.current = new WebSocket(wsUrl);
 
     tlSocketRef.current.onopen = () => {
@@ -1581,7 +1600,7 @@ function DetectionPageBinaryContent() {
     tlSocketRef.current.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        
+
         if (data.error) {
           safeToast.error(`TL Error: ${data.error}`);
           return;
@@ -1590,11 +1609,11 @@ function DetectionPageBinaryContent() {
         if (data.state) {
           setTrafficLightState(data.state);
         }
-        
+
         if (data.confidence !== undefined) {
           setTrafficLightConfidence(data.confidence);
         }
-        
+
         if (data.roi_frame) {
           setTrafficLightFrame("data:image/jpeg;base64," + data.roi_frame);
         }
@@ -1628,17 +1647,17 @@ function DetectionPageBinaryContent() {
   }, []);
 
   // === TRAFFIC LIGHT ROI CANVAS DRAWING & INTERACTION ===
-  
+
   // Sync canvas size with video resolution
   useEffect(() => {
     const canvas = tlCanvasRef.current;
     const mainCanvas = canvasRef.current;
-    
+
     if (canvas && mainCanvas && frameDimensions.width > 0 && frameDimensions.height > 0) {
       console.log('📐 Syncing canvas dimensions:', frameDimensions);
       canvas.width = frameDimensions.width;
       canvas.height = frameDimensions.height;
-      
+
       // Set default TL ROI if not already set
       if (!tlRoi && frameDimensions.width > 833 && frameDimensions.height > 115) {
         const defaultRoi = { x: 833, y: 14, w: 52, h: 101 };
@@ -1675,22 +1694,22 @@ function DetectionPageBinaryContent() {
     ctx.strokeStyle = '#FFD700'; // Gold
     ctx.lineWidth = 3;
     ctx.strokeRect(tlRoi.x, tlRoi.y, tlRoi.w, tlRoi.h);
-    
+
     ctx.fillStyle = 'rgba(255, 215, 0, 0.25)';
     ctx.fillRect(tlRoi.x, tlRoi.y, tlRoi.w, tlRoi.h);
 
     // Draw resize handles (corners)
     const handleSize = 10;
     ctx.fillStyle = '#FFD700';
-    
+
     // Top-left
-    ctx.fillRect(tlRoi.x - handleSize/2, tlRoi.y - handleSize/2, handleSize, handleSize);
+    ctx.fillRect(tlRoi.x - handleSize / 2, tlRoi.y - handleSize / 2, handleSize, handleSize);
     // Top-right
-    ctx.fillRect(tlRoi.x + tlRoi.w - handleSize/2, tlRoi.y - handleSize/2, handleSize, handleSize);
+    ctx.fillRect(tlRoi.x + tlRoi.w - handleSize / 2, tlRoi.y - handleSize / 2, handleSize, handleSize);
     // Bottom-left
-    ctx.fillRect(tlRoi.x - handleSize/2, tlRoi.y + tlRoi.h - handleSize/2, handleSize, handleSize);
+    ctx.fillRect(tlRoi.x - handleSize / 2, tlRoi.y + tlRoi.h - handleSize / 2, handleSize, handleSize);
     // Bottom-right
-    ctx.fillRect(tlRoi.x + tlRoi.w - handleSize/2, tlRoi.y + tlRoi.h - handleSize/2, handleSize, handleSize);
+    ctx.fillRect(tlRoi.x + tlRoi.w - handleSize / 2, tlRoi.y + tlRoi.h - handleSize / 2, handleSize, handleSize);
 
     // Label
     ctx.fillStyle = '#FFD700';
@@ -1706,7 +1725,7 @@ function DetectionPageBinaryContent() {
     if (!canvas || !stopline) return;
 
     const ctx = canvas.getContext('2d');
-    
+
     // Draw line with shadow for visibility
     ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
     ctx.shadowBlur = 4;
@@ -1723,16 +1742,16 @@ function DetectionPageBinaryContent() {
     ctx.fillStyle = '#FF4444';
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 2;
-    
+
     // Endpoint 1
     ctx.beginPath();
-    ctx.arc(stopline.x1, stopline.y1, handleSize/2, 0, Math.PI * 2);
+    ctx.arc(stopline.x1, stopline.y1, handleSize / 2, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-    
+
     // Endpoint 2
     ctx.beginPath();
-    ctx.arc(stopline.x2, stopline.y2, handleSize/2, 0, Math.PI * 2);
+    ctx.arc(stopline.x2, stopline.y2, handleSize / 2, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
 
@@ -1758,11 +1777,11 @@ function DetectionPageBinaryContent() {
   // Check if point is on stopline endpoint
   const hitStoplineHandle = (x, y) => {
     if (!stopline) return null;
-    
+
     const handleSize = 20; // Larger hit area for easier grabbing
     const dist1 = Math.sqrt((x - stopline.x1) ** 2 + (y - stopline.y1) ** 2);
     const dist2 = Math.sqrt((x - stopline.x2) ** 2 + (y - stopline.y2) ** 2);
-    
+
     if (dist1 < handleSize) return 'p1';
     if (dist2 < handleSize) return 'p2';
     return null;
@@ -1771,17 +1790,17 @@ function DetectionPageBinaryContent() {
   // Check if point is near stopline (for moving entire line)
   const hitStopline = (x, y) => {
     if (!stopline) return false;
-    
+
     // Distance from point to line segment
     const A = x - stopline.x1;
     const B = y - stopline.y1;
     const C = stopline.x2 - stopline.x1;
     const D = stopline.y2 - stopline.y1;
-    
+
     const dot = A * C + B * D;
     const lenSq = C * C + D * D;
     const param = lenSq !== 0 ? dot / lenSq : -1;
-    
+
     let xx, yy;
     if (param < 0) {
       xx = stopline.x1;
@@ -1793,11 +1812,11 @@ function DetectionPageBinaryContent() {
       xx = stopline.x1 + param * C;
       yy = stopline.y1 + param * D;
     }
-    
+
     const dx = x - xx;
     const dy = y - yy;
     const distance = Math.sqrt(dx * dx + dy * dy);
-    
+
     return distance < 15; // 15px threshold for easier selection
   };
 
@@ -1806,7 +1825,7 @@ function DetectionPageBinaryContent() {
     const rect = element.getBoundingClientRect();
     const scaleX = frameDimensions.width / rect.width;
     const scaleY = frameDimensions.height / rect.height;
-    
+
     return {
       x: (e.clientX - rect.left) * scaleX,
       y: (e.clientY - rect.top) * scaleY
@@ -1817,13 +1836,13 @@ function DetectionPageBinaryContent() {
   const hitTestROI = (x, y) => {
     if (!tlRoi) return false;
     return x >= tlRoi.x && x <= tlRoi.x + tlRoi.w &&
-           y >= tlRoi.y && y <= tlRoi.y + tlRoi.h;
+      y >= tlRoi.y && y <= tlRoi.y + tlRoi.h;
   };
 
   // Check if point is on resize handle
   const hitResizeHandle = (x, y) => {
     if (!tlRoi) return null;
-    
+
     const handleSize = 15; // Hit area
     const corners = {
       tl: { x: tlRoi.x, y: tlRoi.y },
@@ -1965,7 +1984,7 @@ function DetectionPageBinaryContent() {
     } else if (resizeHandle && tlRoi) {
       // Resizing ROI
       let newRoi = { ...tlRoi };
-      
+
       switch (resizeHandle) {
         case 'tl': // Top-left
           newRoi.w = tlRoi.w + (tlRoi.x - x);
@@ -2111,49 +2130,49 @@ function DetectionPageBinaryContent() {
       <div className="container-fluid mt-3">
         <Card className="mb-3 shadow-sm">
           <Card.Body>
-                <Row className="align-items-center g-2">
-                    <Col xs="auto">
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept="video/*"
-                        onChange={handleVideoUpload}
-                        style={{ display: 'none' }}
-                      />
-                      <Button 
-                      variant={videoLoaded ? 'success' : 'outline-primary'}
-                        onClick={() => fileInputRef.current?.click()}
-                      disabled={detecting || isUploadingVideo}
-                        className="rounded-pill"
-                      >
-                      {isUploadingVideo ? (
-                        <>⏳ Uploading...</>
-                      ) : (
-                        <>📁 {videoLoaded ? '✅ Video Ready' : 'Choose Video'}</>
-                      )}
-                      </Button>
-                    </Col>
-                  
-                  <Col xs="auto">
-                    <Button 
-                      size="sm"
-                      onClick={loadModels}
-                      disabled={modelLoaded || detecting || isLoadingModels}
-                      className="rounded-pill"
-                      style={{
-                        background: modelLoaded ? '#6c757d' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                        border: 'none',
-                        color: '#fff',
-                        fontWeight: 500
-                      }}
-                    >
-                      {isLoadingModels ? (
-                        <>⏳ Loading...</>
-                      ) : (
-                        <>⚙️ {modelLoaded ? 'Models Ready' : 'Load Models'}</>
-                      )}
-                    </Button>
-                  </Col>
+            <Row className="align-items-center g-2">
+              <Col xs="auto">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="video/*"
+                  onChange={handleVideoUpload}
+                  style={{ display: 'none' }}
+                />
+                <Button
+                  variant={videoLoaded ? 'success' : 'outline-primary'}
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={detecting || isUploadingVideo}
+                  className="rounded-pill"
+                >
+                  {isUploadingVideo ? (
+                    <>⏳ Uploading...</>
+                  ) : (
+                    <>📁 {videoLoaded ? '✅ Video Ready' : 'Choose Video'}</>
+                  )}
+                </Button>
+              </Col>
+
+              <Col xs="auto">
+                <Button
+                  size="sm"
+                  onClick={loadModels}
+                  disabled={modelLoaded || detecting || isLoadingModels}
+                  className="rounded-pill"
+                  style={{
+                    background: modelLoaded ? '#6c757d' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                    border: 'none',
+                    color: '#fff',
+                    fontWeight: 500
+                  }}
+                >
+                  {isLoadingModels ? (
+                    <>⏳ Loading...</>
+                  ) : (
+                    <>⚙️ {modelLoaded ? 'Models Ready' : 'Load Models'}</>
+                  )}
+                </Button>
+              </Col>
 
               <Col xs="auto">
                 <Form.Group className="mb-0">
@@ -2176,7 +2195,7 @@ function DetectionPageBinaryContent() {
                         </option>
                       ))}
                     </Form.Select>
-                    
+
                     <Form.Select
                       value={currentFormat}
                       onChange={(e) => {
@@ -2192,7 +2211,7 @@ function DetectionPageBinaryContent() {
                         </option>
                       )) || []}
                     </Form.Select>
-                    
+
                     {detecting && (
                       <Button
                         size="sm"
@@ -2212,91 +2231,91 @@ function DetectionPageBinaryContent() {
                     {detecting && ' • Use ♻️ for live switching'}
                   </Form.Text>
                 </Form.Group>
-                  </Col>
-                  
-                  <Col xs="auto">
-                    {!detecting ? (
-                      <Button 
-                        size="sm"
-                        onClick={startDetection}
-                        disabled={!modelLoaded || !videoLoaded}
-                        className="rounded-pill"
-                        style={{
-                          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                          border: 'none',
-                          color: '#fff',
-                          fontWeight: 500,
-                          boxShadow: '0 4px 15px 0 rgba(102, 126, 234, 0.4)'
-                        }}
-                      >
-                        Start Detection
-                      </Button>
-                    ) : (
-                      <Button 
-                        size="sm"
-                        onClick={stopDetection}
-                        className="rounded-pill"
-                        style={{
-                          background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
-                          border: 'none',
-                          color: '#fff',
-                          fontWeight: 500
-                        }}
-                      >
-                        Stop
-                      </Button>
-                    )}
-                  </Col>
-                  
-                  {/* Pause/Resume Button */}
-                  {detecting && (
-                    <Col xs="auto">
-                      <Button
-                        size="sm"
-                        onClick={() => setIsPaused(!isPaused)}
-                        className="rounded-pill"
-                        variant={isPaused ? 'success' : 'warning'}
-                        style={{
-                          fontWeight: 500,
-                          minWidth: '80px'
-                        }}
-                      >
-                        {isPaused ? '▶️ Resume' : '⏸️ Pause'}
-                      </Button>
-                    </Col>
-                  )}
-                  
-                  <Col xs="auto">
-                    <Badge 
-                      bg={detecting ? (isPaused ? 'warning' : 'success') : 'secondary'}
-                      className="px-3 py-2"
-                      style={{
-                        fontSize: '0.85rem',
-                        fontWeight: 500,
-                        animation: (detecting && !isPaused) ? 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' : 'none'
-                      }}
-                    >
-                      {detecting ? (isPaused ? '⏸️ PAUSED' : '● LIVE') : '○ Offline'}
-                    </Badge>
-                  </Col>
-                  
+              </Col>
+
+              <Col xs="auto">
+                {!detecting ? (
+                  <Button
+                    size="sm"
+                    onClick={startDetection}
+                    disabled={!modelLoaded || !videoLoaded}
+                    className="rounded-pill"
+                    style={{
+                      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                      border: 'none',
+                      color: '#fff',
+                      fontWeight: 500,
+                      boxShadow: '0 4px 15px 0 rgba(102, 126, 234, 0.4)'
+                    }}
+                  >
+                    Start Detection
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    onClick={stopDetection}
+                    className="rounded-pill"
+                    style={{
+                      background: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
+                      border: 'none',
+                      color: '#fff',
+                      fontWeight: 500
+                    }}
+                  >
+                    Stop
+                  </Button>
+                )}
+              </Col>
+
+              {/* Pause/Resume Button */}
+              {detecting && (
+                <Col xs="auto">
+                  <Button
+                    size="sm"
+                    onClick={() => setIsPaused(!isPaused)}
+                    className="rounded-pill"
+                    variant={isPaused ? 'success' : 'warning'}
+                    style={{
+                      fontWeight: 500,
+                      minWidth: '80px'
+                    }}
+                  >
+                    {isPaused ? '▶️ Resume' : '⏸️ Pause'}
+                  </Button>
+                </Col>
+              )}
+
+              <Col xs="auto">
+                <Badge
+                  bg={detecting ? (isPaused ? 'warning' : 'success') : 'secondary'}
+                  className="px-3 py-2"
+                  style={{
+                    fontSize: '0.85rem',
+                    fontWeight: 500,
+                    animation: (detecting && !isPaused) ? 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' : 'none'
+                  }}
+                >
+                  {detecting ? (isPaused ? '⏸️ PAUSED' : '● LIVE') : '○ Offline'}
+                </Badge>
+              </Col>
+
               <Col className="ms-auto">
                 <div className="d-flex align-items-center gap-2 justify-content-end">
-                      <Badge
+                  <Badge
                     bg={fps >= 30 ? 'success' : fps >= 20 ? 'warning' : 'danger'}
-                        className="px-2 py-1"
-                        style={{fontSize: '0.85rem', fontWeight: 600}}
-                      >
+                    className="px-2 py-1"
+                    style={{ fontSize: '0.85rem', fontWeight: 600 }}
+                  >
                     ⚡ {fps.toFixed(1)} FPS
                   </Badge>
-                  <Badge bg="info" className="px-2 py-1" style={{fontSize: '0.85rem', fontWeight: 600}}>
+                  <Badge bg="info" className="px-2 py-1" style={{ fontSize: '0.85rem', fontWeight: 600 }}>
                     Frame: {frameIdx}
-                      </Badge>
-                    </div>
-                  </Col>
-                </Row>
-              </Card.Body>
-            </Card>
+                  </Badge>
+                </div>
+              </Col>
+            </Row>
+          </Card.Body>
+        </Card>
 
         {/* Settings Modal Button - Fixed bottom left */}
         <Button
@@ -2332,8 +2351,8 @@ function DetectionPageBinaryContent() {
         </Button>
 
         {/* Settings Modal */}
-        <Modal 
-          show={showSettingsModal} 
+        <Modal
+          show={showSettingsModal}
           onHide={() => setShowSettingsModal(false)}
           size="lg"
           centered
@@ -2401,27 +2420,27 @@ function DetectionPageBinaryContent() {
                 💡 Tip: Most settings update live! Only YOLO/Tracking modules need restart
               </small>
             )}
-            
+
             <hr className="my-3" />
-            
+
             <h6 className="mb-3">Detection Parameters</h6>
             <Row>
               <Col md={3}>
                 <Form.Group className="mb-2">
                   <Form.Label>
-                    Confidence: {settings.conf.toFixed(2)} 
+                    Confidence: {settings.conf.toFixed(2)}
                     {detecting && <small className="text-success"> (live)</small>}
                   </Form.Label>
-                    <Form.Range
-                      value={settings.conf}
-                      min={0.1}
-                      max={0.9}
-                      step={0.05}
+                  <Form.Range
+                    value={settings.conf}
+                    min={0.1}
+                    max={0.9}
+                    step={0.05}
                     onChange={(e) => updateSettings('conf', parseFloat(e.target.value))}
                     disabled={false}
                   />
-                      </Form.Group>
-                    </Col>
+                </Form.Group>
+              </Col>
               <Col md={2}>
                 <Form.Group className="mb-2">
                   <Form.Label>
@@ -2436,8 +2455,8 @@ function DetectionPageBinaryContent() {
                     onChange={(e) => updateSettings('target_fps', parseInt(e.target.value))}
                     disabled={false}
                   />
-                      </Form.Group>
-                    </Col>
+                </Form.Group>
+              </Col>
               <Col md={2}>
                 <Form.Group className="mb-2">
                   <Form.Label>
@@ -2453,14 +2472,14 @@ function DetectionPageBinaryContent() {
                     disabled={false}
                   />
                 </Form.Group>
-                  </Col>
+              </Col>
               <Col md={2}>
                 <Form.Group className="mb-2">
                   <Form.Label>
                     Inference Size: {settings.inference_size}
                     {detecting && <small className="text-warning"> (restart)</small>}
                   </Form.Label>
-                        <Form.Select 
+                  <Form.Select
                     value={settings.inference_size}
                     onChange={(e) => updateSettings('inference_size', parseInt(e.target.value))}
                     disabled={false}
@@ -2469,16 +2488,16 @@ function DetectionPageBinaryContent() {
                     <option value="640">640 (Balanced)</option>
                     <option value="832">832 (YOLO11s Native)</option>
                     <option value="960">960 (Better)</option>
-                        </Form.Select>
-                      </Form.Group>
-                    </Col>
+                  </Form.Select>
+                </Form.Group>
+              </Col>
               <Col md={3}>
                 <Form.Group className="mb-2">
                   <Form.Label>
                     Encode Width: {settings.encode_width}
                     {detecting && <small className="text-success"> (live)</small>}
                   </Form.Label>
-                        <Form.Select 
+                  <Form.Select
                     value={settings.encode_width}
                     onChange={(e) => updateSettings('encode_width', parseInt(e.target.value))}
                     disabled={false}
@@ -2486,655 +2505,655 @@ function DetectionPageBinaryContent() {
                     <option value="800">800 (Fastest)</option>
                     <option value="960">960 (Fast)</option>
                     <option value="1280">1280 (Quality)</option>
-                        </Form.Select>
-                      </Form.Group>
-                    </Col>
-                  </Row>
-                  
-                  {detecting && (
-                    <Alert variant="info" className="mt-3 mb-0">
-                      <small>
-                        💡 <strong>Tip:</strong> Most settings update live! Only YOLO/Tracking modules need restart.
-                      </small>
-                    </Alert>
-                  )}
-                </Modal.Body>
-                <Modal.Footer>
-                  <Button variant="secondary" onClick={() => setShowSettingsModal(false)}>
-                    Close
-                  </Button>
-                </Modal.Footer>
-              </Modal>
+                  </Form.Select>
+                </Form.Group>
+              </Col>
+            </Row>
 
-              {/* Light State + Violations Panel - Above video */}
-              {(stoplineBounds || trafficLightState !== 'GREEN' || violations.length > 0 || tlRoiActive) && (
-                <div className="mb-3" style={{
-                  background: 'rgba(17, 24, 39, 0.95)',
-                  color: '#fff',
-                  padding: '12px 16px',
-                  borderRadius: '8px',
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
-                }}>
-                  <div className="d-flex justify-content-between align-items-center flex-wrap gap-3">
-                    {/* Traffic Light State */}
-                    <div className="d-flex align-items-center gap-2">
-                      <span style={{ fontSize: '20px' }}>🚦</span>
-                      <span
-                        style={{
-                          display: 'inline-block',
-                          padding: '6px 16px',
-                          borderRadius: '6px',
-                          background:
-                            trafficLightState === 'RED'
-                              ? '#ef4444'
-                              : trafficLightState === 'GREEN'
-                                ? '#22c55e'
-                                : trafficLightState === 'YELLOW'
-                                  ? '#eab308'
-                                  : '#6b7280',
-                          color: trafficLightState === 'YELLOW' ? '#000' : '#fff',
-                          fontWeight: 700,
-                          fontSize: '15px'
-                        }}
-                      >
-                        {trafficLightState}
-                      </span>
-                    </div>
+            {detecting && (
+              <Alert variant="info" className="mt-3 mb-0">
+                <small>
+                  💡 <strong>Tip:</strong> Most settings update live! Only YOLO/Tracking modules need restart.
+                </small>
+              </Alert>
+            )}
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="secondary" onClick={() => setShowSettingsModal(false)}>
+              Close
+            </Button>
+          </Modal.Footer>
+        </Modal>
 
-                    {/* TL ROI Info */}
-                    {tlRoiActive && tlRoi && (
-                      <div style={{ fontSize: '13px', color: '#d1d5db' }}>
-                        <strong>TL ROI:</strong> {tlRoi.w}×{tlRoi.h}px at ({Math.round(tlRoi.x)}, {Math.round(tlRoi.y)})
-                      </div>
-                    )}
-
-                    {/* Stopline Info */}
-                    {stoplineBounds && (
-                      <div style={{ fontSize: '13px', color: '#d1d5db' }}>
-                        <strong>Stopline:</strong> Y={Math.round(stoplineBounds.minY)}-{Math.round(stoplineBounds.maxY)}
-                      </div>
-                    )}
-
-                    {/* Violations */}
-                    <div className="d-flex align-items-center gap-2">
-                      <span style={{ fontSize: '18px' }}>🚨</span>
-                      <span style={{ fontSize: '13px', fontWeight: 600 }}>Vi Phạm:</span>
-                      <span 
-                        className="badge" 
-                        style={{ 
-                          background: violations.length > 0 ? '#ef4444' : '#6b7280',
-                          fontSize: '13px',
-                          padding: '4px 10px'
-                        }}
-                      >
-                        {violations.length}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Violations List */}
-                  {violations.length > 0 && (
-                    <div className="mt-2" style={{ 
-                      borderTop: '1px solid rgba(255,255,255,0.1)',
-                      paddingTop: '8px'
-                    }}>
-                      <div style={{ 
-                        display: 'flex', 
-                        gap: '6px', 
-                        flexWrap: 'wrap',
-                        maxHeight: '60px',
-                        overflowY: 'auto'
-                      }}>
-                        {violations.slice(0, 10).map((v, idx) => (
-                          <span
-                            key={`${v.trackId}-${v.frame}-${idx}`}
-                            style={{
-                              padding: '4px 8px',
-                              borderRadius: '4px',
-                              background: 'rgba(239,68,68,0.2)',
-                              border: '1px solid rgba(239,68,68,0.4)',
-                              fontSize: '12px',
-                              color: '#fca5a5',
-                              fontWeight: 600
-                            }}
-                          >
-                            #{v.trackId}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div style={{
-              position:'relative',
-              width:'100%',
-              maxWidth: '1280px',
-              aspectRatio:'16/9',
-              border:'2px solid #667eea',
-              background:'#000',
-              borderRadius: '8px',
-              overflow: 'hidden'
-            }}>
-                  {/* Main video canvas (z-index: 0) */}
-                  <canvas
-                    ref={canvasRef}
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width:'100%', 
-                  height:'100%', 
-                  background:'#000',
-                  zIndex: 0
-                }}
-                width={frameDimensions.width}
-                height={frameDimensions.height}
-              />
-
-              {/* Traffic Light ROI Canvas (z-index: 10) */}
-              <canvas
-                ref={tlCanvasRef}
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: '100%',
-                  height: '100%',
-                  pointerEvents: (isSelectingTLMode || isDrawingStopline) ? 'auto' : 'none',
-                  cursor: (isSelectingTLMode || isDrawingStopline) ? 'crosshair' : 'default',
-                  zIndex: 10
-                }}
-                width={frameDimensions.width}
-                height={frameDimensions.height}
-                onMouseDown={handleTLMouseDown}
-                onMouseMove={handleTLMouseMove}
-                onMouseUp={handleTLMouseUp}
-                onMouseLeave={handleTLMouseUp}
-              />
-
-              {/* Polygon ROI Overlay (z-index: 6) */}
-              <RoiOverlay
-                ref={overlayRef}
-                frameDimensions={frameDimensions}
-                rois={roiPolygons}
-                draftPoints={draftRoiPoints}
-                isDrawing={isDrawingRoi}
-                onPointerDown={handleRoiOverlayPointer}
-                mousePos={mousePos}
-                onMouseMove={handleRoiOverlayMouseMove}
-              />
-
-              {/* TL ROI Selection Instructions */}
-              {isSelectingTLMode && (
-                <div
+        {/* Light State + Violations Panel - Above video */}
+        {(stoplineBounds || trafficLightState !== 'GREEN' || violations.length > 0 || tlRoiActive) && (
+          <div className="mb-3" style={{
+            background: 'rgba(17, 24, 39, 0.95)',
+            color: '#fff',
+            padding: '12px 16px',
+            borderRadius: '8px',
+            border: '1px solid rgba(255,255,255,0.12)',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
+          }}>
+            <div className="d-flex justify-content-between align-items-center flex-wrap gap-3">
+              {/* Traffic Light State */}
+              <div className="d-flex align-items-center gap-2">
+                <span style={{ fontSize: '20px' }}>🚦</span>
+                <span
                   style={{
-                    position: 'absolute',
-                    top: '10px',
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    background: 'rgba(255, 215, 0, 0.95)',
-                    color: '#000',
-                    padding: '12px 24px',
-                    borderRadius: '8px',
-                    fontWeight: 'bold',
-                    fontSize: '14px',
-                    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
-                    zIndex: 15,
-                    textAlign: 'center'
+                    display: 'inline-block',
+                    padding: '6px 16px',
+                    borderRadius: '6px',
+                    background:
+                      trafficLightState === 'RED'
+                        ? '#ef4444'
+                        : trafficLightState === 'GREEN'
+                          ? '#22c55e'
+                          : trafficLightState === 'YELLOW'
+                            ? '#eab308'
+                            : '#6b7280',
+                    color: trafficLightState === 'YELLOW' ? '#000' : '#fff',
+                    fontWeight: 700,
+                    fontSize: '15px'
                   }}
                 >
-                  {!tlRoi && '🖱️ Click & drag to draw Traffic Light ROI'}
-                  {tlRoi && !isDrawingTL && !isMovingTL && !resizeHandle && '✅ Drag to move • Corners to resize'}
-                  {isDrawingTL && '✏️ Drawing ROI...'}
-                  {isMovingTL && '🔄 Moving ROI...'}
-                  {resizeHandle && '↔️ Resizing ROI...'}
+                  {trafficLightState}
+                </span>
+              </div>
+
+              {/* TL ROI Info */}
+              {tlRoiActive && tlRoi && (
+                <div style={{ fontSize: '13px', color: '#d1d5db' }}>
+                  <strong>TL ROI:</strong> {tlRoi.w}×{tlRoi.h}px at ({Math.round(tlRoi.x)}, {Math.round(tlRoi.y)})
                 </div>
               )}
 
+              {/* Stopline Info */}
+              {stoplineBounds && (
+                <div style={{ fontSize: '13px', color: '#d1d5db' }}>
+                  <strong>Stopline:</strong> Y={Math.round(stoplineBounds.minY)}-{Math.round(stoplineBounds.maxY)}
+                </div>
+              )}
 
+              {/* Violations */}
+              <div className="d-flex align-items-center gap-2">
+                <span style={{ fontSize: '18px' }}>🚨</span>
+                <span style={{ fontSize: '13px', fontWeight: 600 }}>Vi Phạm:</span>
+                <span
+                  className="badge"
+                  style={{
+                    background: violations.length > 0 ? '#ef4444' : '#6b7280',
+                    fontSize: '13px',
+                    padding: '4px 10px'
+                  }}
+                >
+                  {violations.length}
+                </span>
+              </div>
+            </div>
 
-
-
-              {/* Debug Overlay (Press 'D' to toggle) */}
-              {showDebugOverlay && (
+            {/* Violations List */}
+            {violations.length > 0 && (
+              <div className="mt-2" style={{
+                borderTop: '1px solid rgba(255,255,255,0.1)',
+                paddingTop: '8px'
+              }}>
                 <div style={{
-                  position: 'absolute',
-                  top: '10px',
-                  left: '10px',
-                  background: 'rgba(0, 0, 0, 0.8)',
-                  color: '#fff',
-                  padding: '12px',
-                  borderRadius: '8px',
-                  fontSize: '12px',
-                  fontFamily: 'monospace',
-                  zIndex: 10,
-                  minWidth: '200px'
+                  display: 'flex',
+                  gap: '6px',
+                  flexWrap: 'wrap',
+                  maxHeight: '60px',
+                  overflowY: 'auto'
                 }}>
-                  <div style={{ fontWeight: 'bold', marginBottom: '8px', color: '#00ff00' }}>
-                    🔧 Debug Info (Press D to hide)
-                  </div>
-                  <div>FPS: {fps.toFixed(1)} | Frame: {frameIdx}</div>
-                  <div>Model: {selectedModel.split('/').pop()}</div>
-                  <div>Format: {selectedModel.includes('.onnx') ? 'ONNX' : 'PyTorch'}</div>
-                  <div>Resolution: {frameDimensions.width}x{frameDimensions.height}</div>
-                  <div style={{ marginTop: '6px', fontWeight: 'bold' }}>Modules:</div>
-                  <div style={{ marginLeft: '10px' }}>
-                    <div>YOLO: {modules.yolo ? '✅' : '❌'}</div>
-                    <div>Tracking: {modules.tracking ? '✅' : '❌'}</div>
-                    <div>BBox: {modules.bboxDrawing ? '✅' : '❌'}</div>
-                    <div>ROI: {modules.roi ? '✅' : '❌'} ({roiPolygons.length})</div>
-                    <div>ROI Draw: {modules.roiDrawing ? '✅' : '❌'}</div>
-                  </div>
-                  <div style={{ marginTop: '6px' }}>
-                    Status: {connected ? '🟢 Connected' : '🔴 Disconnected'}
-                  </div>
+                  {violations.slice(0, 10).map((v, idx) => (
+                    <span
+                      key={`${v.trackId}-${v.frame}-${idx}`}
+                      style={{
+                        padding: '4px 8px',
+                        borderRadius: '4px',
+                        background: 'rgba(239,68,68,0.2)',
+                        border: '1px solid rgba(239,68,68,0.4)',
+                        fontSize: '12px',
+                        color: '#fca5a5',
+                        fontWeight: 600
+                      }}
+                    >
+                      #{v.trackId}
+                    </span>
+                  ))}
                 </div>
-              )}
+              </div>
+            )}
+          </div>
+        )}
 
-              {!detecting && !isWarmingUp && (
-                  <div style={{
-                    position: 'absolute',
-                  top: '50%',
-                  left: '50%',
-                  transform: 'translate(-50%, -50%)',
-                  color: '#fff',
-                  fontSize: '1.5rem',
-                  textAlign: 'center'
-                }}>
-                  🎥 Ready for Video Detection<br/>
-                  <small style={{fontSize: '0.8rem', opacity: 0.7}}>
-                    {videoLoaded ? 'Click Start Detection' : 'Upload video to start detection'}
-                    <br/>Press 'D' for debug overlay
-                                      </small>
-                  </div>
-                      )}
-              
-              {/* Warmup Progress Overlay */}
-              {isWarmingUp && (
+        <div style={{
+          position: 'relative',
+          width: '100%',
+          maxWidth: '1280px',
+          aspectRatio: '16/9',
+          border: '2px solid #667eea',
+          background: '#000',
+          borderRadius: '8px',
+          overflow: 'hidden'
+        }}>
+          {/* Main video canvas (z-index: 0) */}
+          <canvas
+            ref={canvasRef}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: '100%',
+              background: '#000',
+              zIndex: 0
+            }}
+            width={frameDimensions.width}
+            height={frameDimensions.height}
+          />
+
+          {/* Traffic Light ROI Canvas (z-index: 10) */}
+          <canvas
+            ref={tlCanvasRef}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: '100%',
+              pointerEvents: (isSelectingTLMode || isDrawingStopline) ? 'auto' : 'none',
+              cursor: (isSelectingTLMode || isDrawingStopline) ? 'crosshair' : 'default',
+              zIndex: 10
+            }}
+            width={frameDimensions.width}
+            height={frameDimensions.height}
+            onMouseDown={handleTLMouseDown}
+            onMouseMove={handleTLMouseMove}
+            onMouseUp={handleTLMouseUp}
+            onMouseLeave={handleTLMouseUp}
+          />
+
+          {/* Polygon ROI Overlay (z-index: 6) */}
+          <RoiOverlay
+            ref={overlayRef}
+            frameDimensions={frameDimensions}
+            rois={roiPolygons}
+            draftPoints={draftRoiPoints}
+            isDrawing={isDrawingRoi}
+            onPointerDown={handleRoiOverlayPointer}
+            mousePos={mousePos}
+            onMouseMove={handleRoiOverlayMouseMove}
+          />
+
+          {/* TL ROI Selection Instructions */}
+          {isSelectingTLMode && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '10px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                background: 'rgba(255, 215, 0, 0.95)',
+                color: '#000',
+                padding: '12px 24px',
+                borderRadius: '8px',
+                fontWeight: 'bold',
+                fontSize: '14px',
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                zIndex: 15,
+                textAlign: 'center'
+              }}
+            >
+              {!tlRoi && '🖱️ Click & drag to draw Traffic Light ROI'}
+              {tlRoi && !isDrawingTL && !isMovingTL && !resizeHandle && '✅ Drag to move • Corners to resize'}
+              {isDrawingTL && '✏️ Drawing ROI...'}
+              {isMovingTL && '🔄 Moving ROI...'}
+              {resizeHandle && '↔️ Resizing ROI...'}
+            </div>
+          )}
+
+
+
+
+
+          {/* Debug Overlay (Press 'D' to toggle) */}
+          {showDebugOverlay && (
+            <div style={{
+              position: 'absolute',
+              top: '10px',
+              left: '10px',
+              background: 'rgba(0, 0, 0, 0.8)',
+              color: '#fff',
+              padding: '12px',
+              borderRadius: '8px',
+              fontSize: '12px',
+              fontFamily: 'monospace',
+              zIndex: 10,
+              minWidth: '200px'
+            }}>
+              <div style={{ fontWeight: 'bold', marginBottom: '8px', color: '#00ff00' }}>
+                🔧 Debug Info (Press D to hide)
+              </div>
+              <div>FPS: {fps.toFixed(1)} | Frame: {frameIdx}</div>
+              <div>Model: {selectedModel.split('/').pop()}</div>
+              <div>Format: {selectedModel.includes('.onnx') ? 'ONNX' : 'PyTorch'}</div>
+              <div>Resolution: {frameDimensions.width}x{frameDimensions.height}</div>
+              <div style={{ marginTop: '6px', fontWeight: 'bold' }}>Modules:</div>
+              <div style={{ marginLeft: '10px' }}>
+                <div>YOLO: {modules.yolo ? '✅' : '❌'}</div>
+                <div>Tracking: {modules.tracking ? '✅' : '❌'}</div>
+                <div>BBox: {modules.bboxDrawing ? '✅' : '❌'}</div>
+                <div>ROI: {modules.roi ? '✅' : '❌'} ({roiPolygons.length})</div>
+                <div>ROI Draw: {modules.roiDrawing ? '✅' : '❌'}</div>
+              </div>
+              <div style={{ marginTop: '6px' }}>
+                Status: {connected ? '🟢 Connected' : '🔴 Disconnected'}
+              </div>
+            </div>
+          )}
+
+          {!detecting && !isWarmingUp && (
+            <div style={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              color: '#fff',
+              fontSize: '1.5rem',
+              textAlign: 'center'
+            }}>
+              🎥 Ready for Video Detection<br />
+              <small style={{ fontSize: '0.8rem', opacity: 0.7 }}>
+                {videoLoaded ? 'Click Start Detection' : 'Upload video to start detection'}
+                <br />Press 'D' for debug overlay
+              </small>
+            </div>
+          )}
+
+          {/* Warmup Progress Overlay */}
+          {isWarmingUp && (
+            <div style={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              color: '#fff',
+              textAlign: 'center',
+              zIndex: 10,
+              background: 'rgba(0, 0, 0, 0.85)',
+              padding: '2rem 3rem',
+              borderRadius: '16px',
+              minWidth: '350px',
+              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
+              border: '2px solid rgba(102, 126, 234, 0.3)'
+            }}>
+              <div style={{ fontSize: '3rem', marginBottom: '1rem', animation: 'pulse 2s infinite' }}>
+                🔥
+              </div>
+              <div style={{ fontSize: '1.3rem', fontWeight: 'bold', marginBottom: '0.5rem' }}>
+                Warming Up Models
+              </div>
+              <div style={{ fontSize: '0.95rem', opacity: 0.8, marginBottom: '1.5rem' }}>
+                Preparing for optimal performance...
+              </div>
+              {/* Progress Bar */}
+              <div style={{
+                width: '100%',
+                height: '10px',
+                background: 'rgba(255, 255, 255, 0.2)',
+                borderRadius: '5px',
+                overflow: 'hidden',
+                marginBottom: '0.8rem'
+              }}>
                 <div style={{
-                  position: 'absolute',
-                  top: '50%',
-                  left: '50%',
-                  transform: 'translate(-50%, -50%)',
-                  color: '#fff',
-                  textAlign: 'center',
-                  zIndex: 10,
-                  background: 'rgba(0, 0, 0, 0.85)',
-                  padding: '2rem 3rem',
-                  borderRadius: '16px',
-                  minWidth: '350px',
-                  boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
-                  border: '2px solid rgba(102, 126, 234, 0.3)'
-                }}>
-                  <div style={{ fontSize: '3rem', marginBottom: '1rem', animation: 'pulse 2s infinite' }}>
-                    🔥
-                  </div>
-                  <div style={{ fontSize: '1.3rem', fontWeight: 'bold', marginBottom: '0.5rem' }}>
-                    Warming Up Models
-                  </div>
-                  <div style={{ fontSize: '0.95rem', opacity: 0.8, marginBottom: '1.5rem' }}>
-                    Preparing for optimal performance...
-                  </div>
-                  {/* Progress Bar */}
-                  <div style={{
-                    width: '100%',
-                    height: '10px',
-                    background: 'rgba(255, 255, 255, 0.2)',
-                    borderRadius: '5px',
-                    overflow: 'hidden',
-                    marginBottom: '0.8rem'
-                  }}>
-                    <div style={{
-                      width: `${warmupProgress}%`,
-                      height: '100%',
-                      background: 'linear-gradient(90deg, #667eea 0%, #764ba2 100%)',
-                      transition: 'width 0.1s ease',
-                      borderRadius: '5px',
-                      boxShadow: '0 0 10px rgba(102, 126, 234, 0.5)'
-                    }} />
-                  </div>
-                  <div style={{ fontSize: '0.9rem', opacity: 0.7, fontWeight: 500 }}>
-                    {Math.round(warmupProgress)}% • {Math.max(0, Math.ceil((100 - warmupProgress) / 20))}s remaining
-                  </div>
-                </div>
-              )}
-                    </div>
+                  width: `${warmupProgress}%`,
+                  height: '100%',
+                  background: 'linear-gradient(90deg, #667eea 0%, #764ba2 100%)',
+                  transition: 'width 0.1s ease',
+                  borderRadius: '5px',
+                  boxShadow: '0 0 10px rgba(102, 126, 234, 0.5)'
+                }} />
+              </div>
+              <div style={{ fontSize: '0.9rem', opacity: 0.7, fontWeight: 500 }}>
+                {Math.round(warmupProgress)}% • {Math.max(0, Math.ceil((100 - warmupProgress) / 20))}s remaining
+              </div>
+            </div>
+          )}
+        </div>
 
-            {/* ==== TRAFFIC LIGHT ROI CONTROL & PREVIEW PANEL ==== */}
-            <Card className="mt-4" style={{ 
-              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-              border: 'none',
-              boxShadow: '0 8px 32px rgba(102, 126, 234, 0.3)'
-            }}>
-              <Card.Body>
-                <Row className="align-items-center">
-                  <Col md={8}>
-                    <h5 className="text-white mb-3">
-                      🚦 Traffic Light Detection (Separate ROI)
-                    </h5>
-                    
-                    <div className="d-flex gap-2 flex-wrap mb-3">
-                      {!isSelectingTLMode && !tlRoiActive && (
-                        <Button
-                          onClick={() => {
-                            setIsSelectingTLMode(true);
-                            setTlRoi(null);
-                          }}
-                          variant="light"
-                          size="sm"
-                          className="fw-bold"
-                          disabled={!videoLoaded}
-                        >
-                          🖱️ Draw Traffic Light ROI
-                        </Button>
-                      )}
-                      
-                      {isSelectingTLMode && (
-                        <>
-                          <Button
-                            onClick={confirmTLROI}
-                            variant="success"
-                            size="sm"
-                            className="fw-bold"
-                            disabled={!tlRoi || tlRoi.w < 20 || tlRoi.h < 20}
-                          >
-                            ✅ Confirm & Start Detection
-                          </Button>
-                          
-                          <Button
-                            onClick={() => {
-                              setIsSelectingTLMode(false);
-                              setTlRoi(null);
-                            }}
-                            variant="danger"
-                            size="sm"
-                          >
-                            ❌ Cancel
-                          </Button>
-                          
-                          {tlRoi && (
-                            <Button
-                              onClick={() => setTlRoi(null)}
-                              variant="warning"
-                              size="sm"
-                            >
-                              🔄 Clear ROI
-                            </Button>
-                          )}
-                        </>
-                      )}
-                      
-                      {tlRoiActive && (
-                        <>
-                          <Button
-                            onClick={() => {
-                              setIsSelectingTLMode(true);
-                              setTlRoiActive(false);
-                              stopTrafficLightWS();
-                            }}
-                            variant="warning"
-                            size="sm"
-                          >
-                            ✏️ Redraw ROI
-                          </Button>
-                          
-                          <Button
-                            onClick={stopTrafficLightWS}
-                            variant="danger"
-                            size="sm"
-                          >
-                            ⏹️ Stop Detection
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                    
-                    {tlRoi && isSelectingTLMode && (
-                      <>
-                        <Alert variant="success" className="mb-2">
-                          <small>
-                            ✅ <strong>ROI Selected:</strong> {Math.round(tlRoi.w)}×{Math.round(tlRoi.h)} pixels
-                            <br/>�r Position: ({Math.round(tlRoi.x)}, {Math.round(tlRoi.y)})
-                            <br/>💡 Drag to move • Corners to resize • Edit values below
-                          </small>
-                        </Alert>
-                        
-                        <div className="mb-3">
-                          <Form.Label className="text-white fw-bold mb-2" style={{ fontSize: '0.9rem' }}>
-                            Fine-tune ROI Coordinates (Pixels)
-                          </Form.Label>
-                          <Row className="g-2">
-                            <Col xs={3}>
-                              <Form.Control
-                                type="number"
-                                value={Math.round(tlRoi.x)}
-                                onChange={(e) => {
-                                  const newX = parseInt(e.target.value) || 0;
-                                  setTlRoi(prev => ({ ...prev, x: Math.max(0, Math.min(newX, frameDimensions.width - prev.w)) }));
-                                }}
-                                size="sm"
-                              />
-                              <Form.Text className="text-white-50" style={{ fontSize: '0.75rem' }}>X</Form.Text>
-                            </Col>
-                            <Col xs={3}>
-                              <Form.Control
-                                type="number"
-                                value={Math.round(tlRoi.y)}
-                                onChange={(e) => {
-                                  const newY = parseInt(e.target.value) || 0;
-                                  setTlRoi(prev => ({ ...prev, y: Math.max(0, Math.min(newY, frameDimensions.height - prev.h)) }));
-                                }}
-                                size="sm"
-                              />
-                              <Form.Text className="text-white-50" style={{ fontSize: '0.75rem' }}>Y</Form.Text>
-                            </Col>
-                            <Col xs={3}>
-                              <Form.Control
-                                type="number"
-                                value={Math.round(tlRoi.w)}
-                                onChange={(e) => {
-                                  const newW = parseInt(e.target.value) || 20;
-                                  setTlRoi(prev => ({ ...prev, w: Math.max(20, Math.min(newW, frameDimensions.width - prev.x)) }));
-                                }}
-                                size="sm"
-                              />
-                              <Form.Text className="text-white-50" style={{ fontSize: '0.75rem' }}>Width</Form.Text>
-                            </Col>
-                            <Col xs={3}>
-                              <Form.Control
-                                type="number"
-                                value={Math.round(tlRoi.h)}
-                                onChange={(e) => {
-                                  const newH = parseInt(e.target.value) || 20;
-                                  setTlRoi(prev => ({ ...prev, h: Math.max(20, Math.min(newH, frameDimensions.height - prev.y)) }));
-                                }}
-                                size="sm"
-                              />
-                              <Form.Text className="text-white-50" style={{ fontSize: '0.75rem' }}>Height</Form.Text>
-                            </Col>
-                          </Row>
-                        </div>
-                      </>
-                    )}
-                    
-                    {!isSelectingTLMode && !tlRoiActive && (
-                      <Alert variant="info" className="mb-0">
-                        <small>
-                          💡 <strong>How to use:</strong>
-                          <br/>1. Click "Draw Traffic Light ROI"
-                          <br/>2. Click & drag on video to draw rectangle
-                          <br/>3. Adjust position/size as needed
-                          <br/>4. Click "Confirm & Start Detection"
-                        </small>
-                      </Alert>
-                    )}
-                  </Col>
-                  
-                  <Col md={4}>
-                    <div className="bg-white rounded p-3">
-                      <h6 className="mb-2 text-dark">Traffic Light Status</h6>
-                      
-                      {trafficLightFrame ? (
-                        <div className="mb-2">
-                          <img
-                            src={trafficLightFrame}
-                            alt="Traffic Light ROI"
-                            className="w-100 rounded border border-secondary"
-                            style={{ maxHeight: '120px', objectFit: 'contain' }}
-                          />
-                        </div>
-                      ) : (
-                        <div 
-                          className="mb-2 d-flex align-items-center justify-content-center bg-secondary rounded"
-                          style={{ height: '120px' }}
-                        >
-                          <span className="text-white">No ROI frame yet</span>
-                        </div>
-                      )}
-                      
-                      <div className="d-flex justify-content-between align-items-center">
-                        <span className="fw-bold text-dark">State:</span>
-                        <span
-                          className="px-3 py-1 rounded fw-bold"
-                          style={{
-                            background: 
-                              trafficLightState === "RED" ? '#ef4444' :
-                              trafficLightState === "GREEN" ? '#22c55e' :
-                              trafficLightState === "YELLOW" ? '#eab308' :
-                              '#6b7280',
-                            color: trafficLightState === "YELLOW" ? '#000' : '#fff'
-                          }}
-                        >
-                          {trafficLightState}
-                        </span>
-                      </div>
-                      
-                      {trafficLightConfidence !== null && (
-                        <div className="mt-2 text-dark">
-                          <small>
-                            Confidence: <strong>{(trafficLightConfidence * 100).toFixed(1)}%</strong>
-                          </small>
-                        </div>
-                      )}
-                    </div>
-                  </Col>
-                </Row>
-              </Card.Body>
-            </Card>
-
-            {/* ==== STOPLINE CONTROL PANEL ==== */}
-            <Card className="mt-4" style={{ 
-              background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
-              border: 'none',
-              boxShadow: '0 8px 32px rgba(239, 68, 68, 0.3)'
-            }}>
-              <Card.Body>
+        {/* ==== TRAFFIC LIGHT ROI CONTROL & PREVIEW PANEL ==== */}
+        <Card className="mt-4" style={{
+          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+          border: 'none',
+          boxShadow: '0 8px 32px rgba(102, 126, 234, 0.3)'
+        }}>
+          <Card.Body>
+            <Row className="align-items-center">
+              <Col md={8}>
                 <h5 className="text-white mb-3">
-                  🛑 Stopline Configuration
+                  🚦 Traffic Light Detection (Separate ROI)
                 </h5>
-                
+
                 <div className="d-flex gap-2 flex-wrap mb-3">
-                  {!isDrawingStopline && !stoplineActive && (
+                  {!isSelectingTLMode && !tlRoiActive && (
                     <Button
                       onClick={() => {
-                        setIsDrawingStopline(true);
-                        setStopline(null);
+                        setIsSelectingTLMode(true);
+                        setTlRoi(null);
                       }}
                       variant="light"
                       size="sm"
                       className="fw-bold"
                       disabled={!videoLoaded}
                     >
-                      ✏️ Draw Stopline
+                      🖱️ Draw Traffic Light ROI
                     </Button>
                   )}
-                  
-                  {isDrawingStopline && (
+
+                  {isSelectingTLMode && (
                     <>
                       <Button
-                        onClick={saveStopline}
+                        onClick={confirmTLROI}
                         variant="success"
                         size="sm"
                         className="fw-bold"
-                        disabled={!stopline}
+                        disabled={!tlRoi || tlRoi.w < 20 || tlRoi.h < 20}
                       >
-                        ✅ Save Stopline
+                        ✅ Confirm & Start Detection
                       </Button>
-                      
+
                       <Button
                         onClick={() => {
-                          setIsDrawingStopline(false);
-                          setStopline(null);
+                          setIsSelectingTLMode(false);
+                          setTlRoi(null);
                         }}
                         variant="danger"
                         size="sm"
                       >
                         ❌ Cancel
                       </Button>
+
+                      {tlRoi && (
+                        <Button
+                          onClick={() => setTlRoi(null)}
+                          variant="warning"
+                          size="sm"
+                        >
+                          🔄 Clear ROI
+                        </Button>
+                      )}
                     </>
                   )}
-                  
-                  {stoplineActive && (
+
+                  {tlRoiActive && (
                     <>
                       <Button
                         onClick={() => {
-                          setIsDrawingStopline(true);
-                          setStoplineActive(false);
+                          setIsSelectingTLMode(true);
+                          setTlRoiActive(false);
+                          stopTrafficLightWS();
                         }}
                         variant="warning"
                         size="sm"
                       >
-                        ✏️ Edit Stopline
+                        ✏️ Redraw ROI
                       </Button>
-                      
+
                       <Button
-                        onClick={deleteStopline}
+                        onClick={stopTrafficLightWS}
                         variant="danger"
                         size="sm"
                       >
-                        🗑️ Delete
+                        ⏹️ Stop Detection
                       </Button>
                     </>
                   )}
                 </div>
-                
-                {stopline && isDrawingStopline && (
-                  <Alert variant="success" className="mb-0">
-                    <small>
-                      ✅ <strong>Stopline:</strong> ({Math.round(stopline.x1)}, {Math.round(stopline.y1)}) → ({Math.round(stopline.x2)}, {Math.round(stopline.y2)})
-                      <br/>💡 Drag line to move • Drag endpoints to adjust • Click Save when ready
-                    </small>
-                  </Alert>
+
+                {tlRoi && isSelectingTLMode && (
+                  <>
+                    <Alert variant="success" className="mb-2">
+                      <small>
+                        ✅ <strong>ROI Selected:</strong> {Math.round(tlRoi.w)}×{Math.round(tlRoi.h)} pixels
+                        <br />�r Position: ({Math.round(tlRoi.x)}, {Math.round(tlRoi.y)})
+                        <br />💡 Drag to move • Corners to resize • Edit values below
+                      </small>
+                    </Alert>
+
+                    <div className="mb-3">
+                      <Form.Label className="text-white fw-bold mb-2" style={{ fontSize: '0.9rem' }}>
+                        Fine-tune ROI Coordinates (Pixels)
+                      </Form.Label>
+                      <Row className="g-2">
+                        <Col xs={3}>
+                          <Form.Control
+                            type="number"
+                            value={Math.round(tlRoi.x)}
+                            onChange={(e) => {
+                              const newX = parseInt(e.target.value) || 0;
+                              setTlRoi(prev => ({ ...prev, x: Math.max(0, Math.min(newX, frameDimensions.width - prev.w)) }));
+                            }}
+                            size="sm"
+                          />
+                          <Form.Text className="text-white-50" style={{ fontSize: '0.75rem' }}>X</Form.Text>
+                        </Col>
+                        <Col xs={3}>
+                          <Form.Control
+                            type="number"
+                            value={Math.round(tlRoi.y)}
+                            onChange={(e) => {
+                              const newY = parseInt(e.target.value) || 0;
+                              setTlRoi(prev => ({ ...prev, y: Math.max(0, Math.min(newY, frameDimensions.height - prev.h)) }));
+                            }}
+                            size="sm"
+                          />
+                          <Form.Text className="text-white-50" style={{ fontSize: '0.75rem' }}>Y</Form.Text>
+                        </Col>
+                        <Col xs={3}>
+                          <Form.Control
+                            type="number"
+                            value={Math.round(tlRoi.w)}
+                            onChange={(e) => {
+                              const newW = parseInt(e.target.value) || 20;
+                              setTlRoi(prev => ({ ...prev, w: Math.max(20, Math.min(newW, frameDimensions.width - prev.x)) }));
+                            }}
+                            size="sm"
+                          />
+                          <Form.Text className="text-white-50" style={{ fontSize: '0.75rem' }}>Width</Form.Text>
+                        </Col>
+                        <Col xs={3}>
+                          <Form.Control
+                            type="number"
+                            value={Math.round(tlRoi.h)}
+                            onChange={(e) => {
+                              const newH = parseInt(e.target.value) || 20;
+                              setTlRoi(prev => ({ ...prev, h: Math.max(20, Math.min(newH, frameDimensions.height - prev.y)) }));
+                            }}
+                            size="sm"
+                          />
+                          <Form.Text className="text-white-50" style={{ fontSize: '0.75rem' }}>Height</Form.Text>
+                        </Col>
+                      </Row>
+                    </div>
+                  </>
                 )}
 
-                {stoplineActive && stopline && !isDrawingStopline && (
-                  <Alert variant="success" className="mb-0">
-                    <small>
-                      ✅ <strong>Stopline locked:</strong> ({Math.round(stopline.x1)}, {Math.round(stopline.y1)}) → ({Math.round(stopline.x2)}, {Math.round(stopline.y2)})
-                      <br/>📍 Midpoint: ({Math.round((stopline.x1 + stopline.x2) / 2)}, {Math.round((stopline.y1 + stopline.y2) / 2)})
-                    </small>
-                  </Alert>
-                )}
-
-                {!isDrawingStopline && !stoplineActive && (
+                {!isSelectingTLMode && !tlRoiActive && (
                   <Alert variant="info" className="mb-0">
                     <small>
                       💡 <strong>How to use:</strong>
-                      <br/>1. Click "Draw Stopline"
-                      <br/>2. Click two points on video to draw line
-                      <br/>3. Adjust position as needed
-                      <br/>4. Click "Save Stopline"
+                      <br />1. Click "Draw Traffic Light ROI"
+                      <br />2. Click & drag on video to draw rectangle
+                      <br />3. Adjust position/size as needed
+                      <br />4. Click "Confirm & Start Detection"
                     </small>
                   </Alert>
                 )}
-              </Card.Body>
-            </Card>
+              </Col>
+
+              <Col md={4}>
+                <div className="bg-white rounded p-3">
+                  <h6 className="mb-2 text-dark">Traffic Light Status</h6>
+
+                  {trafficLightFrame ? (
+                    <div className="mb-2">
+                      <img
+                        src={trafficLightFrame}
+                        alt="Traffic Light ROI"
+                        className="w-100 rounded border border-secondary"
+                        style={{ maxHeight: '120px', objectFit: 'contain' }}
+                      />
+                    </div>
+                  ) : (
+                    <div
+                      className="mb-2 d-flex align-items-center justify-content-center bg-secondary rounded"
+                      style={{ height: '120px' }}
+                    >
+                      <span className="text-white">No ROI frame yet</span>
+                    </div>
+                  )}
+
+                  <div className="d-flex justify-content-between align-items-center">
+                    <span className="fw-bold text-dark">State:</span>
+                    <span
+                      className="px-3 py-1 rounded fw-bold"
+                      style={{
+                        background:
+                          trafficLightState === "RED" ? '#ef4444' :
+                            trafficLightState === "GREEN" ? '#22c55e' :
+                              trafficLightState === "YELLOW" ? '#eab308' :
+                                '#6b7280',
+                        color: trafficLightState === "YELLOW" ? '#000' : '#fff'
+                      }}
+                    >
+                      {trafficLightState}
+                    </span>
+                  </div>
+
+                  {trafficLightConfidence !== null && (
+                    <div className="mt-2 text-dark">
+                      <small>
+                        Confidence: <strong>{(trafficLightConfidence * 100).toFixed(1)}%</strong>
+                      </small>
+                    </div>
+                  )}
+                </div>
+              </Col>
+            </Row>
+          </Card.Body>
+        </Card>
+
+        {/* ==== STOPLINE CONTROL PANEL ==== */}
+        <Card className="mt-4" style={{
+          background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+          border: 'none',
+          boxShadow: '0 8px 32px rgba(239, 68, 68, 0.3)'
+        }}>
+          <Card.Body>
+            <h5 className="text-white mb-3">
+              🛑 Stopline Configuration
+            </h5>
+
+            <div className="d-flex gap-2 flex-wrap mb-3">
+              {!isDrawingStopline && !stoplineActive && (
+                <Button
+                  onClick={() => {
+                    setIsDrawingStopline(true);
+                    setStopline(null);
+                  }}
+                  variant="light"
+                  size="sm"
+                  className="fw-bold"
+                  disabled={!videoLoaded}
+                >
+                  ✏️ Draw Stopline
+                </Button>
+              )}
+
+              {isDrawingStopline && (
+                <>
+                  <Button
+                    onClick={saveStopline}
+                    variant="success"
+                    size="sm"
+                    className="fw-bold"
+                    disabled={!stopline}
+                  >
+                    ✅ Save Stopline
+                  </Button>
+
+                  <Button
+                    onClick={() => {
+                      setIsDrawingStopline(false);
+                      setStopline(null);
+                    }}
+                    variant="danger"
+                    size="sm"
+                  >
+                    ❌ Cancel
+                  </Button>
+                </>
+              )}
+
+              {stoplineActive && (
+                <>
+                  <Button
+                    onClick={() => {
+                      setIsDrawingStopline(true);
+                      setStoplineActive(false);
+                    }}
+                    variant="warning"
+                    size="sm"
+                  >
+                    ✏️ Edit Stopline
+                  </Button>
+
+                  <Button
+                    onClick={deleteStopline}
+                    variant="danger"
+                    size="sm"
+                  >
+                    🗑️ Delete
+                  </Button>
+                </>
+              )}
+            </div>
+
+            {stopline && isDrawingStopline && (
+              <Alert variant="success" className="mb-0">
+                <small>
+                  ✅ <strong>Stopline:</strong> ({Math.round(stopline.x1)}, {Math.round(stopline.y1)}) → ({Math.round(stopline.x2)}, {Math.round(stopline.y2)})
+                  <br />💡 Drag line to move • Drag endpoints to adjust • Click Save when ready
+                </small>
+              </Alert>
+            )}
+
+            {stoplineActive && stopline && !isDrawingStopline && (
+              <Alert variant="success" className="mb-0">
+                <small>
+                  ✅ <strong>Stopline locked:</strong> ({Math.round(stopline.x1)}, {Math.round(stopline.y1)}) → ({Math.round(stopline.x2)}, {Math.round(stopline.y2)})
+                  <br />📍 Midpoint: ({Math.round((stopline.x1 + stopline.x2) / 2)}, {Math.round((stopline.y1 + stopline.y2) / 2)})
+                </small>
+              </Alert>
+            )}
+
+            {!isDrawingStopline && !stoplineActive && (
+              <Alert variant="info" className="mb-0">
+                <small>
+                  💡 <strong>How to use:</strong>
+                  <br />1. Click "Draw Stopline"
+                  <br />2. Click two points on video to draw line
+                  <br />3. Adjust position as needed
+                  <br />4. Click "Save Stopline"
+                </small>
+              </Alert>
+            )}
+          </Card.Body>
+        </Card>
 
 
-                                  </div>
+      </div>
     </>
   );
 }

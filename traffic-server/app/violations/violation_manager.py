@@ -91,6 +91,10 @@ class ViolationManager:
         self.stoplines.pop(camera_id, None)
         logger.info(f"🗑️ Removed violation engine for camera {camera_id}")
 
+    def clear(self, camera_id: str) -> None:
+        """Alias for remove_camera to clear state"""
+        self.remove_camera(camera_id)
+
 
 # Global violation manager instance
 violation_manager = ViolationManager()

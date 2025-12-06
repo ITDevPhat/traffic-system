@@ -19,7 +19,7 @@ from app.violations.violation_manager import violation_manager
 logger = logging.getLogger(__name__)
 
 # Import ROI storage from router
-from app.routers.traffic_light_router import roi_storage
+from app.routers.traffic_light_router import roi_storage, clear_roi
 
 router = APIRouter(
     prefix="/api/traffic-light",
@@ -132,7 +132,6 @@ def detect_traffic_light_state(roi_frame: np.ndarray) -> tuple:
     else:
         return "GREEN", confidence
 
-
 @router.websocket("/realtime")
 async def ws_traffic_light_realtime(
     websocket: WebSocket,
@@ -162,6 +161,13 @@ async def ws_traffic_light_realtime(
     await websocket.accept()
     logger.info("✅ WebSocket accepted")
     
+    # RESET STATE ON NEW CONNECTION
+    # When a new connection is made for a specific camera, clear any old state
+    # to prevent "ghost" ROIs or stale violation tracking.
+    clear_roi(camera_id)
+    violation_manager.clear(camera_id)
+    logger.info(f"[RESET] Cleared ROI and violation state for {camera_id}")
+    
     stream = None
     
     try:
@@ -185,6 +191,30 @@ async def ws_traffic_light_realtime(
         
         stream.start()
         
+        # Load stopline configuration for violation detection
+        if enable_violation:
+            try:
+                from pathlib import Path
+                
+                config_path = Path(__file__).parent.parent / "data" / "traffic_light" / f"{camera_id}.json"
+                if config_path.exists():
+                    with open(config_path) as f:
+                        config = json.load(f)
+                    
+                    stopline = config.get("stopline")
+                    if stopline:
+                        violation_manager.set_stopline(
+                            camera_id=camera_id,
+                            stopline=stopline
+                        )
+                        logger.info(f"✅ Loaded stopline for {camera_id}: {stopline}")
+                    else:
+                        logger.warning(f"⚠️ No stopline in config for {camera_id} - violations will not be detected")
+                else:
+                    logger.warning(f"⚠️ Config file not found: {config_path}")
+            except Exception as e:
+                logger.error(f"❌ Failed to load stopline config: {e}", exc_info=True)
+        
         # Send info packet
         info = stream.info_packet()
         info['traffic_light_enabled'] = enable_traffic_light
@@ -200,6 +230,14 @@ async def ws_traffic_light_realtime(
             max_consecutive_errors = 3
             last_tl_update = 0
             tl_update_interval = 0.5  # Update TL every 500ms
+            
+            # Cache traffic light state to use for all frames
+            cached_tl_state = {
+                'state': 'UNKNOWN',
+                'confidence': 0.0,
+                'roi_frame': None,
+                'roi_bounds': None
+            }
             
             while True:
                 # Check connection
@@ -227,6 +265,7 @@ async def ws_traffic_light_realtime(
                     import time
                     current_time = time.time()
                     
+                    # Update traffic light detection every 500ms
                     if enable_traffic_light and (current_time - last_tl_update) >= tl_update_interval:
                         # Decode JPEG to get frame for TL detection
                         frame_array = np.frombuffer(jpeg_bytes, dtype=np.uint8)
@@ -247,8 +286,8 @@ async def ws_traffic_light_realtime(
                                 # Encode ROI frame
                                 roi_frame_b64 = encode_roi_frame(roi_frame, quality=80)
                                 
-                                # Add to header
-                                header['traffic_light'] = {
+                                # Update cached state
+                                cached_tl_state = {
                                     'state': state,
                                     'confidence': confidence,
                                     'roi_frame': roi_frame_b64,
@@ -258,7 +297,8 @@ async def ws_traffic_light_realtime(
                                 if frame_count % 50 == 0:
                                     logger.info(f"🚦 TL state: {state} ({confidence:.2f}), ROI frame: {len(roi_frame_b64) if roi_frame_b64 else 0} bytes")
                             else:
-                                header['traffic_light'] = {
+                                # Update cached state with error
+                                cached_tl_state = {
                                     'state': 'UNKNOWN',
                                     'confidence': 0.0,
                                     'roi_frame': None,
@@ -268,16 +308,38 @@ async def ws_traffic_light_realtime(
                                     logger.warning(f"⚠️ No ROI for camera_id={camera_id}, available: {list(roi_storage.keys())}")
 
                         last_tl_update = current_time
+                    
+                    # Always add cached traffic light state to header (for all frames)
+                    header['traffic_light'] = cached_tl_state
 
+                    # Violation detection using cached state
                     if enable_violation:
-                        traffic_light_state = header.get("traffic_light", {}).get("state", "UNKNOWN")
+                        traffic_light_state = cached_tl_state.get("state", "UNKNOWN")
+                        tracks = header.get("detections", [])
+
+                        if frame_count % 20 == 0:
+                            logger.info(
+                                f"[DEBUG VIOLATION] cam={camera_id}, "
+                                f"tl_state={traffic_light_state}, "
+                                f"tracks={len(tracks)}, "
+                                f"sample_track={tracks[0] if tracks else None}"
+                            )
+
                         violations = violation_manager.compute_violations(
                             camera_id=camera_id,
-                            tracks=header.get("tracks", []),
+                            tracks=tracks,
                             light_state=traffic_light_state,
                             timestamp=datetime.utcnow(),
                         )
                         header["violations"] = [v.__dict__ for v in violations]
+
+                        # Map violation to detections for frontend
+                        if violations and tracks:
+                            viol_by_tid = {v.track_id: v for v in violations}
+                            for det in tracks:
+                                tid = det.get("track_id")
+                                if tid in viol_by_tid:
+                                    det["violation"] = viol_by_tid[tid].violation_type
 
                     try:
                         # Send header with traffic light data

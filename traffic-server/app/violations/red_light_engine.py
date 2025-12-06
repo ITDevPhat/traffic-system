@@ -58,17 +58,37 @@ class RedLightViolationEngine:
         return cx, y1
 
     def _position_vs_stopline(self, point: Tuple[float, float]) -> Position:
+        """
+        Determine if point is BEFORE, ON, or AFTER the stopline.
+        
+        For a line from (x1,y1) to (x2,y2), we use the cross product to determine
+        which side of the line the point is on.
+        
+        Cross product: (x2-x1)*(py-y1) - (y2-y1)*(px-x1)
+        - Positive: point is on the RIGHT side (AFTER for top-to-bottom traffic)
+        - Negative: point is on the LEFT side (BEFORE)
+        - ~Zero: point is ON the line
+        """
         px, py = point
         x1 = self.stopline_rect.get("x1", 0)
         y1 = self.stopline_rect.get("y1", 0)
         x2 = self.stopline_rect.get("x2", 0)
         y2 = self.stopline_rect.get("y2", 0)
 
-        if py < y1:
-            return "BEFORE"
-        if y1 <= py <= y2 and x1 <= px <= x2:
+        # Calculate cross product
+        cross = (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1)
+        
+        # Threshold for "ON" the line (in pixels)
+        threshold = 10.0
+        
+        if abs(cross) < threshold:
             return "ON"
-        return "AFTER"
+        elif cross > 0:
+            # Point is below/after the line (in direction of traffic)
+            return "AFTER"
+        else:
+            # Point is above/before the line
+            return "BEFORE"
 
     def _ensure_vehicle(self, track_id: int) -> tuple[VehicleViolationState, bool]:
         if track_id not in self.vehicles:
@@ -107,11 +127,15 @@ class RedLightViolationEngine:
             vehicle.last_update_time = timestamp
 
             previous_position = vehicle.position_vs_line
-            position = self._position_vs_stopline(self._front_point(tuple(bbox)))
+            front_point = self._front_point(tuple(bbox))
+            position = self._position_vs_stopline(front_point)
             vehicle.position_vs_line = position
 
             if is_new and self.last_light_state == "RED" and self.last_red_on:
                 vehicle.position_when_red = position
+                logger.info(
+                    f"[VIOLATION] Track {track_id} NEW while RED: position={position}, front_point={front_point}"
+                )
 
             crossed = previous_position == "BEFORE" and position in {"ON", "AFTER"}
             if crossed:
@@ -124,7 +148,7 @@ class RedLightViolationEngine:
             touched = y2_bbox >= y1_line
             if touched:
                 logger.info(
-                    f"[VIOLATION] Track {track_id} touched stopline 50% at y2={y2_bbox}, stopline_y1={y1_line}"
+                    f"[VIOLATION] Track {track_id} touched stopline 50% at y2={y2_bbox}, stopline_y1={y1_line}, position={position}, position_when_red={vehicle.position_when_red}"
                 )
 
             should_violate = (
@@ -153,6 +177,11 @@ class RedLightViolationEngine:
                 violations.append(violation_record)
                 logger.warning(
                     f"🚨 RED LIGHT VIOLATION — camera={self.camera_id}, track={track_id}"
+                )
+            elif light_state == "RED" and (crossed or touched):
+                # Debug: Why not violated?
+                logger.info(
+                    f"[VIOLATION] Track {track_id} NOT violated: position_when_red={vehicle.position_when_red}, violated={vehicle.violated}, last_red_on={self.last_red_on is not None}"
                 )
 
         self._prune_stale(timestamp)
