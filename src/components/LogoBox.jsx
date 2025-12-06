@@ -5,14 +5,28 @@ import Image from 'next/image';
 import Link from 'next/link';
 const LogoBox = () => {
   return <div className="logo-box">
-      <Link href="/dashboards/analytics" className="logo-dark">
-        <Image width={28} height={28} src={logoSm} className="logo-sm" alt="logo sm" />
-        <Image width={118} height={30} src={logoDark} className="logo-lg" alt="logo dark" />
-      </Link>
-      <Link href="/dashboards/analytics" className="logo-light">
-        <Image width={28} height={28} src={logoSm} className="logo-sm" alt="logo sm" />
-        <Image width={118} height={30} src={logoLight} className="logo-lg" alt="logo light" />
-      </Link>
-    </div>;
+    <Link href="/dashboards/analytics" className="logo-dark">
+      <Image width={28} height={28} src={logoSm} className="logo-sm" alt="logo sm" />
+      <span className="logo-lg" style={{
+        fontSize: '16px',
+        fontWeight: '700',
+        color: '#313a46',
+        whiteSpace: 'nowrap'
+      }}>
+        GIAO THÔNG THÔNG MINH
+      </span>
+    </Link>
+    <Link href="/dashboards/analytics" className="logo-light">
+      <Image width={28} height={28} src={logoSm} className="logo-sm" alt="logo sm" />
+      <span className="logo-lg" style={{
+        fontSize: '16px',
+        fontWeight: '700',
+        color: '#ffffff',
+        whiteSpace: 'nowrap'
+      }}>
+        GIAO THÔNG THÔNG MINH
+      </span>
+    </Link>
+  </div>;
 };
 export default LogoBox;

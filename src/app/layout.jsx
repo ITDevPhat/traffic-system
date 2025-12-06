@@ -13,7 +13,7 @@ const figtree = Figtree({
 });
 export const metadata = {
   title: {
-    template: '%s | Lahomes Nextjs - Real Estate Management Admin Template',
+    template: '%s Giao thông thông minh',
     default: DEFAULT_PAGE_TITLE
   },
   description: 'A fully responsive premium admin dashboard template, Real Estate Management Admin Template'
@@ -52,20 +52,20 @@ export default function RootLayout({
   children
 }) {
   return <html lang="en" suppressHydrationWarning>
-      <head>
-        <style suppressHydrationWarning>{splashScreenStyles}</style>
-      </head>
-      <body className={figtree.className} suppressHydrationWarning>
-        <div id="splash-screen">
-          <Image alt="Logo" width={112} height={24} src={logoDark} style={{
-          height: '6%',
+    <head>
+      <style suppressHydrationWarning>{splashScreenStyles}</style>
+    </head>
+    <body className={figtree.className} suppressHydrationWarning>
+      <div id="splash-screen">
+        <Image alt="Logo" width={112} height={24} src={logoDark} style={{
+          height: '50%',
           width: 'auto'
         }} priority />
-        </div>
-        <NextTopLoader color="#604ae3" showSpinner={false} />
-        <div id="__next_splash">
-          <AppProvidersWrapper>{children}</AppProvidersWrapper>
-        </div>
-      </body>
-    </html>;
+      </div>
+      <NextTopLoader color="#604ae3" showSpinner={false} />
+      <div id="__next_splash">
+        <AppProvidersWrapper>{children}</AppProvidersWrapper>
+      </div>
+    </body>
+  </html>;
 }
