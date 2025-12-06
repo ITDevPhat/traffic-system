@@ -9,10 +9,149 @@ Version: 1.0.0
 """
 import asyncio
 import logging
-from typing import Optional, Dict
+from collections import deque
+from pathlib import Path
+from typing import Optional, Dict, Tuple, Deque, List
+
+import numpy as np
+
 from app.services.traffic_light_worker import TrafficLightWorker
 
 logger = logging.getLogger(__name__)
+
+
+class TrafficLightFrameBuffer:
+    """Lightweight frame buffer for traffic light workers.
+
+    Stores the latest frame + tracks per camera so that dedicated TL workers
+    (and debugging utilities) can fetch a consistent view without coupling
+    tightly to the realtime stream threads.
+    """
+
+    def __init__(self):
+        self.frames: Dict[str, Dict[str, object]] = {}
+        self.state: Dict[str, str] = {}
+
+    def update_frame(
+        self,
+        camera_id: str,
+        frame: np.ndarray,
+        tracks: List[Dict[str, object]],
+        frame_index: int,
+    ) -> None:
+        self.frames[camera_id] = {
+            "frame": frame,
+            "tracks": tracks,
+            "frame_index": frame_index,
+        }
+
+    def get_latest(self, camera_id: str) -> Optional[Dict[str, object]]:
+        return self.frames.get(camera_id)
+
+    def set_state(self, camera_id: str, state: str) -> None:
+        self.state[camera_id] = state
+
+    def clear(self, camera_id: str) -> None:
+        self.frames.pop(camera_id, None)
+        self.state.pop(camera_id, None)
+
+
+class TrafficLightStateSmoother:
+    """Temporal smoothing for noisy traffic light classifications."""
+
+    def __init__(self, window: int = 10, majority: float = 0.6):
+        self.window = window
+        self.majority = majority
+        self.history: Dict[str, Deque[Tuple[str, float]]] = {}
+
+    def update(self, camera_id: str, state: str, confidence: float) -> Tuple[str, float]:
+        hist = self.history.setdefault(camera_id, deque(maxlen=self.window))
+        hist.append((state, confidence))
+
+        if not hist:
+            return state, confidence
+
+        counts: Dict[str, int] = {}
+        conf_accum: Dict[str, float] = {}
+        for st, conf in hist:
+            counts[st] = counts.get(st, 0) + 1
+            conf_accum[st] = conf_accum.get(st, 0.0) + conf
+
+        dominant_state = max(counts, key=counts.get)
+        dominance = counts[dominant_state] / len(hist)
+        avg_conf = conf_accum.get(dominant_state, 0.0) / max(counts[dominant_state], 1)
+
+        if dominance >= self.majority:
+            return dominant_state, avg_conf
+
+        return "UNKNOWN", 0.0
+
+    def clear(self, camera_id: str) -> None:
+        self.history.pop(camera_id, None)
+
+
+class TrafficLightManager:
+    """Per-camera ROI + state smoothing helper."""
+
+    def __init__(self):
+        self.roi_by_camera: Dict[str, Dict[str, float]] = {}
+        self.smoother = TrafficLightStateSmoother()
+
+    def load_roi_from_config(self, camera_id: str) -> Optional[Dict[str, float]]:
+        config_path = Path(__file__).parent.parent / "data" / "traffic_light" / f"{camera_id}.json"
+        if not config_path.exists():
+            return None
+
+        try:
+            import json
+
+            with config_path.open("r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            roi = cfg.get("traffic_light_roi")
+            if roi:
+                self.set_roi(camera_id, roi)
+                logger.info(f"[ROI] Loaded ROI for {camera_id} from {config_path}")
+            return roi
+        except Exception:
+            logger.exception(f"Failed to load ROI config for {camera_id}")
+            return None
+
+    def set_roi(self, camera_id: str, roi_norm: Dict[str, float]) -> None:
+        self.roi_by_camera[camera_id] = roi_norm
+        logger.info(f"[ROI] Set ROI for {camera_id}: {roi_norm}")
+
+    def get_roi(self, camera_id: str) -> Optional[Dict[str, float]]:
+        return self.roi_by_camera.get(camera_id)
+
+    def clear_roi(self, camera_id: str) -> None:
+        if camera_id in self.roi_by_camera:
+            del self.roi_by_camera[camera_id]
+        self.smoother.clear(camera_id)
+        logger.info(f"[ROI] Cleared ROI and smoothing cache for {camera_id}")
+
+    def roi_to_pixels(self, camera_id: str, frame_shape: Tuple[int, int]) -> Optional[Tuple[int, int, int, int]]:
+        roi = self.get_roi(camera_id)
+        if not roi:
+            return None
+
+        h, w = frame_shape[:2]
+        x1 = int(roi.get("x", 0.0) * w)
+        y1 = int(roi.get("y", 0.0) * h)
+        x2 = int((roi.get("x", 0.0) + roi.get("width", 0.0)) * w)
+        y2 = int((roi.get("y", 0.0) + roi.get("height", 0.0)) * h)
+
+        x1 = max(0, min(x1, w - 1))
+        y1 = max(0, min(y1, h - 1))
+        x2 = max(x1 + 1, min(x2, w))
+        y2 = max(y1 + 1, min(y2, h))
+        return x1, y1, x2, y2
+
+    def stabilize_state(self, camera_id: str, state: str, confidence: float) -> Tuple[str, float]:
+        return self.smoother.update(camera_id, state, confidence)
+
+
+traffic_light_manager = TrafficLightManager()
+frame_buffer = TrafficLightFrameBuffer()
 
 
 class TrafficLightWorkerManager:
