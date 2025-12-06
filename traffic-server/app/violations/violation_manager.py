@@ -73,7 +73,7 @@ class ViolationManager:
             return []
 
         if not tracks:
-            logger.info(f"[VIOLATION] No tracks for camera {camera_id} at {timestamp.isoformat()}")
+            logger.debug(f"[VIOLATION] No tracks for camera {camera_id} at {timestamp.isoformat()}")
             return []
 
         logger.info(
