@@ -13,7 +13,7 @@ const AppProvidersWrapper = ({
   children
 }) => {
   const handleChangeTitle = () => {
-    if (document.visibilityState == 'hidden') document.title = 'Please come back 🥺';else document.title = DEFAULT_PAGE_TITLE;
+    if (document.visibilityState == 'hidden') document.title = 'Giao thông thông minh'; else document.title = DEFAULT_PAGE_TITLE;
   };
   useEffect(() => {
     if (document) {
@@ -31,21 +31,21 @@ const AppProvidersWrapper = ({
     };
   }, []);
   return <SessionProvider>
-      <LayoutProvider>
-        <NotificationProvider>
-          {children}
-          <ToastContainer 
-            position="top-right" 
-            autoClose={2500} 
-            newestOnTop 
-            hideProgressBar 
-            theme="dark" 
-            closeOnClick 
-            pauseOnHover
-            enableMultiContainer={false}
-          />
-        </NotificationProvider>
-      </LayoutProvider>
-    </SessionProvider>;
+    <LayoutProvider>
+      <NotificationProvider>
+        {children}
+        <ToastContainer
+          position="top-right"
+          autoClose={2500}
+          newestOnTop
+          hideProgressBar
+          theme="dark"
+          closeOnClick
+          pauseOnHover
+          enableMultiContainer={false}
+        />
+      </NotificationProvider>
+    </LayoutProvider>
+  </SessionProvider>;
 };
 export default AppProvidersWrapper;

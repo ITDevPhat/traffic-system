@@ -17,7 +17,7 @@ const LogoBox = () => {
       </span>
     </Link>
     <Link href="/dashboards/analytics" className="logo-light">
-      <Image width={28} height={28} src={logoSm} className="logo-sm" alt="logo sm" />
+      <Image width={35} height={35} src={logoSm} className="logo-sm" alt="logo sm" />
       <span className="logo-lg" style={{
         fontSize: '16px',
         fontWeight: '700',

@@ -219,8 +219,9 @@ export function DetectionCardRealtime({ video }) {
     // Draw each detection
     objects.forEach((obj) => {
       const [x1, y1, x2, y2] = obj.bbox;
-      const label = obj.label || 'vehicle';
-      const conf = obj.conf || 0;
+      // Support both old (label/conf) and new (class_name/confidence) formats
+      const label = obj.label || obj.class_name || 'vehicle';
+      const conf = obj.conf || obj.confidence || 0;
       const trackId = obj.track_id || -1;
 
       // Scale bbox to canvas size
@@ -239,19 +240,21 @@ export function DetectionCardRealtime({ video }) {
       ctx.lineWidth = 3;
       ctx.strokeRect(sx1, sy1, width, height);
 
-      // Draw label background
-      const labelText = `${label} ${(conf * 100).toFixed(0)}% [${trackId}]`;
-      ctx.font = 'bold 14px Arial';
+      // Draw label background with track ID
+      // Format: "class confidence% #ID"
+      const labelText = `${label} ${(conf * 100).toFixed(0)}% #${trackId}`;
+      ctx.font = 'bold 16px Arial';  // Larger font for better visibility
       const textMetrics = ctx.measureText(labelText);
       const textWidth = textMetrics.width;
-      const textHeight = 20;
+      const textHeight = 22;
 
+      // Draw semi-transparent background
       ctx.fillStyle = color;
-      ctx.fillRect(sx1, sy1 - textHeight - 4, textWidth + 8, textHeight + 4);
+      ctx.fillRect(sx1, sy1 - textHeight - 4, textWidth + 10, textHeight + 4);
 
-      // Draw label text
+      // Draw label text in white
       ctx.fillStyle = '#ffffff';
-      ctx.fillText(labelText, sx1 + 4, sy1 - 8);
+      ctx.fillText(labelText, sx1 + 5, sy1 - 6);
     });
   };
 

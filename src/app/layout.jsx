@@ -13,8 +13,8 @@ const figtree = Figtree({
 });
 export const metadata = {
   title: {
-    template: '%s Giao thông thông minh',
-    default: DEFAULT_PAGE_TITLE
+    template: 'Giao thông thông minh',
+    default: "Giao thông thông minh"
   },
   description: 'A fully responsive premium admin dashboard template, Real Estate Management Admin Template'
 };
