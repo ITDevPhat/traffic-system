@@ -13,6 +13,8 @@ import asyncio
 import base64
 import cv2
 import numpy as np
+from datetime import datetime
+from app.violations.violation_manager import violation_manager
 
 logger = logging.getLogger(__name__)
 
@@ -229,7 +231,7 @@ async def ws_traffic_light_realtime(
                         # Decode JPEG to get frame for TL detection
                         frame_array = np.frombuffer(jpeg_bytes, dtype=np.uint8)
                         frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
-                        
+
                         if frame is not None:
                             # Log ROI storage status periodically
                             if frame_count % 100 == 0:
@@ -264,9 +266,19 @@ async def ws_traffic_light_realtime(
                                 }
                                 if frame_count % 100 == 0:
                                     logger.warning(f"⚠️ No ROI for camera_id={camera_id}, available: {list(roi_storage.keys())}")
-                        
+
                         last_tl_update = current_time
-                    
+
+                    if enable_violation:
+                        traffic_light_state = header.get("traffic_light", {}).get("state", "UNKNOWN")
+                        violations = violation_manager.compute_violations(
+                            camera_id=camera_id,
+                            tracks=header.get("tracks", []),
+                            light_state=traffic_light_state,
+                            timestamp=datetime.utcnow(),
+                        )
+                        header["violations"] = [v.__dict__ for v in violations]
+
                     try:
                         # Send header with traffic light data
                         await asyncio.wait_for(
