@@ -106,6 +106,7 @@ async def delete_violation(
 
 # === STOPLINE CONFIGURATION ===
 from pydantic import BaseModel, Field
+from app.violations.violation_manager import violation_manager
 
 # In-memory storage for stoplines (per camera)
 stoplines_storage = {}
@@ -144,6 +145,8 @@ async def save_stopline(request: StoplineRequest):
             'x2': int(stopline['x2']),
             'y2': int(stopline['y2'])
         }
+
+        violation_manager.set_stopline(request.camera_id, stoplines_storage[request.camera_id])
         
         return {
             "ok": True,

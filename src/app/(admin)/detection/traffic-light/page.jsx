@@ -219,6 +219,7 @@ function DetectionPageBinaryContent() {
   const nextBitmapRef = useRef(null);
   const displayBitmapRef = useRef(null);
   const rafIdRef = useRef(0);
+  const prevSourceRef = useRef('');
   // Throttled UI refs
   const fpsRef = useRef(0);
   const frameIdxRef = useRef(0);
@@ -308,6 +309,30 @@ function DetectionPageBinaryContent() {
   const [showDebugOverlay, setShowDebugOverlay] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
 
+  const resetTrafficLightState = useCallback(
+    ({ clearGeometry = false, closeSocket = false } = {}) => {
+      if (closeSocket && tlSocketRef.current) {
+        tlSocketRef.current.close();
+        tlSocketRef.current = null;
+      }
+
+      setTrafficLightState("UNKNOWN");
+      setTrafficLightFrame(null);
+      setTrafficLightConfidence(null);
+      setTlRoiActive(false);
+      setIsSelectingTLMode(false);
+      setViolations([]);
+      vehicleStatesRef.current.clear();
+
+      if (clearGeometry) {
+        setTlRoi(null);
+        setStopline(null);
+        setStoplineActive(false);
+      }
+    },
+    []
+  );
+
   // Keyboard event handler for debug overlay (D key)
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -350,7 +375,7 @@ function DetectionPageBinaryContent() {
   useEffect(() => {
     const videoParam = searchParams?.get('video');
     const videoId = searchParams?.get('id');
-    
+
     if (videoParam && !videoLoaded) {
       console.log(`🎬 Auto-loading video from URL: ${videoParam} (ID: ${videoId})`);
       
@@ -368,10 +393,17 @@ function DetectionPageBinaryContent() {
       setSource(finalPath);
       setVideoLoaded(true);
       setAutoStart(true); // Flag to auto-start after models load and warmup
-      
+
       safeToast.info(`📹 Video loaded: ${videoPath.split('/').pop()}`, { autoClose: 2000 });
     }
   }, [searchParams, videoLoaded, safeToast]);
+
+  useEffect(() => {
+    if (!source || source === prevSourceRef.current) return;
+
+    prevSourceRef.current = source;
+    resetTrafficLightState({ clearGeometry: true, closeSocket: true });
+  }, [source, resetTrafficLightState]);
 
   const loadModels = useCallback(async () => {
     // Skip if already loaded
@@ -1060,11 +1092,6 @@ function DetectionPageBinaryContent() {
     decodingRef.current = false;
     if (nextBitmapRef.current) { try { nextBitmapRef.current.close(); } catch {} nextBitmapRef.current = null; }
     if (displayBitmapRef.current) { try { displayBitmapRef.current.close(); } catch {} displayBitmapRef.current = null; }
-    const c = canvasRef.current;
-    if (c) {
-      const ctx = c.getContext('2d');
-      try { ctx.clearRect(0, 0, c.width, c.height); } catch {}
-    }
     setDetecting(false);
     setConnected(false);
     lastRoiSignatureRef.current = '';
@@ -1113,11 +1140,13 @@ function DetectionPageBinaryContent() {
         const errorText = await response.text();
         throw new Error(`HTTP ${response.status}: ${errorText}`);
       }
-      
+
       const data = await response.json();
       if (data.ok) {
         setSource(data.temp_path);
-        
+
+        resetTrafficLightState({ clearGeometry: true, closeSocket: true });
+
         // Probe video to get dimensions
         try {
           const probeResponse = await fetch(`${API_URL}/api/detection/probe-video?path=${encodeURIComponent(data.temp_path)}`);
@@ -1585,15 +1614,8 @@ function DetectionPageBinaryContent() {
   };
 
   const stopTrafficLightWS = () => {
-    if (tlSocketRef.current) {
-      tlSocketRef.current.close();
-      tlSocketRef.current = null;
-      setTrafficLightState("UNKNOWN");
-      setTrafficLightFrame(null);
-      setTrafficLightConfidence(null);
-      setTlRoiActive(false);
-      safeToast.info('Traffic Light detection stopped');
-    }
+    resetTrafficLightState({ closeSocket: true });
+    safeToast.info('Traffic Light detection stopped');
   };
 
   // Cleanup TL WebSocket on unmount
@@ -1637,10 +1659,9 @@ function DetectionPageBinaryContent() {
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    if (!tlRoi) {
-      // Only log once when ROI is missing
-      if (canvas.width > 0) {
-        console.log('ℹ️ No TL ROI to draw (canvas ready:', canvas.width, 'x', canvas.height, ')');
+    if (!tlRoi || (!tlRoiActive && !isSelectingTLMode)) {
+      if (canvas.width > 0 && tlRoi && Math.random() < 0.02) {
+        console.log('ℹ️ TL ROI hidden until active/drawing');
       }
       return;
     }
@@ -1677,7 +1698,7 @@ function DetectionPageBinaryContent() {
     ctx.fillStyle = '#000';
     ctx.font = 'bold 14px sans-serif';
     ctx.fillText(`🚦 TL ROI (${Math.round(tlRoi.w)}×${Math.round(tlRoi.h)})`, tlRoi.x + 5, tlRoi.y - 8);
-  }, [tlRoi]);
+  }, [isSelectingTLMode, tlRoi, tlRoiActive]);
 
   // === STOPLINE DRAWING FUNCTIONS ===
   const drawStopline = useCallback(() => {
@@ -3088,7 +3109,16 @@ function DetectionPageBinaryContent() {
                     </small>
                   </Alert>
                 )}
-                
+
+                {stoplineActive && stopline && !isDrawingStopline && (
+                  <Alert variant="success" className="mb-0">
+                    <small>
+                      ✅ <strong>Stopline locked:</strong> ({Math.round(stopline.x1)}, {Math.round(stopline.y1)}) → ({Math.round(stopline.x2)}, {Math.round(stopline.y2)})
+                      <br/>📍 Midpoint: ({Math.round((stopline.x1 + stopline.x2) / 2)}, {Math.round((stopline.y1 + stopline.y2) / 2)})
+                    </small>
+                  </Alert>
+                )}
+
                 {!isDrawingStopline && !stoplineActive && (
                   <Alert variant="info" className="mb-0">
                     <small>
