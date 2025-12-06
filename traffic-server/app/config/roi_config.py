@@ -1,8 +1,8 @@
 """Utility helpers for persisting traffic-light ROI and stopline configs.
 
-All coordinates are stored in normalized format relative to the source frame size
-so they remain valid across different resolutions. Per-camera config files are
-kept under ``app/data/traffic_light/``.
+Configurations may arrive in normalized form from the frontend; helpers in this
+module convert them to pixel coordinates at runtime so that the pipelines always
+operate on absolute pixel ROIs.
 """
 from __future__ import annotations
 

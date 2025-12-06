@@ -108,16 +108,14 @@ async def ws_traffic_light_realtime(
                 
                 # Build message
                 message = {
-                    "type": "traffic_light_update",
                     "camera_id": state.camera_id,
                     "frame_index": state.frame_index,
                     "traffic_light": {
                         "state": state.state,
-                        "confidence": state.confidence if state.confidence is not None else 0.0
+                        "confidence": state.confidence if state.confidence is not None else 0.0,
                     },
                     "roi_frame": roi_frame_b64,
                     "violations": state.violations,
-                    "timestamp": state.timestamp.isoformat()
                 }
                 
                 # Send message
