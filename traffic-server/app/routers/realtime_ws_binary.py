@@ -30,6 +30,7 @@ except:
 async def ws_realtime_binary(
     websocket: WebSocket,
     source: str = Query("0", description="Video source: '0' for webcam, path for file"),
+    camera_id: str = Query("default", description="Camera ID for traffic light integration"),
     conf: float = Query(0.5, description="Confidence threshold"),
     fps: int = Query(30, description="Target FPS (default 30)"),
     imgsz: int = Query(640, description="YOLO inference size - MUST be 640 for TensorRT models"),
@@ -81,6 +82,7 @@ async def ws_realtime_binary(
         # Initialize stream
         stream = BinaryAnnotStream(
             source=source,
+            camera_id=camera_id,
             conf=conf,
             imgsz=imgsz,
             target_fps=fps,

@@ -189,6 +189,7 @@ class BinaryAnnotStream:
     def __init__(
         self,
         source: str,
+        camera_id: str = "default",
         conf: float = 0.35,
         imgsz: int = 640,
         target_fps: int = 30,
@@ -207,6 +208,7 @@ class BinaryAnnotStream:
         """
         Args:
             source: "0" for webcam, path for video file
+            camera_id: Camera identifier for traffic light integration
             conf: Confidence threshold
             imgsz: YOLO inference size (480/640/960)
             target_fps: Target FPS (default 30)
@@ -221,6 +223,7 @@ class BinaryAnnotStream:
             force_gpu: Require CUDA-capable GPU (raises if unavailable when True)
         """
         self.source = int(source) if source.isdigit() else source
+        self.camera_id = str(camera_id)
         self.conf = float(conf)
         self.imgsz = int(imgsz)
         self.target_fps = int(target_fps)
@@ -1445,6 +1448,48 @@ class BinaryAnnotStream:
                     if len(total_tids) > len(active_tids):
                         predicted_tids = [tid for tid in total_tids if tid not in active_tids]
                         logger.info(f"📊 Predicted tracks (not in frame): {len(predicted_tids)} tracks (will be cleaned up if >0.5s old)")
+                
+                # === TRAFFIC LIGHT INTEGRATION ===
+                # Publish frame + tracks to Traffic Light buffer
+                try:
+                    from app.services.traffic_light_manager import frame_buffer
+                    
+                    # Convert tracks to dict format for TL worker
+                    tracks_dict = []
+                    for arr in output_tracks:
+                        if arr.size < 5:
+                            continue
+                        try:
+                            x1, y1, x2, y2 = arr[:4].tolist()
+                            tid = int(arr[4])
+                            conf_val = float(arr[5]) if arr.size >= 6 else 1.0
+                            cls_id = int(arr[6]) if arr.size >= 7 else 0
+                            
+                            tracks_dict.append({
+                                "track_id": tid,
+                                "bbox": [float(x1), float(y1), float(x2), float(y2)],
+                                "confidence": conf_val,
+                                "class_id": cls_id,
+                                "class_name": CLASS_NAMES.get(cls_id, "vehicle")
+                            })
+                        except Exception as e:
+                            logger.debug(f"Failed to convert track for TL buffer: {e}")
+                    
+                    # Publish to TL buffer (only if camera_id is set)
+                    if self.camera_id and self.camera_id != "default":
+                        frame_buffer.update_frame(
+                            camera_id=self.camera_id,
+                            frame=frame,
+                            tracks=tracks_dict,
+                            frame_index=self.frame_idx
+                        )
+                        
+                        if self.frame_idx % 100 == 1:
+                            logger.info(f"📤 Published to TL buffer: camera={self.camera_id}, tracks={len(tracks_dict)}")
+                except Exception as e:
+                    # Don't crash main pipeline if TL buffer fails
+                    if self.frame_idx % 100 == 1:
+                        logger.debug(f"TL buffer update failed: {e}")
             else:
                 # Predict tracks between keyframes for perceived 60 fps
                 # IMPORTANT: Only predict tracks that were recently seen (within 0.3s) to avoid ghost boxes
@@ -1803,7 +1848,8 @@ class BinaryAnnotStream:
             "type": "frame",
             "frame_idx": self.frame_idx,
             "fps": fps,
-            "detections": self._current_detections  # Include detections metadata
+            "detections": self._current_detections,  # Include detections metadata
+            "objects": self._current_detections  # Backward compatibility (same as detections)
         }
         
         # Log progress every 30 frames
