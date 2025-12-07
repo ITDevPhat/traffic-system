@@ -259,11 +259,11 @@ async def ws_traffic_light_realtime(
             consecutive_errors = 0
             max_consecutive_errors = 3
             last_tl_update = 0
-            tl_update_interval = 0.5  # Update TL every 500ms
+            tl_update_interval = 0.75  # Update TL every 750ms per request
             
             # Cache traffic light state to use for all frames
             cached_tl_state = {
-                'state': 'UNKNOWN',
+                'state': 'GREEN',
                 'confidence': 0.0,
                 'roi_frame': None,
                 'roi_bounds': None
@@ -330,11 +330,12 @@ async def ws_traffic_light_realtime(
                                 if frame_count % 50 == 0:
                                     logger.info(f"🚦 TL state: {state} ({confidence:.2f}), ROI frame: {len(roi_frame_b64) if roi_frame_b64 else 0} bytes")
                             else:
-                                # Update cached state with error
+                                # Update cached state with error but keep default GREEN fallback
                                 cached_tl_state = {
-                                    'state': 'UNKNOWN',
+                                    'state': 'GREEN',
                                     'confidence': 0.0,
                                     'roi_frame': None,
+                                    'roi_bounds': None,
                                     'error': f'No ROI configured for camera_id={camera_id}'
                                 }
                                 if frame_count % 100 == 0:

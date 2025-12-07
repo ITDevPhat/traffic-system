@@ -143,21 +143,13 @@ async def set_roi(request: ROIRequest):
         # Convert roi_pixel to storage format AND normalized format
         if request.roi_pixel:
             logger.info(f"🚦 ROI pixel request for camera {request.camera_id}: {request.roi_pixel}")
-            
+
             x1 = request.roi_pixel.x1
             y1 = request.roi_pixel.y1
             x2 = request.roi_pixel.x2
             y2 = request.roi_pixel.y2
-            
-            roi_data = {
-                "type": "pixel",
-                "x1": x1,
-                "y1": y1,
-                "x2": x2,
-                "y2": y2
-            }
-            
-            # Convert to normalized for worker
+
+            # Always convert to normalized immediately so downstream usage is resolution-agnostic
             roi_norm = {
                 "x": x1 / frame_width,
                 "y": y1 / frame_height,
@@ -165,6 +157,18 @@ async def set_roi(request: ROIRequest):
                 "height": (y2 - y1) / frame_height
             }
             logger.info(f"🔄 Converted to normalized: {roi_norm}")
+
+            # Store normalized format in memory; pixel coords are only used for display/echo
+            roi_data = {
+                "type": "normalized",
+                "x": roi_norm["x"],
+                "y": roi_norm["y"],
+                "width": roi_norm["width"],
+                "height": roi_norm["height"],
+                "frame_width": frame_width,
+                "frame_height": frame_height,
+                "source_pixel": {"x1": x1, "y1": y1, "x2": x2, "y2": y2, "frame_width": frame_width, "frame_height": frame_height}
+            }
             
         elif request.roi:
             logger.info(f"🚦 ROI normalized request for camera {request.camera_id}: {request.roi}")
