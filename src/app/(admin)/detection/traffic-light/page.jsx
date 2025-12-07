@@ -16,10 +16,12 @@ const ROI_COLORS = [
   { stroke: '#a855f7', fill: 'rgba(168, 85, 247, 0.2)' },
 ];
 
-const RoiOverlay = React.forwardRef(({ frameDimensions, rois, draftPoints, isDrawing, onPointerDown, mousePos, onMouseMove }, ref) => {
+const RoiOverlay = React.forwardRef(({ frameDimensions, rois, draftPoints, isDrawing, onPointerDown, mousePos, onMouseMove, visible = true }, ref) => {
   const width = frameDimensions?.width || 1;
   const height = frameDimensions?.height || 1;
   const hasFrame = width > 0 && height > 0;
+
+  if (!visible || !hasFrame) return null;
 
   const toSvgPoints = (points = []) => {
     if (!hasFrame) return '';
@@ -258,7 +260,10 @@ function DetectionPageBinaryContent() {
     force_gpu: true
   });
 
-  const [frameDimensions, setFrameDimensions] = useState({ width: 1280, height: 720 });
+  const [frameDimensions, setFrameDimensions] = useState({ width: 0, height: 0 });
+  const [videoReady, setVideoReady] = useState(false);
+  const [videoSize, setVideoSize] = useState(null);
+  const [isDetectionRunning, setIsDetectionRunning] = useState(false);
   const [expectBinary, setExpectBinary] = useState(false);
 
   // Module toggles
@@ -289,7 +294,7 @@ function DetectionPageBinaryContent() {
   const [startPos, setStartPos] = useState(null); // mouse anchor
   const [tlRoiActive, setTlRoiActive] = useState(false);
   const [isSelectingTLMode, setIsSelectingTLMode] = useState(false); // UI mode
-  const [trafficLightState, setTrafficLightState] = useState("UNKNOWN");
+  const [trafficLightState, setTrafficLightState] = useState("GREEN");
   const [trafficLightFrame, setTrafficLightFrame] = useState(null);
   const [trafficLightConfidence, setTrafficLightConfidence] = useState(null);
   const tlSocketRef = useRef(null);
@@ -329,7 +334,7 @@ function DetectionPageBinaryContent() {
         tlSocketRef.current = null;
       }
 
-      setTrafficLightState("UNKNOWN");
+      setTrafficLightState("GREEN");
       setTrafficLightFrame(null);
       setTrafficLightConfidence(null);
       setTlRoiActive(false);
@@ -598,7 +603,7 @@ function DetectionPageBinaryContent() {
 
   const classifyPosition = useCallback(
     (frontPoint) => {
-      if (!stoplineBounds || !frontPoint) return 'UNKNOWN';
+      if (!stoplineBounds || !frontPoint) return 'GREEN';
       const { minY, maxY } = stoplineBounds;
       const tolerance = 6; // pixels
       if (frontPoint.y < minY - tolerance) return 'AFTER_LINE';
@@ -749,6 +754,7 @@ function DetectionPageBinaryContent() {
       console.log('? WebSocket closed');
       setConnected(false);
       setDetecting(false);
+      setIsDetectionRunning(false);
       lastRoiSignatureRef.current = '';
       safeToast.info('WebSocket disconnected');
     };
@@ -758,6 +764,7 @@ function DetectionPageBinaryContent() {
       console.error('? WebSocket error:', error);
       setConnected(false);
       setDetecting(false);
+      setIsDetectionRunning(false);
       lastRoiSignatureRef.current = '';
       safeToast.error('WebSocket error! Check backend.');
     };
@@ -778,6 +785,8 @@ function DetectionPageBinaryContent() {
               c.width = newWidth;
               c.height = newHeight;
               setFrameDimensions({ width: newWidth, height: newHeight });
+              setVideoSize({ width: newWidth, height: newHeight });
+              setVideoReady(true);
               const ctx = c.getContext('2d');
               if (ctx && ctx.imageSmoothingEnabled) ctx.imageSmoothingEnabled = false;
               console.log(`?? Canvas: ${newWidth}x${newHeight}`);
@@ -973,6 +982,7 @@ function DetectionPageBinaryContent() {
         if (source && isMountedRef.current) {
           console.log('🚀 Auto-starting detection after warmup');
           setDetecting(true);
+          setIsDetectionRunning(true);
           connectWebSocket(source);
           safeToast.success('🎯 Detection started!', { autoClose: 2000 });
         }
@@ -1132,6 +1142,7 @@ function DetectionPageBinaryContent() {
     }
 
     setDetecting(true);
+    setIsDetectionRunning(true);
     connectWebSocket(currentSource);
     safeToast.info('Detection started!');
   };
@@ -1148,6 +1159,7 @@ function DetectionPageBinaryContent() {
     if (nextBitmapRef.current) { try { nextBitmapRef.current.close(); } catch { } nextBitmapRef.current = null; }
     if (displayBitmapRef.current) { try { displayBitmapRef.current.close(); } catch { } displayBitmapRef.current = null; }
     setDetecting(false);
+    setIsDetectionRunning(false);
     setConnected(false);
     lastRoiSignatureRef.current = '';
   };
@@ -1210,6 +1222,8 @@ function DetectionPageBinaryContent() {
             if (probeData.width && probeData.height) {
               console.log('📹 Video dimensions:', probeData.width, 'x', probeData.height);
               setFrameDimensions({ width: probeData.width, height: probeData.height });
+              setVideoSize({ width: probeData.width, height: probeData.height });
+              setVideoReady(true);
             }
           }
         } catch (probeError) {

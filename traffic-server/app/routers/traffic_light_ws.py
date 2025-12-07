@@ -104,7 +104,7 @@ def detect_traffic_light_state(roi_frame: np.ndarray) -> tuple:
         (state, confidence)
     """
     if roi_frame is None or roi_frame.size == 0:
-        return "UNKNOWN", 0.0
+        return None, 0.0
     
     # Convert to HSV
     hsv = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2HSV)
@@ -141,7 +141,8 @@ def detect_traffic_light_state(roi_frame: np.ndarray) -> tuple:
     max_pixels = max(red_pixels, yellow_pixels, green_pixels)
     
     if max_pixels < total_pixels * 0.001:  # Less than 0.1% colored pixels (adjusted for small ROIs)
-        return "GREEN", 0.0
+        # Not enough signal — keep previous effective state
+        return None, 0.0
     
     confidence = min(max_pixels / (total_pixels * 0.1), 1.0)  # Normalize
     
@@ -323,8 +324,9 @@ async def ws_traffic_light_realtime(
                             if roi_frame is not None:
                                 # Detect state
                                 raw_state, raw_confidence = detect_traffic_light_state(roi_frame)
+                                normalized_raw = raw_state if raw_state in {"RED", "YELLOW", "GREEN"} else None
                                 state, confidence = traffic_light_manager.stabilize_state(
-                                    camera_id, raw_state, raw_confidence
+                                    camera_id, normalized_raw, raw_confidence, timestamp=datetime.utcnow()
                                 )
 
                                 # Encode ROI frame
@@ -359,7 +361,7 @@ async def ws_traffic_light_realtime(
 
                     # Violation detection using cached state
                     if enable_violation:
-                        traffic_light_state = cached_tl_state.get("state", "UNKNOWN")
+                        traffic_light_state = cached_tl_state.get("state") or "GREEN"
                         tracks = header.get("detections", [])
 
                         if frame_count % 20 == 0:

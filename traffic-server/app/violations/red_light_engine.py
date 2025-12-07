@@ -71,9 +71,11 @@ class RedLightViolationEngine:
         self.last_red_on: Optional[datetime] = None
 
     def _front_point(self, bbox: Tuple[float, float, float, float]) -> Tuple[float, float]:
-        """Get front point of vehicle (center-x, top-y for bottom-to-top traffic)"""
-        x1, y1, x2, _ = bbox
+        """Get front point of vehicle depending on travel direction."""
+        x1, y1, x2, y2 = bbox
         cx = (x1 + x2) / 2.0
+        if self.direction == "top_to_bottom":
+            return cx, y2
         return cx, y1
 
     def _stopline_overlap_ratio(self, bbox: Tuple[float, float, float, float]) -> float:
@@ -97,15 +99,17 @@ class RedLightViolationEngine:
         
         # Stopline y coordinate (horizontal line)
         line_y = self.stopline_rect.get("y1", 0)
-        
-        # Hướng dưới → lên: xe chưa chạm khi y_top > line_y
-        # Xe vượt vạch khi y_top < line_y
-        depth = line_y - y_top  # >0 khi đầu xe đã vượt qua vạch
-        
+
+        if self.direction == "top_to_bottom":
+            # Xe di chuyển từ trên xuống dưới: đầu xe là đáy bbox
+            depth = y_bottom - line_y  # >0 khi đầu xe đã vượt qua vạch
+        else:
+            # Hướng dưới → lên: xe chưa chạm khi y_top > line_y
+            depth = line_y - y_top  # >0 khi đầu xe đã vượt qua vạch
+
         if depth <= 0:
             return 0.0
-        
-        # Tính ratio và clamp về [0.0, 1.0]
+
         ratio = depth / h
         return max(0.0, min(1.0, ratio))
 
@@ -143,15 +147,19 @@ class RedLightViolationEngine:
         
         # Threshold for "ON" the line (in pixels)
         threshold = 10.0
-        
+
         if abs(py - line_y) < threshold:
             return "ON"
-        elif py > line_y:
+
+        if self.direction == "top_to_bottom":
+            if py < line_y:
+                return "BEFORE"
+            return "AFTER"
+
+        if py > line_y:
             # Point is below the line (BEFORE for bottom-to-top traffic)
             return "BEFORE"
-        else:
-            # Point is above the line (AFTER)
-            return "AFTER"
+        return "AFTER"
 
     def _ensure_vehicle(self, track_id: int) -> tuple[VehicleViolationState, bool]:
         if track_id not in self.vehicles:
@@ -191,6 +199,8 @@ class RedLightViolationEngine:
         """Process the current frame and return any new violations."""
         self._update_light(light_state, timestamp)
         violations: List[ViolationRecord] = []
+
+        inside_count = 0
 
         logger.info(
             f"[VIOLATION] tracks={len(vehicle_tracks)}, light={light_state}, stopline={self.stopline_rect}"
@@ -234,6 +244,12 @@ class RedLightViolationEngine:
                     f"light={light_state}, prev={previous_position}, pos={position}"
                 )
             
+            if light_state == "YELLOW":
+                logger.info(
+                    f"[YELLOW] cam={self.camera_id} track={track_id} front={front_point} "
+                    f"inside={inside_region} overlap={overlap_ratio:.2f} prev={previous_position} pos={position}"
+                )
+
             # ==================================================================
             # YELLOW PHASE: "Arm" vehicles that touch stopline during yellow
             # ==================================================================
@@ -260,6 +276,11 @@ class RedLightViolationEngine:
             # Chỉ xét xe đã chạm vạch (overlap > 0)
             # ==================================================================
             if light_state == "RED" and not vehicle.violated:
+                logger.info(
+                    f"[RED] cam={self.camera_id} track={track_id} inside={inside_region} "
+                    f"overlap={overlap_ratio:.2f} prev={previous_position} pos={position} "
+                    f"touched_yellow={vehicle.touched_during_yellow_or_before_red}"
+                )
                 # Chỉ xét các xe thực sự chạm vạch (overlap > 0)
                 if overlap_ratio > 0.0:
                     # Nếu đè vạch >= 40% chiều cao → đây là vi phạm
@@ -307,7 +328,10 @@ class RedLightViolationEngine:
                     f"(overlap={overlap_ratio:.2f}, violated={vehicle.violated})"
                 )
 
-
+        
+        logger.info(
+            f"[TL] camera={self.camera_id}, light={light_state}, tracks={len(vehicle_tracks)}, inside_region={inside_count}"
+        )
         self._prune_stale(timestamp)
         return violations
 
@@ -318,6 +342,7 @@ class RedLightViolationEngine:
 
     def reset_stopline(self, stopline_rect: Dict[str, float]) -> None:
         self.stopline_rect = stopline_rect
+        self.direction = stopline_rect.get("direction", "bottom_to_top")
         self.vehicles.clear()
         self.last_light_state = None
         self.last_red_on = None

@@ -105,11 +105,13 @@ class ViolationManager:
             logger.debug(f"[VIOLATION] No tracks for camera {camera_id} at {timestamp.isoformat()}")
             return []
 
+        effective_light = light_state if light_state in {"RED", "YELLOW", "GREEN"} else "GREEN"
+
         logger.info(
-            f"[VIOLATION] Computing for camera={camera_id}, tracks={len(tracks)}, light={light_state}"
+            f"[VIOLATION] Computing for camera={camera_id}, tracks={len(tracks)}, light={effective_light}"
         )
 
-        violations = engine.update(tracks, light_state, timestamp)
+        violations = engine.update(tracks, effective_light, timestamp)
         if violations:
             logger.info(f"🚨 {len(violations)} violations detected for camera {camera_id}")
         return violations
