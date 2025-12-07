@@ -84,9 +84,6 @@ class StopRequest(BaseModel):
 class ViolationRegionUpdate(BaseModel):
     camera_id: str = Field(..., min_length=1, description="Camera identifier")
     points: List[Tuple[float, float]] = Field(..., description="Polygon points as [[x,y], ...]")
-    video_dimensions: Optional[Dict[str, int]] = Field(
-        None, description="Source video dimensions used when capturing the polygon"
-    )
 
     @field_validator('camera_id')
     @classmethod
@@ -272,8 +269,7 @@ def get_violation_region(camera_id: str):
         raise HTTPException(status_code=404, detail=f"No violation region for {camera_id}")
 
     points = region.get("points") if isinstance(region, dict) else None
-    video_dimensions = region.get("video_dimensions") if isinstance(region, dict) else None
-    return {"camera_id": camera_id, "points": points or [], "video_dimensions": video_dimensions}
+    return {"camera_id": camera_id, "points": points or []}
 
 
 @router.put("/violation-region")
@@ -287,21 +283,13 @@ def update_violation_region(request: ViolationRegionUpdate):
 
     sanitized_points = [(float(x), float(y)) for x, y in request.points]
 
-    payload_dimensions = None
-    if request.video_dimensions:
-        payload_dimensions = {
-            "width": int(request.video_dimensions.get("width", 0)),
-            "height": int(request.video_dimensions.get("height", 0)),
-        }
-
-    save_violation_region(request.camera_id, sanitized_points, payload_dimensions)
+    save_violation_region(request.camera_id, sanitized_points)
     violation_manager.set_violation_region(request.camera_id, sanitized_points)
 
     return {
         "ok": True,
         "camera_id": request.camera_id,
         "points": sanitized_points,
-        "video_dimensions": payload_dimensions,
         "message": "Violation region saved",
     }
 
