@@ -31,6 +31,7 @@ class VehicleViolationState:
     position_when_red: Position = "BEFORE"
     first_seen_time: datetime = field(default_factory=datetime.utcnow)
     last_update_time: datetime = field(default_factory=datetime.utcnow)
+    front_history: list[Tuple[float, float]] = field(default_factory=list)
 
 
 @dataclass
@@ -103,6 +104,16 @@ class RedLightViolationEngine:
                 v.position_when_red = v.position_vs_line
         self.last_light_state = light_state
 
+    def _is_vehicle_stopped(self, vehicle: VehicleViolationState, threshold_px: float = 6.0) -> bool:
+        """Rudimentary stop detector using recent front-point displacement."""
+        if len(vehicle.front_history) < 3:
+            return False
+
+        recent = vehicle.front_history[-5:]
+        xs = [p[0] for p in recent]
+        ys = [p[1] for p in recent]
+        return (max(xs) - min(xs) <= threshold_px) and (max(ys) - min(ys) <= threshold_px)
+
     def update(
         self, vehicle_tracks: List[Dict[str, object]], light_state: LightState, timestamp: datetime
     ) -> List[ViolationRecord]:
@@ -130,6 +141,9 @@ class RedLightViolationEngine:
             front_point = self._front_point(tuple(bbox))
             position = self._position_vs_stopline(front_point)
             vehicle.position_vs_line = position
+            vehicle.front_history.append(front_point)
+            if len(vehicle.front_history) > 15:
+                vehicle.front_history = vehicle.front_history[-15:]
 
             if is_new and self.last_light_state == "RED" and self.last_red_on:
                 vehicle.position_when_red = position
@@ -150,36 +164,50 @@ class RedLightViolationEngine:
                 logger.info(
                     f"[VIOLATION] Track {track_id} touched stopline 50% at y2={y2_bbox}, stopline_y1={y1_line}, position={position}, position_when_red={vehicle.position_when_red}"
                 )
+            violation_type: Optional[str] = None
 
-            should_violate = (
+            if (
                 light_state == "RED"
                 and vehicle.position_when_red == "BEFORE"
                 and (crossed or touched)
                 and not vehicle.violated
                 and self.last_red_on is not None
-            )
+            ):
+                violation_type = "RED_LIGHT_RUN"
+                logger.warning(
+                    f"🚨 RED LIGHT VIOLATION RUN — camera={self.camera_id}, track={track_id}, from={previous_position} -> {position}"
+                )
 
-            if should_violate:
+            stopped_on_line = (
+                light_state == "RED"
+                and position in {"ON", "AFTER"}
+                and not crossed
+                and self._is_vehicle_stopped(vehicle)
+                and not vehicle.violated
+            )
+            if violation_type is None and stopped_on_line:
+                violation_type = "RED_LIGHT_STOPLINE"
+                logger.warning(
+                    f"🚨 RED LIGHT VIOLATION STOPLINE — camera={self.camera_id}, track={track_id}, position={position}"
+                )
+
+            if violation_type:
                 vehicle.violated = True
                 violation_record = ViolationRecord(
                     camera_id=self.camera_id,
                     track_id=vehicle.track_id,
-                    violation_type="RED_LIGHT",
+                    violation_type=violation_type,
                     timestamp=timestamp,
                     details={
                         "stopline": self.stopline_rect,
                         "light_state": light_state,
-                        "red_since": self.last_red_on.isoformat(),
+                        "red_since": self.last_red_on.isoformat() if self.last_red_on else None,
                         "position_when_red": vehicle.position_when_red,
                         "position_now": position,
                     },
                 )
                 violations.append(violation_record)
-                logger.warning(
-                    f"🚨 RED LIGHT VIOLATION — camera={self.camera_id}, track={track_id}"
-                )
             elif light_state == "RED" and (crossed or touched):
-                # Debug: Why not violated?
                 logger.info(
                     f"[VIOLATION] Track {track_id} NOT violated: position_when_red={vehicle.position_when_red}, violated={vehicle.violated}, last_red_on={self.last_red_on is not None}"
                 )

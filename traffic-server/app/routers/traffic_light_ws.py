@@ -15,6 +15,7 @@ import cv2
 import numpy as np
 from datetime import datetime
 from app.violations.violation_manager import violation_manager
+from app.services.traffic_light_manager import traffic_light_manager
 
 logger = logging.getLogger(__name__)
 
@@ -34,36 +35,54 @@ def crop_tl_roi(frame: np.ndarray, camera_id: str) -> tuple:
     Returns:
         (roi_frame, roi_data) or (None, None) if no ROI
     """
-    roi_data = roi_storage.get(camera_id)
+    roi_data = roi_storage.get(camera_id) or traffic_light_manager.get_roi(camera_id)
+    if not roi_data:
+        roi_data = traffic_light_manager.load_roi_from_config(camera_id)
+        if roi_data:
+            roi_storage[camera_id] = roi_data
+
     if not roi_data:
         return None, None
-    
+
     h, w = frame.shape[:2]
-    
+
     if roi_data.get("type") == "pixel":
-        x1 = roi_data["x1"]
-        y1 = roi_data["y1"]
-        x2 = roi_data["x2"]
-        y2 = roi_data["y2"]
+        # Legacy pixel payloads are rescaled to the current frame to avoid aspect errors
+        src_w = float(roi_data.get("frame_width") or roi_data.get("source_width") or w)
+        src_h = float(roi_data.get("frame_height") or roi_data.get("source_height") or h)
+        scale_x = w / src_w if src_w else 1.0
+        scale_y = h / src_h if src_h else 1.0
+        x1 = max(0, min(int(roi_data["x1"] * scale_x), w - 1))
+        y1 = max(0, min(int(roi_data["y1"] * scale_y), h - 1))
+        x2 = max(x1 + 1, min(int(roi_data["x2"] * scale_x), w))
+        y2 = max(y1 + 1, min(int(roi_data["y2"] * scale_y), h))
+        roi_norm = {
+            "x": x1 / w,
+            "y": y1 / h,
+            "width": (x2 - x1) / w,
+            "height": (y2 - y1) / h,
+        }
+        traffic_light_manager.set_roi(camera_id, roi_norm)
     else:
-        # Normalized
-        x1 = int(roi_data["x"] * w)
-        y1 = int(roi_data["y"] * h)
-        x2 = int((roi_data["x"] + roi_data["width"]) * w)
-        y2 = int((roi_data["y"] + roi_data["height"]) * h)
-    
-    # Clamp to frame bounds
-    x1 = max(0, min(x1, w - 1))
-    y1 = max(0, min(y1, h - 1))
-    x2 = max(x1 + 1, min(x2, w))
-    y2 = max(y1 + 1, min(y2, h))
-    
+        # Normalized ROI (preferred path)
+        traffic_light_manager.set_roi(camera_id, roi_data)
+        pixel_bounds = traffic_light_manager.roi_to_pixels(camera_id, (h, w))
+        if not pixel_bounds:
+            return None, None
+        x1, y1, x2, y2 = pixel_bounds
+
     roi_frame = frame[y1:y2, x1:x2]
-    
+
     if roi_frame.size == 0:
-        logger.warning(f"⚠️ Empty ROI crop: ({x1},{y1}) -> ({x2},{y2})")
+        logger.warning(
+            f"⚠️ Empty ROI crop: cam={camera_id} pixels=({x1},{y1}) -> ({x2},{y2}) w={w} h={h}"
+        )
         return None, None
-    
+
+    logger.debug(
+        f"[TL ROI] cam={camera_id} pix=({x1},{y1},{x2},{y2}) norm={traffic_light_manager.get_roi(camera_id)}"
+    )
+
     return roi_frame, {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
 
 
@@ -165,6 +184,7 @@ async def ws_traffic_light_realtime(
     # When a new connection is made for a specific camera, clear any old state
     # to prevent "ghost" ROIs or stale violation tracking.
     clear_roi(camera_id)
+    traffic_light_manager.clear_roi(camera_id)
     violation_manager.clear(camera_id)
     logger.info(f"[RESET] Cleared ROI and violation state for {camera_id}")
     
@@ -174,6 +194,7 @@ async def ws_traffic_light_realtime(
         # Initialize stream with traffic light enabled
         stream = BinaryAnnotStream(
             source=source,
+            camera_id=camera_id,
             conf=conf,
             imgsz=imgsz,
             target_fps=fps,
@@ -192,28 +213,36 @@ async def ws_traffic_light_realtime(
         stream.start()
         
         # Load stopline configuration for violation detection
-        if enable_violation:
-            try:
-                from pathlib import Path
-                
-                config_path = Path(__file__).parent.parent / "data" / "traffic_light" / f"{camera_id}.json"
-                if config_path.exists():
-                    with open(config_path) as f:
-                        config = json.load(f)
-                    
+        try:
+            from pathlib import Path
+
+            config_path = Path(__file__).parent.parent / "data" / "traffic_light" / f"{camera_id}.json"
+            if config_path.exists():
+                with open(config_path) as f:
+                    config = json.load(f)
+
+                tl_roi = config.get("traffic_light_roi")
+                if tl_roi:
+                    traffic_light_manager.set_roi(camera_id, tl_roi)
+                    roi_storage[camera_id] = tl_roi
+                    logger.info(f"[TL ROI] camera={camera_id}, roi={tl_roi}")
+                else:
+                    logger.warning(f"⚠️ No traffic_light_roi found for {camera_id}")
+
+                if enable_violation:
                     stopline = config.get("stopline")
                     if stopline:
                         violation_manager.set_stopline(
                             camera_id=camera_id,
                             stopline=stopline
                         )
-                        logger.info(f"✅ Loaded stopline for {camera_id}: {stopline}")
+                        logger.info(f"[STOPLINE] camera={camera_id}, stopline={stopline}")
                     else:
                         logger.warning(f"⚠️ No stopline in config for {camera_id} - violations will not be detected")
-                else:
-                    logger.warning(f"⚠️ Config file not found: {config_path}")
-            except Exception as e:
-                logger.error(f"❌ Failed to load stopline config: {e}", exc_info=True)
+            else:
+                logger.warning(f"⚠️ Config file not found: {config_path}")
+        except Exception as e:
+            logger.error(f"❌ Failed to load TL config: {e}", exc_info=True)
         
         # Send info packet
         info = stream.info_packet()
@@ -229,11 +258,11 @@ async def ws_traffic_light_realtime(
             consecutive_errors = 0
             max_consecutive_errors = 3
             last_tl_update = 0
-            tl_update_interval = 0.5  # Update TL every 500ms
+            tl_update_interval = 0.75  # Update TL every 750ms per request
             
             # Cache traffic light state to use for all frames
             cached_tl_state = {
-                'state': 'UNKNOWN',
+                'state': 'GREEN',
                 'confidence': 0.0,
                 'roi_frame': None,
                 'roi_bounds': None
@@ -281,8 +310,11 @@ async def ws_traffic_light_realtime(
                             
                             if roi_frame is not None:
                                 # Detect state
-                                state, confidence = detect_traffic_light_state(roi_frame)
-                                
+                                raw_state, raw_confidence = detect_traffic_light_state(roi_frame)
+                                state, confidence = traffic_light_manager.stabilize_state(
+                                    camera_id, raw_state, raw_confidence
+                                )
+
                                 # Encode ROI frame
                                 roi_frame_b64 = encode_roi_frame(roi_frame, quality=80)
                                 
@@ -297,11 +329,12 @@ async def ws_traffic_light_realtime(
                                 if frame_count % 50 == 0:
                                     logger.info(f"🚦 TL state: {state} ({confidence:.2f}), ROI frame: {len(roi_frame_b64) if roi_frame_b64 else 0} bytes")
                             else:
-                                # Update cached state with error
+                                # Update cached state with error but keep default GREEN fallback
                                 cached_tl_state = {
-                                    'state': 'UNKNOWN',
+                                    'state': 'GREEN',
                                     'confidence': 0.0,
                                     'roi_frame': None,
+                                    'roi_bounds': None,
                                     'error': f'No ROI configured for camera_id={camera_id}'
                                 }
                                 if frame_count % 100 == 0:

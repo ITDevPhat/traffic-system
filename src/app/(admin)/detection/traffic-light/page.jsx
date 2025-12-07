@@ -309,6 +309,14 @@ function DetectionPageBinaryContent() {
   const [showDebugOverlay, setShowDebugOverlay] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
 
+  const resolveCameraId = useCallback(
+    (srcValue) => {
+      const path = (srcValue || source || '').toLowerCase();
+      return path.includes('viphamgiaothong') ? 'cam02' : 'cam01';
+    },
+    [source]
+  );
+
   const resetTrafficLightState = useCallback(
     ({ clearGeometry = false, closeSocket = false } = {}) => {
       if (closeSocket && tlSocketRef.current) {
@@ -690,8 +698,7 @@ function DetectionPageBinaryContent() {
     params.append('enable_roi_drawing', modules.roiDrawing);
     params.append('force_gpu', settings.force_gpu);
     // Determine camera_id based on source video for correct config loading
-    const isCam02 = src && src.toLowerCase().includes('viphamgiaothong');
-    const cameraId = isCam02 ? 'cam02' : 'cam01';
+    const cameraId = resolveCameraId(src);
     params.append('camera_id', cameraId);
 
     // Use dedicated traffic light WebSocket endpoint
@@ -749,62 +756,7 @@ function DetectionPageBinaryContent() {
               console.log(`?? Canvas: ${newWidth}x${newHeight}`);
               console.log('?? Info:', pkt);
 
-              // Auto-load ROI for viphamgiaothong (cam02)
-              if (source && source.toLowerCase().includes('viphamgiaothong')) {
-                console.log('🎬 Video Viphamgiaothong detected - Loading cam02.json config...');
-
-                // Values from cam02.json
-                const cam02Roi = { x: 939, y: 113, w: 147, h: 75 };
-                setTlRoi(cam02Roi);
-                setTlRoiActive(true);
-
-                const cam02Stopline = { x1: 143, y1: 927, x2: 1278, y2: 939 };
-                setStopline(cam02Stopline);
-                setStoplineActive(true);
-
-                safeToast.success('✅ Loaded cam02 configuration', { autoClose: 2000 });
-              }
-
-              // Auto-load ROI for video3 after detection starts
-              if (source && source.toLowerCase().includes('video3')) {
-                // Set default TL ROI
-                const defaultTlRoi = { x: 833, y: 14, w: 52, h: 101 };
-                setTlRoi(defaultTlRoi);
-                setTlRoiActive(true);
-
-                // Set default Stopline
-                const defaultStopline = { x1: 37, y1: 334, x2: 804, y2: 320 };
-                setStopline(defaultStopline);
-                setStoplineActive(true);
-
-                // Auto-save TL ROI to backend
-                const roi_pixel = {
-                  x1: Math.round(defaultTlRoi.x),
-                  y1: Math.round(defaultTlRoi.y),
-                  x2: Math.round(defaultTlRoi.x + defaultTlRoi.w),
-                  y2: Math.round(defaultTlRoi.y + defaultTlRoi.h)
-                };
-
-                fetch(`${API_URL}/api/traffic-light/roi`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    camera_id: "cam01",
-                    roi_pixel,
-                    frame_width: newWidth,
-                    frame_height: newHeight
-                  })
-                }).then(res => {
-                  if (res.ok) {
-                    console.log('✅ TL ROI auto-saved for video3');
-                    safeToast.success('✅ Auto-loaded ROI & Stopline', { autoClose: 2000 });
-                  }
-                }).catch(err => {
-                  console.warn('Failed to auto-save TL ROI:', err);
-                });
-
-                console.log('🚦 Auto-loaded ROI & Stopline for video3');
-              }
+                // Removed auto-loaded ROI/stopline to rely solely on user-provided geometry per camera
               if (pkt.rois && typeof pkt.rois === 'object') {
                 const entries = Object.entries(pkt.rois);
                 if (entries.length > 0) {
@@ -1560,7 +1512,7 @@ function DetectionPageBinaryContent() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          camera_id: "cam01",
+          camera_id: resolveCameraId(),
           roi_pixel,
           frame_width: frameDimensions.width || 1920,
           frame_height: frameDimensions.height || 1080
@@ -1588,7 +1540,7 @@ function DetectionPageBinaryContent() {
       tlSocketRef.current.close();
     }
 
-    const wsUrl = `${API_URL.replace("http", "ws")}/api/traffic-light/ws/traffic-light?camera_id=cam01`;
+    const wsUrl = `${API_URL.replace("http", "ws")}/api/traffic-light/ws/traffic-light?camera_id=${resolveCameraId()}`;
 
     tlSocketRef.current = new WebSocket(wsUrl);
 
@@ -2046,7 +1998,7 @@ function DetectionPageBinaryContent() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          camera_id: "cam01",
+          camera_id: resolveCameraId(),
           stopline: stoplineData
         })
       });
@@ -2099,7 +2051,7 @@ function DetectionPageBinaryContent() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          camera_id: "cam01",
+          camera_id: resolveCameraId(),
           roi_pixel,
           frame_width: frameDimensions.width || 1920,
           frame_height: frameDimensions.height || 1080
