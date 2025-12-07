@@ -194,7 +194,7 @@ export const TrafficLivePanel: React.FC<TrafficLivePanelProps> = ({
                                       : '#6b7280',
                                 }}
                               >
-                                {roi.signalState || 'UNKNOWN'}
+                                {roi.signalState || 'GREEN'}
                               </span>
                             </div>
                           </Card.Body>

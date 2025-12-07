@@ -94,7 +94,7 @@ class ViolationRegionUpdate(BaseModel):
 
 class TLState(BaseModel):
     """Traffic light state"""
-    state: Literal['GREEN', 'RED', 'YELLOW', 'UNKNOWN']
+    state: Literal['GREEN', 'RED', 'YELLOW']
     confidence: float = Field(..., ge=0, le=1)
     timestamp: datetime
     frame_base64: Optional[str] = None
@@ -103,7 +103,7 @@ class TLState(BaseModel):
 class WSMessage(BaseModel):
     """WebSocket message"""
     type: Literal['state_update', 'error', 'info']
-    state: Optional[Literal['GREEN', 'RED', 'YELLOW', 'UNKNOWN']] = None
+    state: Optional[Literal['GREEN', 'RED', 'YELLOW']] = None
     confidence: Optional[float] = None
     timestamp: Optional[str] = None
     frame: Optional[str] = None

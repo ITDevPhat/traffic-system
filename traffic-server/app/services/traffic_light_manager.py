@@ -9,9 +9,9 @@ Version: 1.0.0
 """
 import asyncio
 import logging
-from collections import deque
+from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, Tuple, Deque, List
+from typing import Optional, Dict, Tuple, List
 
 import numpy as np
 
@@ -56,38 +56,58 @@ class TrafficLightFrameBuffer:
         self.state.pop(camera_id, None)
 
 
-class TrafficLightStateSmoother:
-    """Temporal smoothing for noisy traffic light classifications."""
+class TrafficLightStateMachine:
+    """Finite-state machine that outputs only GREEN/YELLOW/RED."""
 
-    def __init__(self, window: int = 10, majority: float = 0.6):
-        self.window = window
-        self.majority = majority
-        self.history: Dict[str, Deque[Tuple[str, float]]] = {}
+    def __init__(self) -> None:
+        self.effective_state: str = "GREEN"
+        self.last_raw_state: Optional[str] = None
+        self.green_streak: int = 0
 
-    def update(self, camera_id: str, state: str, confidence: float) -> Tuple[str, float]:
-        hist = self.history.setdefault(camera_id, deque(maxlen=self.window))
-        hist.append((state, confidence))
+    def update(self, raw_state: Optional[str], timestamp: datetime) -> str:
+        """Update FSM with the latest raw detection and return effective state."""
+        prev = self.effective_state or "GREEN"
 
-        if not hist:
-            return state, confidence
+        if raw_state is None:
+            return prev
 
-        counts: Dict[str, int] = {}
-        conf_accum: Dict[str, float] = {}
-        for st, conf in hist:
-            counts[st] = counts.get(st, 0) + 1
-            conf_accum[st] = conf_accum.get(st, 0.0) + conf
+        self.last_raw_state = raw_state
 
-        dominant_state = max(counts, key=counts.get)
-        dominance = counts[dominant_state] / len(hist)
-        avg_conf = conf_accum.get(dominant_state, 0.0) / max(counts[dominant_state], 1)
+        if prev == "GREEN":
+            if raw_state in {"YELLOW", "RED"}:
+                # First sign of transition away from GREEN enters YELLOW
+                self.effective_state = "YELLOW"
+                self.green_streak = 0
+            else:
+                self.effective_state = "GREEN"
 
-        if dominance >= self.majority:
-            return dominant_state, avg_conf
+        elif prev == "YELLOW":
+            if raw_state == "RED":
+                self.effective_state = "RED"
+                self.green_streak = 0
+            elif raw_state == "GREEN":
+                self.effective_state = "GREEN"
+                self.green_streak = 0
+            else:
+                self.effective_state = "YELLOW"
 
-        return "UNKNOWN", 0.0
+        elif prev == "RED":
+            if raw_state == "GREEN":
+                self.green_streak += 1
+                if self.green_streak >= 2:
+                    self.effective_state = "GREEN"
+                    self.green_streak = 0
+            else:
+                self.green_streak = 0
+                # Stay RED until GREEN is stable
+                self.effective_state = "RED"
 
-    def clear(self, camera_id: str) -> None:
-        self.history.pop(camera_id, None)
+        return self.effective_state
+
+    def clear(self) -> None:
+        self.effective_state = "GREEN"
+        self.last_raw_state = None
+        self.green_streak = 0
 
 
 class TrafficLightManager:
@@ -95,7 +115,7 @@ class TrafficLightManager:
 
     def __init__(self):
         self.roi_by_camera: Dict[str, Dict[str, float]] = {}
-        self.smoother = TrafficLightStateSmoother()
+        self.state_machines: Dict[str, TrafficLightStateMachine] = {}
 
     def load_roi_from_config(self, camera_id: str) -> Optional[Dict[str, float]]:
         config_path = Path(__file__).parent.parent / "data" / "traffic_light" / f"{camera_id}.json"
@@ -126,7 +146,8 @@ class TrafficLightManager:
     def clear_roi(self, camera_id: str) -> None:
         if camera_id in self.roi_by_camera:
             del self.roi_by_camera[camera_id]
-        self.smoother.clear(camera_id)
+        if camera_id in self.state_machines:
+            self.state_machines[camera_id].clear()
         logger.info(f"[ROI] Cleared ROI and smoothing cache for {camera_id}")
 
     def roi_to_pixels(self, camera_id: str, frame_shape: Tuple[int, int]) -> Optional[Tuple[int, int, int, int]]:
@@ -146,8 +167,13 @@ class TrafficLightManager:
         y2 = max(y1 + 1, min(y2, h))
         return x1, y1, x2, y2
 
-    def stabilize_state(self, camera_id: str, state: str, confidence: float) -> Tuple[str, float]:
-        return self.smoother.update(camera_id, state, confidence)
+    def stabilize_state(
+        self, camera_id: str, raw_state: Optional[str], confidence: float, timestamp: Optional[datetime] = None
+    ) -> Tuple[str, float]:
+        """Apply FSM smoothing and return effective state with passthrough confidence."""
+        machine = self.state_machines.setdefault(camera_id, TrafficLightStateMachine())
+        effective_state = machine.update(raw_state, timestamp or datetime.utcnow())
+        return effective_state, confidence
 
 
 traffic_light_manager = TrafficLightManager()

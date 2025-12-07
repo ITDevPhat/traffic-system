@@ -323,8 +323,9 @@ async def ws_traffic_light_realtime(
                             if roi_frame is not None:
                                 # Detect state
                                 raw_state, raw_confidence = detect_traffic_light_state(roi_frame)
+                                normalized_raw = None if raw_state == "UNKNOWN" else raw_state
                                 state, confidence = traffic_light_manager.stabilize_state(
-                                    camera_id, raw_state, raw_confidence
+                                    camera_id, normalized_raw, raw_confidence, timestamp=datetime.utcnow()
                                 )
 
                                 # Encode ROI frame

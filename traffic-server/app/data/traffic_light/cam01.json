@@ -14,5 +14,9 @@
   },
   "violation_region": {
     "points": []
+  },
+  "video_dimensions": {
+    "width": 886,
+    "height": 634
   }
 }
