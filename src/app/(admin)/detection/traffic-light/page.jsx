@@ -289,7 +289,7 @@ function DetectionPageBinaryContent() {
   const [startPos, setStartPos] = useState(null); // mouse anchor
   const [tlRoiActive, setTlRoiActive] = useState(false);
   const [isSelectingTLMode, setIsSelectingTLMode] = useState(false); // UI mode
-  const [trafficLightState, setTrafficLightState] = useState("GREEN");
+  const [trafficLightState, setTrafficLightState] = useState("UNKNOWN");
   const [trafficLightFrame, setTrafficLightFrame] = useState(null);
   const [trafficLightConfidence, setTrafficLightConfidence] = useState(null);
   const tlSocketRef = useRef(null);
@@ -308,6 +308,14 @@ function DetectionPageBinaryContent() {
   const [mousePos, setMousePos] = useState(null);
   const [showDebugOverlay, setShowDebugOverlay] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+
+  const resolveCameraId = useCallback(
+    (srcValue) => {
+      const path = (srcValue || source || '').toLowerCase();
+      return path.includes('viphamgiaothong') ? 'cam02' : 'cam01';
+    },
+    [source]
+  );
 
   const resetTrafficLightState = useCallback(
     ({ clearGeometry = false, closeSocket = false } = {}) => {
@@ -690,8 +698,7 @@ function DetectionPageBinaryContent() {
     params.append('enable_roi_drawing', modules.roiDrawing);
     params.append('force_gpu', settings.force_gpu);
     // Determine camera_id based on source video for correct config loading
-    const isCam02 = src && src.toLowerCase().includes('viphamgiaothong');
-    const cameraId = isCam02 ? 'cam02' : 'cam01';
+    const cameraId = resolveCameraId(src);
     params.append('camera_id', cameraId);
 
     // Use dedicated traffic light WebSocket endpoint
@@ -785,11 +792,13 @@ function DetectionPageBinaryContent() {
                   y2: Math.round(defaultTlRoi.y + defaultTlRoi.h)
                 };
 
+                const cameraId = resolveCameraId(source);
+
                 fetch(`${API_URL}/api/traffic-light/roi`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
-                    camera_id: "cam01",
+                    camera_id: cameraId,
                     roi_pixel,
                     frame_width: newWidth,
                     frame_height: newHeight
@@ -1560,7 +1569,7 @@ function DetectionPageBinaryContent() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          camera_id: "cam01",
+          camera_id: resolveCameraId(),
           roi_pixel,
           frame_width: frameDimensions.width || 1920,
           frame_height: frameDimensions.height || 1080
@@ -1588,7 +1597,7 @@ function DetectionPageBinaryContent() {
       tlSocketRef.current.close();
     }
 
-    const wsUrl = `${API_URL.replace("http", "ws")}/api/traffic-light/ws/traffic-light?camera_id=cam01`;
+    const wsUrl = `${API_URL.replace("http", "ws")}/api/traffic-light/ws/traffic-light?camera_id=${resolveCameraId()}`;
 
     tlSocketRef.current = new WebSocket(wsUrl);
 
@@ -2046,7 +2055,7 @@ function DetectionPageBinaryContent() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          camera_id: "cam01",
+          camera_id: resolveCameraId(),
           stopline: stoplineData
         })
       });
@@ -2099,7 +2108,7 @@ function DetectionPageBinaryContent() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          camera_id: "cam01",
+          camera_id: resolveCameraId(),
           roi_pixel,
           frame_width: frameDimensions.width || 1920,
           frame_height: frameDimensions.height || 1080

@@ -47,10 +47,18 @@ def crop_tl_roi(frame: np.ndarray, camera_id: str) -> tuple:
     h, w = frame.shape[:2]
 
     if roi_data.get("type") == "pixel":
-        x1 = roi_data["x1"]
-        y1 = roi_data["y1"]
-        x2 = roi_data["x2"]
-        y2 = roi_data["y2"]
+        # Store normalized version for consistent downstream use
+        x1 = max(0, min(int(roi_data["x1"]), w - 1))
+        y1 = max(0, min(int(roi_data["y1"]), h - 1))
+        x2 = max(x1 + 1, min(int(roi_data["x2"]), w))
+        y2 = max(y1 + 1, min(int(roi_data["y2"]), h))
+        roi_norm = {
+            "x": x1 / w,
+            "y": y1 / h,
+            "width": (x2 - x1) / w,
+            "height": (y2 - y1) / h,
+        }
+        traffic_light_manager.set_roi(camera_id, roi_norm)
     else:
         # Normalized
         x1 = int(roi_data["x"] * w)
@@ -65,11 +73,17 @@ def crop_tl_roi(frame: np.ndarray, camera_id: str) -> tuple:
     y2 = max(y1 + 1, min(y2, h))
     
     roi_frame = frame[y1:y2, x1:x2]
-    
+
     if roi_frame.size == 0:
-        logger.warning(f"⚠️ Empty ROI crop: ({x1},{y1}) -> ({x2},{y2})")
+        logger.warning(
+            f"⚠️ Empty ROI crop: cam={camera_id} pixels=({x1},{y1}) -> ({x2},{y2}) w={w} h={h}"
+        )
         return None, None
-    
+
+    logger.debug(
+        f"[TL ROI] cam={camera_id} pix=({x1},{y1},{x2},{y2}) norm={traffic_light_manager.get_roi(camera_id)}"
+    )
+
     return roi_frame, {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
 
 
@@ -90,7 +104,7 @@ def detect_traffic_light_state(roi_frame: np.ndarray) -> tuple:
         (state, confidence)
     """
     if roi_frame is None or roi_frame.size == 0:
-        return "GREEN", 0.0
+        return "UNKNOWN", 0.0
     
     # Convert to HSV
     hsv = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2HSV)
