@@ -4,8 +4,8 @@ Handles ROI-based traffic light detection with dedicated workers
 """
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Query
 from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import Optional
-from typing import Literal, Optional
+from typing import List, Optional, Tuple
+from typing import Literal
 from datetime import datetime
 import logging
 import json
@@ -80,6 +80,17 @@ class StopRequest(BaseModel):
             raise ValueError("Invalid camera_id: contains illegal characters")
         return v
 
+
+class ViolationRegionUpdate(BaseModel):
+    camera_id: str = Field(..., min_length=1, description="Camera identifier")
+    points: List[Tuple[float, float]] = Field(..., description="Polygon points as [[x,y], ...]")
+
+    @field_validator('camera_id')
+    @classmethod
+    def validate_camera_id(cls, v):
+        if '..' in v or '/' in v or '\\' in v:
+            raise ValueError("Invalid camera_id: contains illegal characters")
+        return v
 
 class TLState(BaseModel):
     """Traffic light state"""
@@ -246,6 +257,41 @@ async def get_roi(camera_id: str):
     if not roi:
         raise HTTPException(status_code=404, detail=f"No ROI found for camera {camera_id}")
     return {"camera_id": camera_id, "roi": roi}
+
+
+@router.get("/violation-region")
+def get_violation_region(camera_id: str):
+    """Return the configured violation region for a camera if present."""
+    from app.config.roi_config import get_violation_region
+
+    region = get_violation_region(camera_id)
+    if not region:
+        raise HTTPException(status_code=404, detail=f"No violation region for {camera_id}")
+
+    points = region.get("points") if isinstance(region, dict) else None
+    return {"camera_id": camera_id, "points": points or []}
+
+
+@router.put("/violation-region")
+def update_violation_region(request: ViolationRegionUpdate):
+    """Create or update the violation region polygon for a camera."""
+    from app.config.roi_config import save_violation_region
+    from app.violations.violation_manager import violation_manager
+
+    if not request.points or len(request.points) < 3:
+        raise HTTPException(status_code=400, detail="Violation region requires at least 3 points")
+
+    sanitized_points = [(float(x), float(y)) for x, y in request.points]
+
+    save_violation_region(request.camera_id, sanitized_points)
+    violation_manager.set_violation_region(request.camera_id, sanitized_points)
+
+    return {
+        "ok": True,
+        "camera_id": request.camera_id,
+        "points": sanitized_points,
+        "message": "Violation region saved",
+    }
 
 
 @router.post("/stop")

@@ -240,6 +240,17 @@ async def ws_traffic_light_realtime(
                         logger.info(f"[STOPLINE] camera={camera_id}, stopline={stopline}")
                     else:
                         logger.warning(f"⚠️ No stopline in config for {camera_id} - violations will not be detected")
+
+                    violation_region = config.get("violation_region", {})
+                    violation_points = violation_region.get("points") if isinstance(violation_region, dict) else None
+                    if violation_points:
+                        violation_manager.set_violation_region(
+                            camera_id,
+                            [tuple(map(float, pt)) for pt in violation_points],
+                        )
+                        logger.info(
+                            f"[VIOLATION REGION] camera={camera_id}, points={len(violation_points)}"
+                        )
             else:
                 logger.warning(f"⚠️ Config file not found: {config_path}")
         except Exception as e:
