@@ -28,10 +28,11 @@ class VehicleViolationState:
     track_id: int
     position_vs_line: Position = "BEFORE"
     violated: bool = False
-    position_when_red: Position = "BEFORE"
+    position_when_red: Position = "BEFORE"  # Informational only, not used in violation logic
     first_seen_time: datetime = field(default_factory=datetime.utcnow)
     last_update_time: datetime = field(default_factory=datetime.utcnow)
-    front_history: list[Tuple[float, float]] = field(default_factory=list)
+    # NEW: đánh dấu xe đã chạm vạch trong pha vàng/đỏ
+    touched_during_yellow_or_before_red: bool = False
 
 
 @dataclass
@@ -41,6 +42,16 @@ class ViolationRecord:
     violation_type: str
     timestamp: datetime
     details: Dict[str, object]
+    
+    def to_dict(self) -> Dict[str, object]:
+        """Convert ViolationRecord to JSON-serializable dict"""
+        return {
+            "camera_id": self.camera_id,
+            "track_id": self.track_id,
+            "violation_type": self.violation_type,
+            "timestamp": self.timestamp.isoformat(),
+            "details": self.details,
+        }
 
 
 class RedLightViolationEngine:
@@ -54,42 +65,67 @@ class RedLightViolationEngine:
         self.last_red_on: Optional[datetime] = None
 
     def _front_point(self, bbox: Tuple[float, float, float, float]) -> Tuple[float, float]:
+        """Get front point of vehicle (center-x, top-y for bottom-to-top traffic)"""
         x1, y1, x2, _ = bbox
         cx = (x1 + x2) / 2.0
         return cx, y1
+
+    def _stopline_overlap_ratio(self, bbox: Tuple[float, float, float, float]) -> float:
+        """
+        Tính % chiều cao bbox đã vượt qua vạch dừng theo hướng chuyển động.
+        
+        Cam01 & Cam02: xe chạy từ dưới lên trên (bottom → top)
+        → đầu xe là cạnh trên bbox (y_top = bbox[1])
+        
+        Returns:
+            float in [0.0, 1.0]:
+            - 0.0: chưa chạm vạch
+            - 0.4: đầu xe vượt vạch 40% chiều cao xe
+            - >=0.4: đè vạch đủ để bắt lỗi
+        """
+        x1, y_top, x2, y_bottom = bbox
+        h = y_bottom - y_top
+        
+        if h <= 0:
+            return 0.0
+        
+        # Stopline y coordinate (horizontal line)
+        line_y = self.stopline_rect.get("y1", 0)
+        
+        # Hướng dưới → lên: xe chưa chạm khi y_top > line_y
+        # Xe vượt vạch khi y_top < line_y
+        depth = line_y - y_top  # >0 khi đầu xe đã vượt qua vạch
+        
+        if depth <= 0:
+            return 0.0
+        
+        # Tính ratio và clamp về [0.0, 1.0]
+        ratio = depth / h
+        return max(0.0, min(1.0, ratio))
 
     def _position_vs_stopline(self, point: Tuple[float, float]) -> Position:
         """
         Determine if point is BEFORE, ON, or AFTER the stopline.
         
-        For a line from (x1,y1) to (x2,y2), we use the cross product to determine
-        which side of the line the point is on.
-        
-        Cross product: (x2-x1)*(py-y1) - (y2-y1)*(px-x1)
-        - Positive: point is on the RIGHT side (AFTER for top-to-bottom traffic)
-        - Negative: point is on the LEFT side (BEFORE)
-        - ~Zero: point is ON the line
+        For bottom-to-top traffic (cam01 & cam02):
+        - BEFORE: y > line_y (below the line)
+        - ON: y ≈ line_y (on the line)
+        - AFTER: y < line_y (above the line)
         """
         px, py = point
-        x1 = self.stopline_rect.get("x1", 0)
-        y1 = self.stopline_rect.get("y1", 0)
-        x2 = self.stopline_rect.get("x2", 0)
-        y2 = self.stopline_rect.get("y2", 0)
-
-        # Calculate cross product
-        cross = (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1)
+        line_y = self.stopline_rect.get("y1", 0)
         
         # Threshold for "ON" the line (in pixels)
         threshold = 10.0
         
-        if abs(cross) < threshold:
+        if abs(py - line_y) < threshold:
             return "ON"
-        elif cross > 0:
-            # Point is below/after the line (in direction of traffic)
-            return "AFTER"
-        else:
-            # Point is above/before the line
+        elif py > line_y:
+            # Point is below the line (BEFORE for bottom-to-top traffic)
             return "BEFORE"
+        else:
+            # Point is above the line (AFTER)
+            return "AFTER"
 
     def _ensure_vehicle(self, track_id: int) -> tuple[VehicleViolationState, bool]:
         if track_id not in self.vehicles:
@@ -98,21 +134,30 @@ class RedLightViolationEngine:
         return self.vehicles[track_id], False
 
     def _update_light(self, light_state: LightState, timestamp: datetime) -> None:
+        """Update light state and record when it turns RED"""
+        
+        # Reset state when light turns GREEN (new cycle)
+        if self.last_light_state == "RED" and light_state == "GREEN":
+            logger.info(f"🟢 Light turned GREEN - resetting violation states")
+            for v in self.vehicles.values():
+                v.touched_during_yellow_or_before_red = False
+                v.violated = False  # Reset for new cycle
+        
+        # Record when light turns RED
         if light_state != self.last_light_state and light_state == "RED":
             self.last_red_on = timestamp
+            # Record position when red for informational purposes only
             for v in self.vehicles.values():
                 v.position_when_red = v.position_vs_line
+            logger.info(f"🔴 Light turned RED at {timestamp.isoformat()}")
+        
+        # Log when light turns YELLOW
+        if light_state != self.last_light_state and light_state == "YELLOW":
+            logger.info(f"🟡 Light turned YELLOW at {timestamp.isoformat()}")
+        
         self.last_light_state = light_state
 
-    def _is_vehicle_stopped(self, vehicle: VehicleViolationState, threshold_px: float = 6.0) -> bool:
-        """Rudimentary stop detector using recent front-point displacement."""
-        if len(vehicle.front_history) < 3:
-            return False
 
-        recent = vehicle.front_history[-5:]
-        xs = [p[0] for p in recent]
-        ys = [p[1] for p in recent]
-        return (max(xs) - min(xs) <= threshold_px) and (max(ys) - min(ys) <= threshold_px)
 
     def update(
         self, vehicle_tracks: List[Dict[str, object]], light_state: LightState, timestamp: datetime
@@ -141,92 +186,70 @@ class RedLightViolationEngine:
             front_point = self._front_point(tuple(bbox))
             position = self._position_vs_stopline(front_point)
             vehicle.position_vs_line = position
-            vehicle.front_history.append(front_point)
-            if len(vehicle.front_history) > 15:
-                vehicle.front_history = vehicle.front_history[-15:]
 
+            # Record position when red for new vehicles (informational only)
             if is_new and self.last_light_state == "RED" and self.last_red_on:
                 vehicle.position_when_red = position
-                logger.info(
-                    f"[VIOLATION] Track {track_id} NEW while RED: position={position}, front_point={front_point}"
-                )
 
+            # Calculate overlap ratio (how much of vehicle height has crossed the stopline)
+            overlap_ratio = self._stopline_overlap_ratio(tuple(bbox))
+            
+            # Log overlap when vehicle is near/on stopline
+            if overlap_ratio > 0.0:
+                logger.debug(
+                    f"[VIOLATION] Track {track_id} overlap_ratio={overlap_ratio:.2f}, "
+                    f"light={light_state}, prev={previous_position}, pos={position}"
+                )
+            
+            # ==================================================================
+            # YELLOW PHASE: "Arm" vehicles that touch stopline during yellow
+            # ==================================================================
+            if light_state == "YELLOW" and overlap_ratio > 0.0:
+                if not vehicle.touched_during_yellow_or_before_red:
+                    vehicle.touched_during_yellow_or_before_red = True
+                    logger.info(
+                        f"🟡 Track {track_id} touched stopline during YELLOW "
+                        f"(overlap={overlap_ratio:.2f}, pos={position})"
+                    )
+            
+            # Track crossing for logging purposes
             crossed = previous_position == "BEFORE" and position in {"ON", "AFTER"}
-            if crossed:
+            if crossed and light_state == "RED":
                 logger.info(
-                    f"[VIOLATION] Track {track_id} crossed stopline: {previous_position} -> {position}"
-                )
-
-            # ===== IMPROVED STOPLINE CONTACT CHECK =====
-            # Lấy chiều cao bbox để xác định điểm "mặt trước" của xe thay vì dùng đáy bbox
-            y_top = float(bbox[1])
-            y_bottom = float(bbox[3])
-            h = y_bottom - y_top
-
-            # Điểm mặt trước (front_y) = nằm cách đáy bbox 25% → đại diện vị trí đầu xe
-            front_y = y_bottom - 0.25 * h
-
-            # Margin để tránh bắt sai khi xe chỉ chạm nhẹ → phải đè thật sự
-            touch_margin = 8.0  # pixel, có thể chỉnh 5–12 tùy video
-
-            y1_line = self.stopline_rect.get("y1", 0)
-
-            touched = front_y >= (y1_line + touch_margin)
-
-            if touched:
-                logger.info(
-                    f"[VIOLATION] Track {track_id} touched stopline (FRONT) at front_y={front_y:.1f}, "
-                    f"stopline_y={y1_line}, margin={touch_margin}, pos={position}, pos_red={vehicle.position_when_red}"
+                    f"[VIOLATION] Track {track_id} crossed stopline: {previous_position} -> {position}, "
+                    f"overlap={overlap_ratio:.2f}"
                 )
 
             violation_type: Optional[str] = None
 
             # ==================================================================
-            # NEW RULE A – STOPLINE VIOLATION:
-            # Bất kỳ xe nào đang ON/AFTER khi đèn đỏ đều coi là dừng sai vạch.
-            # Không phân biệt nó tới trước hay sau khi đèn đỏ.
+            # RED PHASE: Check violations immediately
+            # Chỉ xét xe đã chạm vạch (overlap > 0)
             # ==================================================================
-            if (
-                light_state == "RED"
-                and position in {"ON", "AFTER"}
-                and not vehicle.violated
-            ):
-                violation_type = "RED_LIGHT_STOPLINE"
-                logger.warning(
-                    f"🚨 STOPLINE VIOLATION — camera={self.camera_id}, track={track_id}, position={position}"
-                )
-
-            # ==================================================================
-            # NEW RULE B – RED LIGHT RUN:
-            # Xe từ BEFORE → ON/AFTER trong khi đèn đang RED.
-            # ==================================================================
-            if (
-                violation_type is None
-                and light_state == "RED"
-                and previous_position == "BEFORE"
-                and position in {"ON", "AFTER"}
-                and not vehicle.violated
-            ):
-                violation_type = "RED_LIGHT_RUN"
-                logger.warning(
-                    f"🚨 RED LIGHT RUN — camera={self.camera_id}, track={track_id}, prev={previous_position} -> now={position}"
-                )
-
-            # ==================================================================
-            # NEW RULE C – OPTIONAL: Xe tới ON/AFTER lúc đèn đỏ rồi đứng im tại đó.
-            # Nếu bạn thấy RULE A bắt hơi nhiều, có thể bỏ RULE A, giữ RULE C này.
-            # ==================================================================
-            if (
-                violation_type is None
-                and light_state == "RED"
-                and position in {"ON", "AFTER"}
-                and self._is_vehicle_stopped(vehicle)
-                and not vehicle.violated
-            ):
-                violation_type = "RED_LIGHT_STOPLINE"
-                logger.warning(
-                    f"🚨 STOPLINE VIOLATION (late stop) — camera={self.camera_id}, track={track_id}"
-                )
+            if light_state == "RED" and not vehicle.violated:
+                # Chỉ xét các xe thực sự chạm vạch (overlap > 0)
+                if overlap_ratio > 0.0:
+                    # Nếu đè vạch >= 40% chiều cao → đây là vi phạm
+                    if overlap_ratio >= 0.4:
+                        # Phân loại vi phạm:
+                        # - Nếu trước đó còn BEFORE và chưa chạm vạch trong pha vàng → vượt đèn đỏ
+                        # - Nếu đã chạm trong pha vàng hoặc đang nằm trên/qua vạch → dừng sai vạch
+                        if previous_position == "BEFORE" and not vehicle.touched_during_yellow_or_before_red:
+                            violation_type = "RED_LIGHT_RUN"
+                        else:
+                            violation_type = "RED_LIGHT_STOPLINE"
+                        
+                        logger.warning(
+                            f"🚨 RED LIGHT VIOLATION — camera={self.camera_id}, "
+                            f"track={track_id}, type={violation_type}, "
+                            f"overlap={overlap_ratio:.2f}, prev={previous_position}, now={position}, "
+                            f"touched_during_yellow={vehicle.touched_during_yellow_or_before_red}"
+                        )
+                else:
+                    logger.debug(
+                        f"[VIOLATION] Track {track_id} RED but has not touched stopline "
+                        f"(overlap={overlap_ratio:.2f})"
+                    )
 
             if violation_type:
                 vehicle.violated = True
@@ -239,14 +262,16 @@ class RedLightViolationEngine:
                         "stopline": self.stopline_rect,
                         "light_state": light_state,
                         "red_since": self.last_red_on.isoformat() if self.last_red_on else None,
-                        # position_when_red không còn dùng để quyết định logic nữa
                         "position_now": position,
+                        "overlap_ratio": overlap_ratio,
+                        "touched_during_yellow": vehicle.touched_during_yellow_or_before_red,
                     },
                 )
                 violations.append(violation_record)
             elif light_state == "RED" and crossed:
-                logger.info(
-                    f"[VIOLATION] Track {track_id} crossed stopline but already violated or filtered"
+                logger.debug(
+                    f"[VIOLATION] Track {track_id} crossed stopline but no violation "
+                    f"(overlap={overlap_ratio:.2f}, violated={vehicle.violated})"
                 )
 
 
