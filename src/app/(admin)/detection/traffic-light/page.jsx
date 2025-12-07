@@ -811,12 +811,15 @@ function DetectionPageBinaryContent() {
               // Auto-load ROI for video3 after detection starts
               if (source && source.toLowerCase().includes('video3')) {
                 // Set default TL ROI
-                const defaultTlRoi = { x: 833, y: 14, w: 52, h: 101 };
+                // const defaultTlRoi = { x: 833, y: 14, w: 52, h: 101 };
+                const defaultTlRoi = { x: 855, y: 19, w: 30, h: 81 };
                 setTlRoi(defaultTlRoi);
                 setTlRoiActive(true);
 
                 // Set default Stopline
-                const defaultStopline = { x1: 37, y1: 334, x2: 804, y2: 320 };
+                // const defaultStopline = { x1: 37, y1: 334, x2: 804, y2: 320 };
+                const defaultStopline = { x1: 80, y1: 297, x2: 773, y2: 282 };
+
                 setStopline(defaultStopline);
                 setStoplineActive(true);
 
