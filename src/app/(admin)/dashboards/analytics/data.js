@@ -1,25 +1,25 @@
 import { currency } from '@/context/constants';
 export const statisticData = [{
   icon: 'solar:buildings-2-broken',
-  title: 'No. of Properties',
-  amount: '2,854',
-  change: 7.34
+  title: 'Vi phạm trong ngày',
+  amount: '52',
+  // change: 7.34
 }, {
   icon: 'solar:users-group-two-rounded-broken',
-  title: 'Regi. Agents',
-  amount: '705',
-  change: 76.89
+  title: 'Tổng số Camera',
+  amount: '10',
+  // change: 76.89
 }, {
   icon: 'solar:shield-user-broken',
-  title: 'Customers',
-  amount: '9,431',
-  change: 45.0,
-  variant: 'danger'
+  title: 'Người dùng ',
+  amount: '10',
+  // change: 45.0,
+  // variant: 'danger'
 }, {
   icon: 'solar:money-bag-broken',
-  title: 'Revenue',
-  amount: `${currency}78.3M`,
-  change: 8.76
+  title: 'Mô hình',
+  amount: `20`,
+  // change: 8.76
 }];
 export const propertyData = [{
   title: 'Property',

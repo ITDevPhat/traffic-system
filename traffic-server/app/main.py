@@ -60,6 +60,11 @@ from app.core.config import settings
 from app.core.database import create_db_and_tables
 from app.core.check_db import check_database_connection, test_database_query
 from app.routers import detection, violations, videos
+from app.routers import violation_types  # Violation Types Management
+from app.routers import models  # AI Models Management
+from app.routers import locations  # Locations Management
+from app.routers import cameras  # Cameras Management
+from app.routers import video_jobs  # Video Jobs Management
 from app.routers import realtime_ws_binary  # Binary WS for 30 FPS
 from app.routers import realtime_detection  # JSON WS for detection grid
 from app.routers import auth as auth_router
@@ -153,6 +158,11 @@ else:
 # Register routers
 app.include_router(detection.router, prefix=f"{settings.API_V1_PREFIX}/detection", tags=["Detection"])
 app.include_router(violations.router, prefix=f"{settings.API_V1_PREFIX}/violations", tags=["Violations"])
+app.include_router(violation_types.router, prefix=f"{settings.API_V1_PREFIX}/violation-types", tags=["Violation Types"])
+app.include_router(models.router, prefix=f"{settings.API_V1_PREFIX}/models", tags=["AI Models"])
+app.include_router(locations.router, prefix=f"{settings.API_V1_PREFIX}/locations", tags=["Locations"])
+app.include_router(cameras.router, prefix=f"{settings.API_V1_PREFIX}/cameras", tags=["Cameras"])
+app.include_router(video_jobs.router, prefix=f"{settings.API_V1_PREFIX}/video-jobs", tags=["Video Jobs"])
 app.include_router(videos.router, prefix=f"{settings.API_V1_PREFIX}/videos", tags=["Videos"])
 # Binary realtime endpoint - 30 FPS with TurboJPEG + Multithreading
 app.include_router(realtime_ws_binary.router, tags=["Realtime Binary"])

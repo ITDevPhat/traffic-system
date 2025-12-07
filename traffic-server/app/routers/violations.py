@@ -2,75 +2,196 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 from app.core.database import get_session
 from app.models.violation import Violation
-from typing import Optional
+from typing import Optional, List
+from pydantic import BaseModel
+from datetime import datetime
 
 router = APIRouter()
 
 
-@router.get("/")
+class ViolationCreate(BaseModel):
+    """Schema để tạo vi phạm mới"""
+    video_job_id: int
+    vehicle_id: Optional[int] = None
+    violation_type_code: Optional[str] = None
+    frame: Optional[int] = None
+    timestamp: Optional[datetime] = None
+    roi_type: Optional[str] = None
+    evidence_img: Optional[str] = None
+    plate: Optional[str] = None
+    confidence: Optional[float] = None
+    model_id: Optional[int] = None
+    verification_status: str = "unverified"
+    verified_source: str = "manual"
+
+
+class ViolationUpdate(BaseModel):
+    """Schema để cập nhật vi phạm"""
+    video_job_id: int
+    vehicle_id: Optional[int] = None
+    violation_type_code: Optional[str] = None
+    frame: Optional[int] = None
+    timestamp: Optional[datetime] = None
+    roi_type: Optional[str] = None
+    evidence_img: Optional[str] = None
+    plate: Optional[str] = None
+    confidence: Optional[float] = None
+    model_id: Optional[int] = None
+    verification_status: str
+    verified_by: Optional[int] = None
+    verified_source: str
+    verified_at: Optional[datetime] = None
+
+
+@router.get("/", response_model=List[Violation])
 async def get_violations(
     skip: int = Query(0, ge=0, description="Số record bỏ qua"),
     limit: int = Query(100, ge=1, le=1000, description="Số record tối đa trả về"),
-    violation_type: Optional[str] = Query(None, description="Lọc theo loại vi phạm"),
+    violation_type_code: Optional[str] = Query(None, description="Lọc theo loại vi phạm"),
     video_job_id: Optional[int] = Query(None, description="Lọc theo video job ID"),
+    verification_status: Optional[str] = Query(None, description="Lọc theo trạng thái xác minh"),
+    plate: Optional[str] = Query(None, description="Lọc theo biển số"),
     session: Session = Depends(get_session)
 ):
-    """
-    Lấy danh sách các vi phạm đã phát hiện.
-    
-    Args:
-        skip: Số record bỏ qua (pagination)
-        limit: Số record tối đa trả về
-        violation_type: Lọc theo loại vi phạm (optional)
-        video_job_id: Lọc theo video job ID (optional)
-        session: Database session
-    
-    Returns:
-        JSON chứa danh sách vi phạm và metadata
-    """
+    """Lấy danh sách các vi phạm đã phát hiện."""
     query = select(Violation)
     
     # Apply filters
-    if violation_type:
-        query = query.where(Violation.violation_type == violation_type)
+    if violation_type_code:
+        query = query.where(Violation.violation_type_code == violation_type_code)
     if video_job_id:
         query = query.where(Violation.video_job_id == video_job_id)
+    if verification_status:
+        query = query.where(Violation.verification_status == verification_status)
+    if plate:
+        query = query.where(Violation.plate.ilike(f"%{plate}%"))
     
-    # Get total count
-    total = len(session.exec(query).all())
+    # Apply pagination and order by newest first
+    violations = session.exec(
+        query.order_by(Violation.created_at.desc()).offset(skip).limit(limit)
+    ).all()
     
-    # Apply pagination
-    violations = session.exec(query.offset(skip).limit(limit)).all()
-    
-    return {
-        "total": total,
-        "skip": skip,
-        "limit": limit,
-        "violations": violations
-    }
+    return violations
 
 
-@router.get("/{violation_id}")
+@router.get("/{violation_id}", response_model=Violation)
 async def get_violation_detail(
     violation_id: int,
     session: Session = Depends(get_session)
 ):
-    """
-    Lấy chi tiết một vi phạm cụ thể.
-    
-    Args:
-        violation_id: ID của vi phạm
-        session: Database session
-    
-    Returns:
-        JSON chứa chi tiết vi phạm
-    """
+    """Lấy chi tiết một vi phạm cụ thể."""
     violation = session.exec(
-        select(Violation).where(Violation.id == violation_id)
+        select(Violation).where(Violation.violation_id == violation_id)
     ).first()
     
     if not violation:
         raise HTTPException(status_code=404, detail="Không tìm thấy vi phạm")
+    
+    return violation
+
+
+@router.post("/", response_model=Violation)
+async def create_violation(
+    violation_data: ViolationCreate,
+    session: Session = Depends(get_session)
+):
+    """Tạo vi phạm mới."""
+    # Validate verification_status
+    valid_statuses = ['unverified', 'verified', 'rejected']
+    if violation_data.verification_status not in valid_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Trạng thái xác minh phải là một trong: {', '.join(valid_statuses)}"
+        )
+    
+    # Validate verified_source
+    valid_sources = ['manual', 'ai', 'external']
+    if violation_data.verified_source not in valid_sources:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Nguồn xác minh phải là một trong: {', '.join(valid_sources)}"
+        )
+    
+    # Validate confidence
+    if violation_data.confidence is not None and not (0 <= violation_data.confidence <= 1):
+        raise HTTPException(
+            status_code=400,
+            detail="Độ tin cậy phải từ 0 đến 1"
+        )
+    
+    # Kiểm tra video_job_id tồn tại
+    from app.models.video_job import VideoJob
+    video_job = session.exec(
+        select(VideoJob).where(VideoJob.video_job_id == violation_data.video_job_id)
+    ).first()
+    if not video_job:
+        raise HTTPException(status_code=404, detail="Không tìm thấy video job")
+    
+    # Tạo mới
+    violation = Violation(**violation_data.model_dump())
+    session.add(violation)
+    session.commit()
+    session.refresh(violation)
+    
+    return violation
+
+
+@router.put("/{violation_id}", response_model=Violation)
+async def update_violation(
+    violation_id: int,
+    violation_data: ViolationUpdate,
+    session: Session = Depends(get_session)
+):
+    """Cập nhật thông tin vi phạm."""
+    violation = session.exec(
+        select(Violation).where(Violation.violation_id == violation_id)
+    ).first()
+    
+    if not violation:
+        raise HTTPException(status_code=404, detail="Không tìm thấy vi phạm")
+    
+    # Validate verification_status
+    valid_statuses = ['unverified', 'verified', 'rejected']
+    if violation_data.verification_status not in valid_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Trạng thái xác minh phải là một trong: {', '.join(valid_statuses)}"
+        )
+    
+    # Validate verified_source
+    valid_sources = ['manual', 'ai', 'external']
+    if violation_data.verified_source not in valid_sources:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Nguồn xác minh phải là một trong: {', '.join(valid_sources)}"
+        )
+    
+    # Validate confidence
+    if violation_data.confidence is not None and not (0 <= violation_data.confidence <= 1):
+        raise HTTPException(
+            status_code=400,
+            detail="Độ tin cậy phải từ 0 đến 1"
+        )
+    
+    # Cập nhật
+    violation.video_job_id = violation_data.video_job_id
+    violation.vehicle_id = violation_data.vehicle_id
+    violation.violation_type_code = violation_data.violation_type_code
+    violation.frame = violation_data.frame
+    violation.timestamp = violation_data.timestamp
+    violation.roi_type = violation_data.roi_type
+    violation.evidence_img = violation_data.evidence_img
+    violation.plate = violation_data.plate
+    violation.confidence = violation_data.confidence
+    violation.model_id = violation_data.model_id
+    violation.verification_status = violation_data.verification_status
+    violation.verified_by = violation_data.verified_by
+    violation.verified_source = violation_data.verified_source
+    violation.verified_at = violation_data.verified_at
+    
+    session.add(violation)
+    session.commit()
+    session.refresh(violation)
     
     return violation
 
@@ -80,18 +201,9 @@ async def delete_violation(
     violation_id: int,
     session: Session = Depends(get_session)
 ):
-    """
-    Xóa một vi phạm.
-    
-    Args:
-        violation_id: ID của vi phạm cần xóa
-        session: Database session
-    
-    Returns:
-        JSON xác nhận xóa thành công
-    """
+    """Xóa một vi phạm."""
     violation = session.exec(
-        select(Violation).where(Violation.id == violation_id)
+        select(Violation).where(Violation.violation_id == violation_id)
     ).first()
     
     if not violation:
