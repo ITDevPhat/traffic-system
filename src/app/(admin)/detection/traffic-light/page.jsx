@@ -16,10 +16,12 @@ const ROI_COLORS = [
   { stroke: '#a855f7', fill: 'rgba(168, 85, 247, 0.2)' },
 ];
 
-const RoiOverlay = React.forwardRef(({ frameDimensions, rois, draftPoints, isDrawing, onPointerDown, mousePos, onMouseMove }, ref) => {
+const RoiOverlay = React.forwardRef(({ frameDimensions, rois, draftPoints, isDrawing, onPointerDown, mousePos, onMouseMove, visible = true }, ref) => {
   const width = frameDimensions?.width || 1;
   const height = frameDimensions?.height || 1;
   const hasFrame = width > 0 && height > 0;
+
+  if (!visible || !hasFrame) return null;
 
   const toSvgPoints = (points = []) => {
     if (!hasFrame) return '';
@@ -258,7 +260,9 @@ function DetectionPageBinaryContent() {
     force_gpu: true
   });
 
-  const [frameDimensions, setFrameDimensions] = useState({ width: 1280, height: 720 });
+  const [frameDimensions, setFrameDimensions] = useState({ width: 0, height: 0 });
+  const [videoReady, setVideoReady] = useState(false);
+  const [videoSize, setVideoSize] = useState(null);
   const [expectBinary, setExpectBinary] = useState(false);
 
   // Module toggles
@@ -289,7 +293,7 @@ function DetectionPageBinaryContent() {
   const [startPos, setStartPos] = useState(null); // mouse anchor
   const [tlRoiActive, setTlRoiActive] = useState(false);
   const [isSelectingTLMode, setIsSelectingTLMode] = useState(false); // UI mode
-  const [trafficLightState, setTrafficLightState] = useState("UNKNOWN");
+  const [trafficLightState, setTrafficLightState] = useState("GREEN");
   const [trafficLightFrame, setTrafficLightFrame] = useState(null);
   const [trafficLightConfidence, setTrafficLightConfidence] = useState(null);
   const tlSocketRef = useRef(null);
@@ -305,6 +309,11 @@ function DetectionPageBinaryContent() {
   const [draftRoiPoints, setDraftRoiPoints] = useState([]);
   const [draftRoiName, setDraftRoiName] = useState('');
   const [activeRoiId, setActiveRoiId] = useState(null);
+  const [violationRegionPoints, setViolationRegionPoints] = useState([]); // pixels [{x,y}]
+  const [isDrawingViolationRegion, setIsDrawingViolationRegion] = useState(false);
+  const [draftViolationPoints, setDraftViolationPoints] = useState([]);
+  const [violationRegionActive, setViolationRegionActive] = useState(false);
+  const [isSavingViolationRegion, setIsSavingViolationRegion] = useState(false);
   const [mousePos, setMousePos] = useState(null);
   const [showDebugOverlay, setShowDebugOverlay] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -324,7 +333,7 @@ function DetectionPageBinaryContent() {
         tlSocketRef.current = null;
       }
 
-      setTrafficLightState("UNKNOWN");
+      setTrafficLightState("GREEN");
       setTrafficLightFrame(null);
       setTrafficLightConfidence(null);
       setTlRoiActive(false);
@@ -336,6 +345,13 @@ function DetectionPageBinaryContent() {
         setTlRoi(null);
         setStopline(null);
         setStoplineActive(false);
+        setViolationRegionPoints([]);
+        setDraftViolationPoints([]);
+        setViolationRegionActive(false);
+        setIsDrawingViolationRegion(false);
+        setVideoReady(false);
+        setVideoSize(null);
+        setFrameDimensions({ width: 0, height: 0 });
       }
     },
     []
@@ -528,6 +544,33 @@ function DetectionPageBinaryContent() {
 
   const clamp01 = (value) => Math.min(Math.max(value ?? 0, 0), 1);
 
+  const violationRegionNormalized = useMemo(() => {
+    const width = frameDimensions.width || 0;
+    const height = frameDimensions.height || 0;
+
+    if (!violationRegionPoints || violationRegionPoints.length === 0 || width === 0 || height === 0) {
+      return [];
+    }
+
+    return violationRegionPoints.map((pt) => ({
+      x: clamp01((pt?.x ?? 0) / width),
+      y: clamp01((pt?.y ?? 0) / height),
+    }));
+  }, [violationRegionPoints, frameDimensions.width, frameDimensions.height]);
+
+  const overlayRois = useMemo(() => {
+    const violationOverlay = violationRegionNormalized.length > 0
+      ? [{
+        id: 'violation-region',
+        label: 'Violation Region',
+        points: violationRegionNormalized,
+        color: { stroke: '#f97316', fill: 'rgba(249, 115, 22, 0.18)' }
+      }]
+      : [];
+
+    return [...roiPolygons, ...violationOverlay];
+  }, [roiPolygons, violationRegionNormalized]);
+
   const stoplineBounds = useMemo(() => {
     // Use 2-point stopline if available
     if (stopline && stopline.x1 !== undefined) {
@@ -562,7 +605,7 @@ function DetectionPageBinaryContent() {
 
   const classifyPosition = useCallback(
     (frontPoint) => {
-      if (!stoplineBounds || !frontPoint) return 'UNKNOWN';
+      if (!stoplineBounds || !frontPoint) return 'GREEN';
       const { minY, maxY } = stoplineBounds;
       const tolerance = 6; // pixels
       if (frontPoint.y < minY - tolerance) return 'AFTER_LINE';
@@ -742,6 +785,8 @@ function DetectionPageBinaryContent() {
               c.width = newWidth;
               c.height = newHeight;
               setFrameDimensions({ width: newWidth, height: newHeight });
+              setVideoSize({ width: newWidth, height: newHeight });
+              setVideoReady(true);
               const ctx = c.getContext('2d');
               if (ctx && ctx.imageSmoothingEnabled) ctx.imageSmoothingEnabled = false;
               console.log(`?? Canvas: ${newWidth}x${newHeight}`);
@@ -1174,6 +1219,8 @@ function DetectionPageBinaryContent() {
             if (probeData.width && probeData.height) {
               console.log('📹 Video dimensions:', probeData.width, 'x', probeData.height);
               setFrameDimensions({ width: probeData.width, height: probeData.height });
+              setVideoSize({ width: probeData.width, height: probeData.height });
+              setVideoReady(true);
             }
           }
         } catch (probeError) {
@@ -1452,6 +1499,24 @@ function DetectionPageBinaryContent() {
     setMousePos({ x: mouseX, y: mouseY });
   };
 
+  const overlayDraftPoints = isDrawingViolationRegion ? draftViolationPoints : draftRoiPoints;
+
+  const handleOverlayPointer = (event) => {
+    if (isDrawingViolationRegion) {
+      handleViolationOverlayPointer(event);
+    } else {
+      handleRoiOverlayPointer(event);
+    }
+  };
+
+  const handleOverlayMouseMoveUnified = (event) => {
+    if (isDrawingViolationRegion) {
+      handleViolationOverlayMouseMove(event);
+    } else {
+      handleRoiOverlayMouseMove(event);
+    }
+  };
+
   const clearAllRois = (notify = true) => {
     setRoiPolygons([]);
     cancelRoiDrawing();
@@ -1463,6 +1528,175 @@ function DetectionPageBinaryContent() {
       safeToast.info('ROI list cleared.');
     }
   };
+
+  const startViolationRegionDrawing = () => {
+    if (!videoLoaded) {
+      safeToast.error('Load a video frame before drawing violation region.');
+      return;
+    }
+    if (isDrawingRoi) {
+      cancelRoiDrawing();
+    }
+    setViolationRegionPoints([]);
+    setViolationRegionActive(false);
+    setIsDrawingViolationRegion(true);
+    setDraftViolationPoints([]);
+    setMousePos(null);
+  };
+
+  const cancelViolationRegionDrawing = () => {
+    setIsDrawingViolationRegion(false);
+    setDraftViolationPoints([]);
+    setMousePos(null);
+  };
+
+  const completeViolationRegion = useCallback(() => {
+    if (draftViolationPoints.length < 3) {
+      safeToast.error('Violation region needs at least 3 points.');
+      return;
+    }
+
+    const width = frameDimensions.width || 0;
+    const height = frameDimensions.height || 0;
+
+    if (width === 0 || height === 0) {
+      safeToast.error('Frame dimensions unavailable for saving region.');
+      return;
+    }
+
+    const pixels = draftViolationPoints.map((pt) => ({
+      x: Math.round(clamp01(pt?.x) * width),
+      y: Math.round(clamp01(pt?.y) * height),
+    }));
+
+    setViolationRegionPoints(pixels);
+    setViolationRegionActive(true);
+    setIsDrawingViolationRegion(false);
+    setDraftViolationPoints([]);
+    setMousePos(null);
+    safeToast.success('Violation region captured. Click save to persist.');
+  }, [draftViolationPoints, frameDimensions.width, frameDimensions.height, safeToast]);
+
+  const handleViolationOverlayPointer = (event) => {
+    if (!isDrawingViolationRegion) return;
+
+    const rect = overlayRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0 || rect.height === 0) return;
+
+    const mouseX = event.clientX - rect.left;
+    const mouseY = event.clientY - rect.top;
+    const nx = clamp01(mouseX / rect.width);
+    const ny = clamp01(mouseY / rect.height);
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (draftViolationPoints.length >= 3) {
+      const startPoint = draftViolationPoints[0];
+      const startX = startPoint.x * rect.width;
+      const startY = startPoint.y * rect.height;
+      const snapDistance = Math.sqrt((mouseX - startX) ** 2 + (mouseY - startY) ** 2);
+      if (snapDistance <= 15) {
+        completeViolationRegion();
+        return;
+      }
+    }
+
+    setDraftViolationPoints((prev) => [...prev, { x: nx, y: ny }]);
+  };
+
+  const handleViolationOverlayMouseMove = (event) => {
+    if (!isDrawingViolationRegion) return;
+    const rect = overlayRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0 || rect.height === 0) return;
+
+    const mouseX = event.clientX - rect.left;
+    const mouseY = event.clientY - rect.top;
+    setMousePos({ x: mouseX, y: mouseY });
+  };
+
+  const clearViolationRegion = useCallback(() => {
+    setViolationRegionPoints([]);
+    setDraftViolationPoints([]);
+    setViolationRegionActive(false);
+    setIsDrawingViolationRegion(false);
+    setMousePos(null);
+  }, []);
+
+  const saveViolationRegion = async () => {
+    if (!violationRegionPoints || violationRegionPoints.length < 3) {
+      safeToast.error('Draw violation region before saving.');
+      return;
+    }
+
+    try {
+      setIsSavingViolationRegion(true);
+      const payloadPoints = violationRegionPoints.map((pt) => [Math.round(pt.x), Math.round(pt.y)]);
+      const response = await fetch(`${API_URL}/api/traffic-light/violation-region`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          camera_id: resolveCameraId(),
+          points: payloadPoints,
+          video_dimensions: videoSize || frameDimensions
+        })
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || error.error || 'Failed to save violation region');
+      }
+
+      safeToast.success('Violation region saved.');
+      setViolationRegionActive(true);
+    } catch (error) {
+      console.error('Save violation region error:', error);
+      safeToast.error(error.message || 'Failed to save violation region');
+    } finally {
+      setIsSavingViolationRegion(false);
+    }
+  };
+
+  const fetchViolationRegion = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/traffic-light/violation-region?camera_id=${resolveCameraId()}`);
+      if (response.status === 404) {
+        clearViolationRegion();
+        return;
+      }
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || 'Failed to fetch violation region');
+      }
+
+      const data = await response.json();
+      const pts = Array.isArray(data.points) ? data.points : [];
+      const sanitized = pts
+        .filter((p) => Array.isArray(p) && p.length >= 2)
+        .map((p) => ({ x: Number(p[0]), y: Number(p[1]) }));
+
+      const storedDims = data.video_dimensions;
+      let scaled = sanitized;
+      if (storedDims && storedDims.width && storedDims.height && videoSize?.width && videoSize?.height) {
+        const scaleX = videoSize.width / storedDims.width;
+        const scaleY = videoSize.height / storedDims.height;
+        scaled = sanitized.map((p) => ({ x: Math.round(p.x * scaleX), y: Math.round(p.y * scaleY) }));
+      }
+
+      setViolationRegionPoints(scaled);
+      setViolationRegionActive(sanitized.length > 0);
+    } catch (error) {
+      console.error('Fetch violation region error:', error);
+      safeToast.error(error.message || 'Could not load violation region');
+    }
+  }, [clearViolationRegion, resolveCameraId, safeToast, videoSize]);
+
+  useEffect(() => {
+    if (videoReady) {
+      fetchViolationRegion();
+    }
+  }, [fetchViolationRegion, videoReady]);
 
   const roiPayload = useMemo(() => {
     if (!roiPolygons || roiPolygons.length === 0) return {};
@@ -2678,12 +2912,13 @@ function DetectionPageBinaryContent() {
           <RoiOverlay
             ref={overlayRef}
             frameDimensions={frameDimensions}
-            rois={roiPolygons}
-            draftPoints={draftRoiPoints}
-            isDrawing={isDrawingRoi}
-            onPointerDown={handleRoiOverlayPointer}
+            rois={overlayRois}
+            draftPoints={overlayDraftPoints}
+            isDrawing={isDrawingRoi || isDrawingViolationRegion}
+            onPointerDown={handleOverlayPointer}
             mousePos={mousePos}
-            onMouseMove={handleRoiOverlayMouseMove}
+            onMouseMove={handleOverlayMouseMoveUnified}
+            visible={videoReady}
           />
 
           {/* TL ROI Selection Instructions */}
@@ -3151,7 +3386,76 @@ function DetectionPageBinaryContent() {
             )}
           </Card.Body>
         </Card>
+        {/* ==== VIOLATION REGION PANEL ==== */}
+        <Card className="mt-4" style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #ea580c 100%)', border: 'none', boxShadow: '0 8px 32px rgba(234, 88, 12, 0.25)' }}>
+          <Card.Body>
+            <h5 className="text-white mb-3">🚧 Violation Region (Polygon)</h5>
 
+            <div className="d-flex gap-2 flex-wrap mb-3">
+              {!isDrawingViolationRegion && (
+                <Button
+                  onClick={startViolationRegionDrawing}
+                  variant="light"
+                  size="sm"
+                  className="fw-bold"
+                  disabled={!videoLoaded}
+                >
+                  ✏️ Draw Violation Region
+                </Button>
+              )}
+
+              {isDrawingViolationRegion && (
+                <>
+                  <Button
+                    onClick={completeViolationRegion}
+                    variant="success"
+                    size="sm"
+                    className="fw-bold"
+                    disabled={draftViolationPoints.length < 3}
+                  >
+                    ✅ Finish Polygon
+                  </Button>
+
+                  <Button
+                    onClick={cancelViolationRegionDrawing}
+                    variant="outline-light"
+                    size="sm"
+                  >
+                    ❌ Cancel
+                  </Button>
+                </>
+              )}
+
+              <Button
+                onClick={saveViolationRegion}
+                variant="success"
+                size="sm"
+                className="fw-bold"
+                disabled={isSavingViolationRegion || violationRegionPoints.length < 3}
+              >
+                {isSavingViolationRegion ? 'Saving…' : '💾 Save Region'}
+              </Button>
+
+              {violationRegionActive && (
+                <Button
+                  onClick={clearViolationRegion}
+                  variant="outline-light"
+                  size="sm"
+                >
+                  🧹 Clear Overlay
+                </Button>
+              )}
+            </div>
+
+            <Alert variant={violationRegionPoints.length >= 3 ? 'success' : 'light'} className="mb-0">
+              <small>
+                {violationRegionPoints.length >= 3 ? '✅ Region ready.' : 'ℹ️ Draw at least 3 points.'}
+                {' '}
+                Current points: <strong>{violationRegionPoints.length}</strong>
+              </small>
+            </Alert>
+          </Card.Body>
+        </Card>
 
       </div>
     </>

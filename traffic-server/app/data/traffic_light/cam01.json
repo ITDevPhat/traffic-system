@@ -11,5 +11,12 @@
     "y1": 334,
     "x2": 804,
     "y2": 320
+  },
+  "violation_region": {
+    "points": []
+  },
+  "video_dimensions": {
+    "width": 886,
+    "height": 634
   }
 }

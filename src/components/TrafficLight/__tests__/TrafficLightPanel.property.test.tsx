@@ -17,8 +17,8 @@ describe('TrafficLightPanel - Property-Based Tests', () => {
    * Property 9: State-to-Color Mapping Consistency
    * **Validates: Requirements 4.4, 4.5, 4.6, 4.7**
    *
-   * For any traffic light state (GREEN/RED/YELLOW/UNKNOWN), the UI must display
-   * the corresponding color: GREEN→#10b981, RED→#ef4444, YELLOW→#f59e0b, UNKNOWN→#6b7280.
+   * For any traffic light state (GREEN/RED/YELLOW), the UI must display
+   * the corresponding color: GREEN→#10b981, RED→#ef4444, YELLOW→#f59e0b.
    */
   it('Property 9: state-to-color mapping is consistent', () => {
     // Define the expected color mappings
@@ -26,13 +26,12 @@ describe('TrafficLightPanel - Property-Based Tests', () => {
       GREEN: '#10b981',
       RED: '#ef4444',
       YELLOW: '#f59e0b',
-      UNKNOWN: '#6b7280',
     };
 
     fc.assert(
       fc.property(
         // Generate arbitrary traffic light states
-        fc.constantFrom<TrafficLightState>('GREEN', 'RED', 'YELLOW', 'UNKNOWN'),
+        fc.constantFrom<TrafficLightState>('GREEN', 'RED', 'YELLOW'),
         fc.float({ min: 0, max: 1 }), // confidence
         fc.string(), // lastUpdate
         fc.boolean(), // isDetecting
@@ -118,7 +117,7 @@ describe('TrafficLightPanel - Property-Based Tests', () => {
     fc.assert(
       fc.property(
         // Generate arbitrary panel states
-        fc.constantFrom<TrafficLightState>('GREEN', 'RED', 'YELLOW', 'UNKNOWN'),
+        fc.constantFrom<TrafficLightState>('GREEN', 'RED', 'YELLOW'),
         fc.float({ min: 0, max: 1 }),
         fc.string(),
         fc.option(fc.string(), { nil: null }), // framePreview can be null
