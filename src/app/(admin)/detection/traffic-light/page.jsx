@@ -289,7 +289,7 @@ function DetectionPageBinaryContent() {
   const [startPos, setStartPos] = useState(null); // mouse anchor
   const [tlRoiActive, setTlRoiActive] = useState(false);
   const [isSelectingTLMode, setIsSelectingTLMode] = useState(false); // UI mode
-  const [trafficLightState, setTrafficLightState] = useState("GREEN");
+  const [trafficLightState, setTrafficLightState] = useState("UNKNOWN");
   const [trafficLightFrame, setTrafficLightFrame] = useState(null);
   const [trafficLightConfidence, setTrafficLightConfidence] = useState(null);
   const tlSocketRef = useRef(null);
@@ -756,7 +756,64 @@ function DetectionPageBinaryContent() {
               console.log(`?? Canvas: ${newWidth}x${newHeight}`);
               console.log('?? Info:', pkt);
 
-                // Removed auto-loaded ROI/stopline to rely solely on user-provided geometry per camera
+              // Auto-load ROI for viphamgiaothong (cam02)
+              if (source && source.toLowerCase().includes('viphamgiaothong')) {
+                console.log('🎬 Video Viphamgiaothong detected - Loading cam02.json config...');
+
+                // Values from cam02.json
+                const cam02Roi = { x: 939, y: 113, w: 147, h: 75 };
+                setTlRoi(cam02Roi);
+                setTlRoiActive(true);
+
+                const cam02Stopline = { x1: 143, y1: 927, x2: 1278, y2: 939 };
+                setStopline(cam02Stopline);
+                setStoplineActive(true);
+
+                safeToast.success('✅ Loaded cam02 configuration', { autoClose: 2000 });
+              }
+
+              // Auto-load ROI for video3 after detection starts
+              if (source && source.toLowerCase().includes('video3')) {
+                // Set default TL ROI
+                const defaultTlRoi = { x: 833, y: 14, w: 52, h: 101 };
+                setTlRoi(defaultTlRoi);
+                setTlRoiActive(true);
+
+                // Set default Stopline
+                const defaultStopline = { x1: 37, y1: 334, x2: 804, y2: 320 };
+                setStopline(defaultStopline);
+                setStoplineActive(true);
+
+                // Auto-save TL ROI to backend
+                const roi_pixel = {
+                  x1: Math.round(defaultTlRoi.x),
+                  y1: Math.round(defaultTlRoi.y),
+                  x2: Math.round(defaultTlRoi.x + defaultTlRoi.w),
+                  y2: Math.round(defaultTlRoi.y + defaultTlRoi.h)
+                };
+
+                const cameraId = resolveCameraId(source);
+
+                fetch(`${API_URL}/api/traffic-light/roi`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    camera_id: cameraId,
+                    roi_pixel,
+                    frame_width: newWidth,
+                    frame_height: newHeight
+                  })
+                }).then(res => {
+                  if (res.ok) {
+                    console.log('✅ TL ROI auto-saved for video3');
+                    safeToast.success('✅ Auto-loaded ROI & Stopline', { autoClose: 2000 });
+                  }
+                }).catch(err => {
+                  console.warn('Failed to auto-save TL ROI:', err);
+                });
+
+                console.log('🚦 Auto-loaded ROI & Stopline for video3');
+              }
               if (pkt.rois && typeof pkt.rois === 'object') {
                 const entries = Object.entries(pkt.rois);
                 if (entries.length > 0) {

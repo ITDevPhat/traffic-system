@@ -47,15 +47,11 @@ def crop_tl_roi(frame: np.ndarray, camera_id: str) -> tuple:
     h, w = frame.shape[:2]
 
     if roi_data.get("type") == "pixel":
-        # Legacy pixel payloads are rescaled to the current frame to avoid aspect errors
-        src_w = float(roi_data.get("frame_width") or roi_data.get("source_width") or w)
-        src_h = float(roi_data.get("frame_height") or roi_data.get("source_height") or h)
-        scale_x = w / src_w if src_w else 1.0
-        scale_y = h / src_h if src_h else 1.0
-        x1 = max(0, min(int(roi_data["x1"] * scale_x), w - 1))
-        y1 = max(0, min(int(roi_data["y1"] * scale_y), h - 1))
-        x2 = max(x1 + 1, min(int(roi_data["x2"] * scale_x), w))
-        y2 = max(y1 + 1, min(int(roi_data["y2"] * scale_y), h))
+        # Store normalized version for consistent downstream use
+        x1 = max(0, min(int(roi_data["x1"]), w - 1))
+        y1 = max(0, min(int(roi_data["y1"]), h - 1))
+        x2 = max(x1 + 1, min(int(roi_data["x2"]), w))
+        y2 = max(y1 + 1, min(int(roi_data["y2"]), h))
         roi_norm = {
             "x": x1 / w,
             "y": y1 / h,
@@ -64,13 +60,18 @@ def crop_tl_roi(frame: np.ndarray, camera_id: str) -> tuple:
         }
         traffic_light_manager.set_roi(camera_id, roi_norm)
     else:
-        # Normalized ROI (preferred path)
-        traffic_light_manager.set_roi(camera_id, roi_data)
-        pixel_bounds = traffic_light_manager.roi_to_pixels(camera_id, (h, w))
-        if not pixel_bounds:
-            return None, None
-        x1, y1, x2, y2 = pixel_bounds
+        # Normalized
+        x1 = int(roi_data["x"] * w)
+        y1 = int(roi_data["y"] * h)
+        x2 = int((roi_data["x"] + roi_data["width"]) * w)
+        y2 = int((roi_data["y"] + roi_data["height"]) * h)
 
+    # Clamp to frame bounds
+    x1 = max(0, min(x1, w - 1))
+    y1 = max(0, min(y1, h - 1))
+    x2 = max(x1 + 1, min(x2, w))
+    y2 = max(y1 + 1, min(y2, h))
+    
     roi_frame = frame[y1:y2, x1:x2]
 
     if roi_frame.size == 0:
@@ -103,7 +104,7 @@ def detect_traffic_light_state(roi_frame: np.ndarray) -> tuple:
         (state, confidence)
     """
     if roi_frame is None or roi_frame.size == 0:
-        return "GREEN", 0.0
+        return "UNKNOWN", 0.0
     
     # Convert to HSV
     hsv = cv2.cvtColor(roi_frame, cv2.COLOR_BGR2HSV)

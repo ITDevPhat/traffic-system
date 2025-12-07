@@ -84,8 +84,7 @@ class TrafficLightStateSmoother:
         if dominance >= self.majority:
             return dominant_state, avg_conf
 
-        # Default to GREEN when the window is inconclusive to avoid UNKNOWN flapping
-        return "GREEN", 0.0
+        return "UNKNOWN", 0.0
 
     def clear(self, camera_id: str) -> None:
         self.history.pop(camera_id, None)
