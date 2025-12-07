@@ -65,7 +65,6 @@ class RedLightViolationEngine:
     ):
         self.camera_id = camera_id
         self.stopline_rect = stopline_rect
-        self.direction = stopline_rect.get("direction", "bottom_to_top")
         self.violation_region: List[Tuple[float, float]] = violation_region or []
         self.vehicles: Dict[int, VehicleViolationState] = {}
         self.last_light_state: Optional[LightState] = None
@@ -223,8 +222,6 @@ class RedLightViolationEngine:
             front_point = self._front_point(tuple(bbox))
 
             inside_region = self._point_in_violation_region(*front_point)
-            if inside_region:
-                inside_count += 1
             if not inside_region:
                 vehicle.position_vs_line = "BEFORE"
                 vehicle.last_update_time = timestamp

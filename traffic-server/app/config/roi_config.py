@@ -35,7 +35,6 @@ def _load_config(camera_id: str) -> Dict[str, object]:
             "traffic_light_roi": None,
             "stopline": None,
             "violation_region": None,
-            "video_dimensions": None,
         }
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -45,7 +44,6 @@ def _load_config(camera_id: str) -> Dict[str, object]:
         data.setdefault("traffic_light_roi", None)
         data.setdefault("stopline", None)
         data.setdefault("violation_region", None)
-        data.setdefault("video_dimensions", None)
         return data
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to load ROI config for %s", camera_id)
@@ -86,14 +84,10 @@ def get_stopline(camera_id: str) -> Optional[Dict[str, float]]:
     return _load_config(camera_id).get("stopline")
 
 
-def save_violation_region(
-    camera_id: str, points: list[tuple[float, float]], video_dimensions: Optional[Dict[str, int]] = None
-) -> Dict[str, object]:
+def save_violation_region(camera_id: str, points: list[tuple[float, float]]) -> Dict[str, object]:
     """Persist the violation region polygon for a camera."""
     cfg = _load_config(camera_id)
-    cfg["violation_region"] = {"points": points, "video_dimensions": video_dimensions}
-    if video_dimensions:
-        cfg["video_dimensions"] = video_dimensions
+    cfg["violation_region"] = {"points": points}
     return _save_config(camera_id, cfg)
 
 

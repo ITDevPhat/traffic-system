@@ -350,9 +350,6 @@ function DetectionPageBinaryContent() {
         setDraftViolationPoints([]);
         setViolationRegionActive(false);
         setIsDrawingViolationRegion(false);
-        setVideoReady(false);
-        setVideoSize(null);
-        setFrameDimensions({ width: 0, height: 0 });
       }
     },
     []
@@ -560,8 +557,6 @@ function DetectionPageBinaryContent() {
   }, [violationRegionPoints, frameDimensions.width, frameDimensions.height]);
 
   const overlayRois = useMemo(() => {
-    if (!videoReady || !isDetectionRunning) return [];
-
     const violationOverlay = violationRegionNormalized.length > 0
       ? [{
         id: 'violation-region',
@@ -572,7 +567,7 @@ function DetectionPageBinaryContent() {
       : [];
 
     return [...roiPolygons, ...violationOverlay];
-  }, [isDetectionRunning, roiPolygons, videoReady, violationRegionNormalized]);
+  }, [roiPolygons, violationRegionNormalized]);
 
   const stoplineBounds = useMemo(() => {
     // Use 2-point stopline if available
@@ -1645,8 +1640,7 @@ function DetectionPageBinaryContent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           camera_id: resolveCameraId(),
-          points: payloadPoints,
-          video_dimensions: videoSize || frameDimensions
+          points: payloadPoints
         })
       });
 
@@ -1684,27 +1678,17 @@ function DetectionPageBinaryContent() {
         .filter((p) => Array.isArray(p) && p.length >= 2)
         .map((p) => ({ x: Number(p[0]), y: Number(p[1]) }));
 
-      const storedDims = data.video_dimensions;
-      let scaled = sanitized;
-      if (storedDims && storedDims.width && storedDims.height && videoSize?.width && videoSize?.height) {
-        const scaleX = videoSize.width / storedDims.width;
-        const scaleY = videoSize.height / storedDims.height;
-        scaled = sanitized.map((p) => ({ x: Math.round(p.x * scaleX), y: Math.round(p.y * scaleY) }));
-      }
-
-      setViolationRegionPoints(scaled);
+      setViolationRegionPoints(sanitized);
       setViolationRegionActive(sanitized.length > 0);
     } catch (error) {
       console.error('Fetch violation region error:', error);
       safeToast.error(error.message || 'Could not load violation region');
     }
-  }, [clearViolationRegion, resolveCameraId, safeToast, videoSize]);
+  }, [clearViolationRegion, resolveCameraId, safeToast]);
 
   useEffect(() => {
-    if (videoReady && videoSize && isDetectionRunning) {
-      fetchViolationRegion();
-    }
-  }, [fetchViolationRegion, isDetectionRunning, videoReady, videoSize]);
+    fetchViolationRegion();
+  }, [fetchViolationRegion]);
 
   const roiPayload = useMemo(() => {
     if (!roiPolygons || roiPolygons.length === 0) return {};
@@ -2926,7 +2910,6 @@ function DetectionPageBinaryContent() {
             onPointerDown={handleOverlayPointer}
             mousePos={mousePos}
             onMouseMove={handleOverlayMouseMoveUnified}
-            visible={videoReady && isDetectionRunning}
           />
 
           {/* TL ROI Selection Instructions */}
