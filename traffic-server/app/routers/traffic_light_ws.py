@@ -140,7 +140,7 @@ def detect_traffic_light_state(roi_frame: np.ndarray) -> tuple:
     # Determine state
     max_pixels = max(red_pixels, yellow_pixels, green_pixels)
     
-    if max_pixels < total_pixels * 0.01:  # Less than 1% colored pixels
+    if max_pixels < total_pixels * 0.001:  # Less than 0.1% colored pixels (adjusted for small ROIs)
         return "GREEN", 0.0
     
     confidence = min(max_pixels / (total_pixels * 0.1), 1.0)  # Normalize
@@ -259,7 +259,7 @@ async def ws_traffic_light_realtime(
             consecutive_errors = 0
             max_consecutive_errors = 3
             last_tl_update = 0
-            tl_update_interval = 0.75  # Update TL every 750ms per request
+            tl_update_interval = 0.25  # Update TL every 250ms per request
             
             # Cache traffic light state to use for all frames
             cached_tl_state = {

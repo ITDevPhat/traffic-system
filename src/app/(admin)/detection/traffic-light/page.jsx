@@ -619,21 +619,18 @@ function DetectionPageBinaryContent() {
       // Store detections for overlay rendering
       currentDetectionsRef.current = pkt.detections;
 
-      // Update light state from packet
-      if (pkt.light_state) {
-        handleLightState(pkt.light_state);
+      // Update light state from packet (Fix: Check correctly nested traffic_light object)
+      const tlState = pkt.traffic_light?.state || pkt.light_state;
+      if (tlState) {
+        handleLightState(tlState);
       }
 
-      if (!stoplineBounds) return;
-
       const now = Date.now();
-      const isRed = lightStateRef.current.state === 'RED';
       const updatedViolations = [];
 
       pkt.detections.forEach((det) => {
         const trackId = det?.track_id ?? det?.id ?? null;
-        const bbox = det?.bbox;
-        if (!trackId || !Array.isArray(bbox) || bbox.length < 4) return;
+        if (!trackId) return;
 
         const current = vehicleStatesRef.current.get(trackId) || {
           firstSeenAt: now,
@@ -641,28 +638,22 @@ function DetectionPageBinaryContent() {
           lastFrame: pkt.frame_idx ?? 0,
         };
 
-        // NEW LOGIC: Nếu đèn đỏ VÀ bbox đè lên stopline → vi phạm ngay
-        const intersects = bboxIntersectsStopline(bbox);
-        if (isRed && !current.violation && intersects) {
+        // KIRO CHECK: Use backend violation flag directly
+        // det.violation is populated by RedLightViolationEngine on backend
+        if (det.violation && !current.violation) {
           current.violation = true;
-          current.crossedAt = now;
+          current.violationType = det.violation;
+
           updatedViolations.push({
             trackId,
             frame: pkt.frame_idx ?? frameIdxRef.current,
             light: 'RED',
-            stopline: stoplineBounds.label,
+            stopline: stoplineBounds?.label || 'Stopline',
+            violationType: det.violation,
             time: new Date().toLocaleTimeString(),
           });
-          console.log(`🚨 VIOLATION: Track ${trackId} crossed stopline on RED light`, {
-            bbox,
-            stoplineBounds,
-            intersects
-          });
-        }
 
-        // Reset violation khi đèn không đỏ
-        if (!isRed) {
-          current.violation = false;
+          console.log(`🚨 VIOLATION CONFIRMED: Track ${trackId} type=${det.violation}`);
         }
 
         current.lastFrame = pkt.frame_idx ?? current.lastFrame;
@@ -673,7 +664,7 @@ function DetectionPageBinaryContent() {
         setViolations((prev) => [...updatedViolations, ...prev].slice(0, 20));
       }
     },
-    [bboxIntersectsStopline, handleLightState, stoplineBounds]
+    [handleLightState, stoplineBounds]
   );
 
   const connectWebSocket = useCallback((src) => {

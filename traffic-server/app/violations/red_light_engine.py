@@ -157,38 +157,75 @@ class RedLightViolationEngine:
                     f"[VIOLATION] Track {track_id} crossed stopline: {previous_position} -> {position}"
                 )
 
+            # ===== IMPROVED STOPLINE CONTACT CHECK =====
+            # Lấy chiều cao bbox để xác định điểm "mặt trước" của xe thay vì dùng đáy bbox
+            y_top = float(bbox[1])
+            y_bottom = float(bbox[3])
+            h = y_bottom - y_top
+
+            # Điểm mặt trước (front_y) = nằm cách đáy bbox 25% → đại diện vị trí đầu xe
+            front_y = y_bottom - 0.25 * h
+
+            # Margin để tránh bắt sai khi xe chỉ chạm nhẹ → phải đè thật sự
+            touch_margin = 8.0  # pixel, có thể chỉnh 5–12 tùy video
+
             y1_line = self.stopline_rect.get("y1", 0)
-            y2_bbox = float(bbox[3])
-            touched = y2_bbox >= y1_line
+
+            touched = front_y >= (y1_line + touch_margin)
+
             if touched:
                 logger.info(
-                    f"[VIOLATION] Track {track_id} touched stopline 50% at y2={y2_bbox}, stopline_y1={y1_line}, position={position}, position_when_red={vehicle.position_when_red}"
+                    f"[VIOLATION] Track {track_id} touched stopline (FRONT) at front_y={front_y:.1f}, "
+                    f"stopline_y={y1_line}, margin={touch_margin}, pos={position}, pos_red={vehicle.position_when_red}"
                 )
+
             violation_type: Optional[str] = None
 
+            # ==================================================================
+            # NEW RULE A – STOPLINE VIOLATION:
+            # Bất kỳ xe nào đang ON/AFTER khi đèn đỏ đều coi là dừng sai vạch.
+            # Không phân biệt nó tới trước hay sau khi đèn đỏ.
+            # ==================================================================
             if (
                 light_state == "RED"
-                and vehicle.position_when_red == "BEFORE"
-                and (crossed or touched)
+                and position in {"ON", "AFTER"}
                 and not vehicle.violated
-                and self.last_red_on is not None
+            ):
+                violation_type = "RED_LIGHT_STOPLINE"
+                logger.warning(
+                    f"🚨 STOPLINE VIOLATION — camera={self.camera_id}, track={track_id}, position={position}"
+                )
+
+            # ==================================================================
+            # NEW RULE B – RED LIGHT RUN:
+            # Xe từ BEFORE → ON/AFTER trong khi đèn đang RED.
+            # ==================================================================
+            if (
+                violation_type is None
+                and light_state == "RED"
+                and previous_position == "BEFORE"
+                and position in {"ON", "AFTER"}
+                and not vehicle.violated
             ):
                 violation_type = "RED_LIGHT_RUN"
                 logger.warning(
-                    f"🚨 RED LIGHT VIOLATION RUN — camera={self.camera_id}, track={track_id}, from={previous_position} -> {position}"
+                    f"🚨 RED LIGHT RUN — camera={self.camera_id}, track={track_id}, prev={previous_position} -> now={position}"
                 )
 
-            stopped_on_line = (
-                light_state == "RED"
+            # ==================================================================
+            # NEW RULE C – OPTIONAL: Xe tới ON/AFTER lúc đèn đỏ rồi đứng im tại đó.
+            # Nếu bạn thấy RULE A bắt hơi nhiều, có thể bỏ RULE A, giữ RULE C này.
+            # ==================================================================
+            if (
+                violation_type is None
+                and light_state == "RED"
                 and position in {"ON", "AFTER"}
-                and not crossed
                 and self._is_vehicle_stopped(vehicle)
                 and not vehicle.violated
-            )
-            if violation_type is None and stopped_on_line:
+            ):
                 violation_type = "RED_LIGHT_STOPLINE"
                 logger.warning(
-                    f"🚨 RED LIGHT VIOLATION STOPLINE — camera={self.camera_id}, track={track_id}, position={position}"
+                    f"🚨 STOPLINE VIOLATION (late stop) — camera={self.camera_id}, track={track_id}"
                 )
 
             if violation_type:
@@ -202,15 +239,16 @@ class RedLightViolationEngine:
                         "stopline": self.stopline_rect,
                         "light_state": light_state,
                         "red_since": self.last_red_on.isoformat() if self.last_red_on else None,
-                        "position_when_red": vehicle.position_when_red,
+                        # position_when_red không còn dùng để quyết định logic nữa
                         "position_now": position,
                     },
                 )
                 violations.append(violation_record)
-            elif light_state == "RED" and (crossed or touched):
+            elif light_state == "RED" and crossed:
                 logger.info(
-                    f"[VIOLATION] Track {track_id} NOT violated: position_when_red={vehicle.position_when_red}, violated={vehicle.violated}, last_red_on={self.last_red_on is not None}"
+                    f"[VIOLATION] Track {track_id} crossed stopline but already violated or filtered"
                 )
+
 
         self._prune_stale(timestamp)
         return violations
