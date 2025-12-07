@@ -22,6 +22,7 @@ class ViolationManager:
     def __init__(self):
         self.engines: Dict[str, RedLightViolationEngine] = {}
         self.stoplines: Dict[str, Dict[str, float]] = {}
+        self.violation_regions: Dict[str, List[tuple[float, float]]] = {}
         logger.info("ViolationManager initialized")
 
     def set_stopline(self, camera_id: str, stopline: Dict[str, float]) -> None:
@@ -38,12 +39,40 @@ class ViolationManager:
             self.engines[camera_id].reset_stopline(stopline)
             logger.info(f"✅ Updated stopline for camera {camera_id}")
         else:
-            self.engines[camera_id] = RedLightViolationEngine(camera_id, stopline)
+            self.engines[camera_id] = RedLightViolationEngine(
+                camera_id,
+                stopline,
+                self.violation_regions.get(camera_id),
+            )
             logger.info(f"✅ Created violation engine for camera {camera_id}")
+
+        if camera_id in self.violation_regions and camera_id in self.engines:
+            self.engines[camera_id].reset_violation_region(
+                self.violation_regions[camera_id]
+            )
 
     def get_stopline(self, camera_id: str) -> Optional[Dict[str, float]]:
         """Get stopline for a camera"""
         return self.stoplines.get(camera_id)
+
+    def set_violation_region(
+        self, camera_id: str, violation_region: Optional[List[tuple[float, float]]]
+    ) -> None:
+        self.violation_regions[camera_id] = violation_region or []
+
+        if camera_id in self.engines:
+            self.engines[camera_id].reset_violation_region(
+                self.violation_regions[camera_id]
+            )
+            logger.info(f"✅ Updated violation region for camera {camera_id}")
+        elif camera_id in self.stoplines:
+            # Create engine if stopline already present
+            self.engines[camera_id] = RedLightViolationEngine(
+                camera_id,
+                self.stoplines[camera_id],
+                self.violation_regions[camera_id],
+            )
+            logger.info(f"✅ Created engine with violation region for {camera_id}")
 
     def compute_violations(
         self,
@@ -76,11 +105,13 @@ class ViolationManager:
             logger.debug(f"[VIOLATION] No tracks for camera {camera_id} at {timestamp.isoformat()}")
             return []
 
+        effective_light = light_state if light_state in {"RED", "YELLOW", "GREEN"} else "GREEN"
+
         logger.info(
-            f"[VIOLATION] Computing for camera={camera_id}, tracks={len(tracks)}, light={light_state}"
+            f"[VIOLATION] Computing for camera={camera_id}, tracks={len(tracks)}, light={effective_light}"
         )
 
-        violations = engine.update(tracks, light_state, timestamp)
+        violations = engine.update(tracks, effective_light, timestamp)
         if violations:
             logger.info(f"🚨 {len(violations)} violations detected for camera {camera_id}")
         return violations
@@ -89,6 +120,7 @@ class ViolationManager:
         """Remove engine and stopline for a camera"""
         self.engines.pop(camera_id, None)
         self.stoplines.pop(camera_id, None)
+        self.violation_regions.pop(camera_id, None)
         logger.info(f"🗑️ Removed violation engine for camera {camera_id}")
 
     def clear(self, camera_id: str) -> None:

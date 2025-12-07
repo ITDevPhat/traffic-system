@@ -18,7 +18,7 @@ export interface TrafficLightROI {
     stroke: string;
     fill: string;
   };
-  signalState?: 'RED' | 'YELLOW' | 'GREEN' | 'UNKNOWN';
+  signalState?: 'RED' | 'YELLOW' | 'GREEN';
 }
 
 interface TrafficLiveROIProps {
@@ -124,7 +124,7 @@ export const TrafficLiveROI: React.FC<TrafficLiveROIProps> = ({
             label: `Đèn ${nextRoiIndex}`,
             points: [...draftPoints],
             color: SIGNAL_COLORS[(nextRoiIndex - 1) % SIGNAL_COLORS.length],
-            signalState: 'UNKNOWN',
+            signalState: 'GREEN',
           };
 
           const updatedRois = [...rois, newROI];
@@ -181,7 +181,7 @@ export const TrafficLiveROI: React.FC<TrafficLiveROIProps> = ({
       case 'GREEN':
         return 'success';
       default:
-        return 'secondary';
+        return 'success';
     }
   };
 
@@ -246,7 +246,7 @@ export const TrafficLiveROI: React.FC<TrafficLiveROIProps> = ({
                       />
                       <span className="fw-medium">{roi.label}</span>
                       <Badge bg={getSignalBadgeColor(roi.signalState)} className="ms-2">
-                        {roi.signalState || 'UNKNOWN'}
+                        {roi.signalState || 'GREEN'}
                       </Badge>
                     </div>
                     <Button

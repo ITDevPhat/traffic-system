@@ -3,7 +3,7 @@
 import React from 'react';
 
 // Traffic light state types
-export type TrafficLightState = 'GREEN' | 'RED' | 'YELLOW' | 'UNKNOWN';
+export type TrafficLightState = 'GREEN' | 'RED' | 'YELLOW';
 
 // Component state interface
 export interface TrafficLightPanelState {
@@ -27,7 +27,6 @@ const STATE_COLORS: Record<TrafficLightState, string> = {
   GREEN: '#10b981',
   RED: '#ef4444',
   YELLOW: '#f59e0b',
-  UNKNOWN: '#6b7280',
 };
 
 export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({

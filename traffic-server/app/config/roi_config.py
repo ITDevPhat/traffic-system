@@ -7,6 +7,7 @@ kept under ``app/data/traffic_light/``.
 from __future__ import annotations
 
 import json
+import json
 import logging
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -29,7 +30,13 @@ def _camera_config_path(camera_id: str) -> Path:
 def _load_config(camera_id: str) -> Dict[str, object]:
     path = _camera_config_path(camera_id)
     if not path.exists():
-        return {"camera_id": camera_id, "traffic_light_roi": None, "stopline": None}
+        return {
+            "camera_id": camera_id,
+            "traffic_light_roi": None,
+            "stopline": None,
+            "violation_region": None,
+            "video_dimensions": None,
+        }
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
@@ -37,6 +44,8 @@ def _load_config(camera_id: str) -> Dict[str, object]:
         data.setdefault("camera_id", camera_id)
         data.setdefault("traffic_light_roi", None)
         data.setdefault("stopline", None)
+        data.setdefault("violation_region", None)
+        data.setdefault("video_dimensions", None)
         return data
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to load ROI config for %s", camera_id)
@@ -75,6 +84,22 @@ def save_stopline(camera_id: str, stopline_norm: Dict[str, float]) -> Dict[str, 
 def get_stopline(camera_id: str) -> Optional[Dict[str, float]]:
     """Return the saved normalized stopline rectangle if present."""
     return _load_config(camera_id).get("stopline")
+
+
+def save_violation_region(
+    camera_id: str, points: list[tuple[float, float]], video_dimensions: Optional[Dict[str, int]] = None
+) -> Dict[str, object]:
+    """Persist the violation region polygon for a camera."""
+    cfg = _load_config(camera_id)
+    cfg["violation_region"] = {"points": points, "video_dimensions": video_dimensions}
+    if video_dimensions:
+        cfg["video_dimensions"] = video_dimensions
+    return _save_config(camera_id, cfg)
+
+
+def get_violation_region(camera_id: str) -> Optional[Dict[str, object]]:
+    """Return the saved violation region if present."""
+    return _load_config(camera_id).get("violation_region")
 
 
 def normalized_rect_to_pixels(rect: Dict[str, float], frame_shape: Tuple[int, int]) -> Tuple[int, int, int, int]:
