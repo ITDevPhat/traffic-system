@@ -57,9 +57,15 @@ class ViolationRecord:
 class RedLightViolationEngine:
     """Red-light violation detection with per-vehicle state tracking."""
 
-    def __init__(self, camera_id: str, stopline_rect: Dict[str, float]):
+    def __init__(
+        self,
+        camera_id: str,
+        stopline_rect: Dict[str, float],
+        violation_region: Optional[List[Tuple[float, float]]] = None,
+    ):
         self.camera_id = camera_id
         self.stopline_rect = stopline_rect
+        self.violation_region: List[Tuple[float, float]] = violation_region or []
         self.vehicles: Dict[int, VehicleViolationState] = {}
         self.last_light_state: Optional[LightState] = None
         self.last_red_on: Optional[datetime] = None
@@ -102,6 +108,26 @@ class RedLightViolationEngine:
         # Tính ratio và clamp về [0.0, 1.0]
         ratio = depth / h
         return max(0.0, min(1.0, ratio))
+
+    def _point_in_violation_region(self, x: float, y: float) -> bool:
+        """Return True if point is inside the configured violation region polygon."""
+        if not self.violation_region:
+            # No region configured → keep legacy behaviour (always consider it inside)
+            return True
+
+        pts = self.violation_region
+        inside = False
+        n = len(pts)
+
+        for i in range(n):
+            x1, y1 = pts[i]
+            x2, y2 = pts[(i + 1) % n]
+            if ((y1 > y) != (y2 > y)) and (
+                x < (x2 - x1) * (y - y1) / (y2 - y1 + 1e-9) + x1
+            ):
+                inside = not inside
+
+        return inside
 
     def _position_vs_stopline(self, point: Tuple[float, float]) -> Position:
         """
@@ -184,6 +210,13 @@ class RedLightViolationEngine:
 
             previous_position = vehicle.position_vs_line
             front_point = self._front_point(tuple(bbox))
+
+            inside_region = self._point_in_violation_region(*front_point)
+            if not inside_region:
+                vehicle.position_vs_line = "BEFORE"
+                vehicle.last_update_time = timestamp
+                continue
+
             position = self._position_vs_stopline(front_point)
             vehicle.position_vs_line = position
 
@@ -288,3 +321,6 @@ class RedLightViolationEngine:
         self.vehicles.clear()
         self.last_light_state = None
         self.last_red_on = None
+
+    def reset_violation_region(self, violation_region: Optional[List[Tuple[float, float]]]) -> None:
+        self.violation_region = violation_region or []
