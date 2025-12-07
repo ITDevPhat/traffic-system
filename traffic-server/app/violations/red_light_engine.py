@@ -69,6 +69,7 @@ class RedLightViolationEngine:
         self.vehicles: Dict[int, VehicleViolationState] = {}
         self.last_light_state: Optional[LightState] = None
         self.last_red_on: Optional[datetime] = None
+        self.direction = stopline_rect.get("direction", "bottom_to_top")
 
     def _front_point(self, bbox: Tuple[float, float, float, float]) -> Tuple[float, float]:
         """Get front point of vehicle depending on travel direction."""
