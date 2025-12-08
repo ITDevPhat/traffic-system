@@ -13,7 +13,14 @@ import asyncio
 import base64
 import cv2
 import numpy as np
+import time
 from datetime import datetime
+from pathlib import Path
+from app.core.config import settings
+from app.schemas.traffic_light_violation import TrafficLightViolationIn
+from app.services.traffic_light_violation_service import (
+    create_traffic_light_violation_with_session,
+)
 from app.violations.violation_manager import violation_manager
 from app.services.traffic_light_manager import traffic_light_manager
 
@@ -216,8 +223,6 @@ async def ws_traffic_light_realtime(
         
         # Load stopline configuration for violation detection
         try:
-            from pathlib import Path
-
             config_path = Path(__file__).parent.parent / "data" / "traffic_light" / f"{camera_id}.json"
             if config_path.exists():
                 with open(config_path) as f:
@@ -280,7 +285,18 @@ async def ws_traffic_light_realtime(
                 'roi_frame': None,
                 'roi_bounds': None
             }
-            
+
+            seen_violation_keys = set()
+
+            static_root = Path(settings.STATIC_DIR).resolve()
+
+            def to_static_url(path: Path) -> str:
+                try:
+                    rel = path.resolve().relative_to(static_root)
+                    return f"/static/{rel.as_posix()}"
+                except Exception:
+                    return str(path)
+
             while True:
                 # Check connection
                 if websocket.client_state.name == 'DISCONNECTED':
@@ -387,6 +403,115 @@ async def ws_traffic_light_realtime(
                                 tid = det.get("track_id")
                                 if tid in viol_by_tid:
                                     det["violation"] = viol_by_tid[tid].violation_type
+
+                        if violations:
+                            clean_frame, annotated_frame = stream.get_latest_frames()
+                            evidence_dir = (
+                                Path(settings.STATIC_DIR)
+                                / "evidence"
+                                / "traffic_light"
+                                / str(camera_id)
+                            )
+                            evidence_dir.mkdir(parents=True, exist_ok=True)
+
+                            for violation in violations:
+                                key = (violation.track_id, violation.violation_type)
+                                if key in seen_violation_keys:
+                                    continue
+
+                                seen_violation_keys.add(key)
+
+                                matching_det = next(
+                                    (
+                                        det
+                                        for det in (tracks or [])
+                                        if det.get("track_id") == violation.track_id
+                                    ),
+                                    None,
+                                )
+
+                                bbox = (
+                                    tuple(matching_det.get("bbox"))
+                                    if matching_det and matching_det.get("bbox")
+                                    else None
+                                )
+                                label = matching_det.get("class_name") if matching_det else None
+                                det_confidence = matching_det.get("confidence") if matching_det else None
+                                plate_text = matching_det.get("plate") if matching_det else None
+
+                                filename_prefix = f"{camera_id}_{violation.track_id}_{int(time.time())}"
+                                raw_path = bbox_path = None
+
+                                if clean_frame is not None:
+                                    raw_path = evidence_dir / f"{filename_prefix}_raw.jpg"
+                                    try:
+                                        cv2.imwrite(str(raw_path), clean_frame)
+                                    except Exception as e:
+                                        logger.warning(
+                                            f"[TL-VIOLATION] Failed to save raw frame: {e}"
+                                        )
+
+                                if annotated_frame is not None:
+                                    bbox_path = evidence_dir / f"{filename_prefix}_bbox.jpg"
+                                    try:
+                                        cv2.imwrite(str(bbox_path), annotated_frame)
+                                    except Exception as e:
+                                        logger.warning(
+                                            f"[TL-VIOLATION] Failed to save annotated frame: {e}"
+                                        )
+
+                                evidence_raw_url = (
+                                    to_static_url(raw_path)
+                                    if raw_path is not None and raw_path.exists()
+                                    else None
+                                )
+                                evidence_bbox_url = (
+                                    to_static_url(bbox_path)
+                                    if bbox_path is not None and bbox_path.exists()
+                                    else None
+                                )
+
+                                violation_code = None
+                                if label:
+                                    if label.lower() == "bike":
+                                        violation_code = "BIKE_RED_LIGHT"
+                                    elif label.lower() == "car":
+                                        violation_code = "CAR_RED_LIGHT"
+                                elif violation.violation_type in {"RED_LIGHT_RUN", "RED_LIGHT_STOPLINE"}:
+                                    violation_code = "RED_LIGHT"
+
+                                payload = TrafficLightViolationIn(
+                                    camera_id=int(camera_id)
+                                    if str(camera_id).isdigit()
+                                    else None,
+                                    camera_name=str(camera_id),
+                                    video_job_id=None,
+                                    violation_type_code=violation_code,
+                                    frame=header.get("frame_idx"),
+                                    timestamp=violation.timestamp,
+                                    plate=plate_text or "UNKNOWN",
+                                    confidence=det_confidence,
+                                    bbox=bbox,
+                                    label=label,
+                                    traffic_light_state=traffic_light_state,
+                                    violation_engine_type=violation.violation_type,
+                                    evidence_img_with_bbox=evidence_bbox_url,
+                                    evidence_img_raw=evidence_raw_url,
+                                    roi_type="traffic_light_stopline",
+                                )
+
+                                try:
+                                    create_traffic_light_violation_with_session(payload)
+                                    logger.info(
+                                        f"[TL-VIOLATION] camera={camera_id}, type={violation.violation_type}, "
+                                        f"frame={payload.frame}, bbox={bbox}, evidence_raw={evidence_raw_url}, "
+                                        f"evidence_bbox={evidence_bbox_url}"
+                                    )
+                                except Exception as e:
+                                    logger.warning(
+                                        f"[TL-VIOLATION] Failed to persist violation: {e}",
+                                        exc_info=True,
+                                    )
 
                     try:
                         # Send header with traffic light data
