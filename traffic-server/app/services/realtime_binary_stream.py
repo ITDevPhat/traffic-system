@@ -313,6 +313,11 @@ class BinaryAnnotStream:
         self.q_cap = Queue(maxsize=3)   # Raw frames
         self.q_det = Queue(maxsize=3)   # (frame, tracks)
         self.q_enc = Queue(maxsize=2)   # JPEG bytes
+
+        # Latest frames for evidence saving (clean + annotated)
+        self._frame_lock = Lock()
+        self._last_clean_frame: Optional[np.ndarray] = None
+        self._last_annotated_frame: Optional[np.ndarray] = None
         
         # Threads
         self.t_cap: Optional[Thread] = None
@@ -1577,6 +1582,10 @@ class BinaryAnnotStream:
             if frame is None:
                 continue
 
+            # Keep a clean copy before any annotations
+            with self._frame_lock:
+                self._last_clean_frame = frame.copy()
+
             # Draw ROI overlays first so detections appear above
             self._draw_rois_on_frame(frame)
 
@@ -1681,7 +1690,11 @@ class BinaryAnnotStream:
                 logger.info(f"⚠️  BBox drawing enabled but no detections to draw (frame {self.frame_idx})")
             elif not self.enable_bbox_drawing and self.frame_idx % 100 == 1:
                 logger.info(f"ℹ️  BBox drawing is DISABLED (frame {self.frame_idx})")
-            
+
+            # Store annotated frame for evidence saving
+            with self._frame_lock:
+                self._last_annotated_frame = frame.copy()
+
             # Downscale before encode (faster JPEG compression)
             enc_frame = self._downscale_for_encode(frame)
             
@@ -1691,9 +1704,25 @@ class BinaryAnnotStream:
             self._put_latest(self.q_enc, jpeg_bytes)
         
         logger.info("🛑 Encode thread stopped")
-    
+
     # ----------------------- Public API -----------------------
-    
+
+    def get_latest_frames(self) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        """Return the latest clean and annotated frames (copies)."""
+
+        with self._frame_lock:
+            clean = (
+                self._last_clean_frame.copy()
+                if self._last_clean_frame is not None
+                else None
+            )
+            annotated = (
+                self._last_annotated_frame.copy()
+                if self._last_annotated_frame is not None
+                else None
+            )
+        return clean, annotated
+
     def start(self):
         """Start all pipeline threads"""
         if self.warmup_seconds > 0:

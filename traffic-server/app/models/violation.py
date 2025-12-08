@@ -46,7 +46,7 @@ class Violation(SQLModel, table=True):
     )
     
     violation_id: Optional[int] = Field(default=None, primary_key=True)
-    video_job_id: int = Field(foreign_key="video_jobs.video_job_id")
+    video_job_id: Optional[int] = Field(default=None, foreign_key="video_jobs.video_job_id")
     vehicle_id: Optional[int] = Field(default=None, foreign_key="vehicles.vehicle_id")
     violation_type_code: Optional[str] = Field(default=None, foreign_key="violation_types.violation_type_code", max_length=50)
     frame: Optional[int] = Field(default=None)
