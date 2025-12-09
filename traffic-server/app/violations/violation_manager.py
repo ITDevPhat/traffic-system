@@ -79,7 +79,8 @@ class ViolationManager:
         camera_id: str,
         tracks: List[Dict[str, Any]],
         light_state: Optional[str],
-        timestamp: Optional[datetime] = None
+        timestamp: Optional[datetime] = None,
+        frame_index: Optional[int] = None,
     ) -> List[ViolationRecord]:
         """
         Compute violations for current frame.
@@ -111,7 +112,7 @@ class ViolationManager:
             f"[VIOLATION] Computing for camera={camera_id}, tracks={len(tracks)}, light={effective_light}"
         )
 
-        violations = engine.update(tracks, effective_light, timestamp)
+        violations = engine.update(tracks, effective_light, timestamp, frame_index=frame_index)
         if violations:
             logger.info(f"🚨 {len(violations)} violations detected for camera {camera_id}")
         return violations

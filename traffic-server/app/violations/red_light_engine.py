@@ -34,6 +34,20 @@ class VehicleViolationState:
     # NEW: đánh dấu xe đã chạm vạch trong pha vàng/đỏ
     touched_during_yellow_or_before_red: bool = False
 
+    # Snapshot đầu tiên khi object vào Violation Region
+    first_in_region_frame: int | None = None
+    first_in_region_bbox: tuple[float, float, float, float] | None = None
+
+    # "Best view" trong Violation Region (bbox to nhất, biển rõ nhất)
+    best_view_frame: int | None = None
+    best_view_bbox: tuple[float, float, float, float] | None = None
+    best_view_area: float | None = None
+
+    # Kết quả OCR biển (nếu đã chạy)
+    plate_text: str | None = None
+    plate_conf: float | None = None
+    plate_ocr_done: bool = False
+
 
 @dataclass
 class ViolationRecord:
@@ -70,6 +84,7 @@ class RedLightViolationEngine:
         self.last_light_state: Optional[LightState] = None
         self.last_red_on: Optional[datetime] = None
         self.direction = stopline_rect.get("direction", "bottom_to_top")
+        self.frame_index: int = 0
         
         # Log direction info on init
         if self.violation_region:
@@ -242,13 +257,24 @@ class RedLightViolationEngine:
 
 
     def update(
-        self, vehicle_tracks: List[Dict[str, object]], light_state: LightState, timestamp: datetime
+        self,
+        vehicle_tracks: List[Dict[str, object]],
+        light_state: LightState,
+        timestamp: datetime,
+        frame_index: Optional[int] = None,
     ) -> List[ViolationRecord]:
         """Process the current frame and return any new violations."""
         self._update_light(light_state, timestamp)
         violations: List[ViolationRecord] = []
 
         inside_count = 0
+
+        if frame_index is not None:
+            self.frame_index = frame_index
+        else:
+            self.frame_index += 1
+
+        current_frame_index = self.frame_index
 
         logger.info(
             f"[VIOLATION] tracks={len(vehicle_tracks)}, light={light_state}, stopline={self.stopline_rect}"
@@ -274,6 +300,26 @@ class RedLightViolationEngine:
                 vehicle.position_vs_line = "BEFORE"
                 vehicle.last_update_time = timestamp
                 continue
+
+            # Snapshot logic inside violation region
+            if vehicle.first_in_region_frame is None:
+                vehicle.first_in_region_frame = current_frame_index
+                vehicle.first_in_region_bbox = tuple(bbox)
+                logger.info(
+                    f"[PLATE-SNAPSHOT-FIRST] cam={self.camera_id}, "
+                    f"track={track_id}, frame={current_frame_index}, bbox={bbox}"
+                )
+
+            x1, y1, x2, y2 = bbox
+            area = max(0.0, (x2 - x1) * (y2 - y1))
+            if vehicle.best_view_area is None or area > vehicle.best_view_area:
+                vehicle.best_view_area = area
+                vehicle.best_view_frame = current_frame_index
+                vehicle.best_view_bbox = tuple(bbox)
+                logger.info(
+                    f"[PLATE-SNAPSHOT-BEST] cam={self.camera_id}, "
+                    f"track={track_id}, frame={current_frame_index}, area={area}, bbox={bbox}"
+                )
 
             inside_count += 1  # FIX: Đếm số xe trong vùng vi phạm
 
@@ -396,6 +442,12 @@ class RedLightViolationEngine:
                         "overlap_ratio": overlap_ratio,
                         "touched_during_yellow": vehicle.touched_during_yellow_or_before_red,
                         "is_new_track": is_new,
+                        "first_in_region_frame": vehicle.first_in_region_frame,
+                        "first_in_region_bbox": vehicle.first_in_region_bbox,
+                        "best_view_frame": vehicle.best_view_frame,
+                        "best_view_bbox": vehicle.best_view_bbox,
+                        "plate_text": vehicle.plate_text,
+                        "plate_conf": vehicle.plate_conf,
                     },
                 )
                 violations.append(violation_record)

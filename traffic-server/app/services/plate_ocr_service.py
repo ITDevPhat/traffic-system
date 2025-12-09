@@ -402,3 +402,41 @@ def get_ocr_service(
     
     return _ocr_service
 
+
+def recognize_plate_from_crop(crop_bgr: np.ndarray) -> tuple[str | None, float | None]:
+    """
+    Nhận 1 ảnh crop (BGR) và trả về (plate_text, plate_confidence).
+
+    Args:
+        crop_bgr: Ảnh crop BGR chứa vùng biển số/xe.
+
+    Returns:
+        Tuple (text, confidence) hoặc (None, None) nếu không nhận dạng được.
+    """
+    if crop_bgr is None or crop_bgr.size == 0:
+        return None, None
+
+    service = get_ocr_service(enable_ocr=True)
+    if service is None or service.detector is None:
+        logger.warning("[PLATE-OCR] OCR service not available, skipping plate recognition")
+        return None, None
+
+    try:
+        result = service.detector.process_image(crop_bgr, draw_bbox=False)
+    except Exception as exc:
+        logger.warning(f"[PLATE-OCR] Failed to run OCR on crop: {exc}")
+        return None, None
+
+    plates = result.get('plates_recognized') if isinstance(result, dict) else None
+    if not plates:
+        return None, None
+
+    best_plate = max(plates, key=lambda p: p.get('confidence', 0.0))
+    text = (best_plate.get('text') or '').strip()
+    confidence = best_plate.get('confidence')
+
+    if not text:
+        return None, None
+
+    return text, float(confidence) if confidence is not None else None
+
