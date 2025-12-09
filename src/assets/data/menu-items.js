@@ -21,9 +21,15 @@ export const MENU_ITEMS = [{
       parentKey: 'detection'
     },
     {
-      key: 'detection-cameras',
+      key: 'detection-traffic-light',
       label: 'Giao thông vi phạm',
       url: '/detection/traffic-light',
+      parentKey: 'detection'
+    },
+    {
+      key: 'detection-traffic-live',
+      label: 'Giám sát đèn giao thông',
+      url: '/detection/traffic-live',
       parentKey: 'detection'
     }
   ]
@@ -131,6 +137,17 @@ export const MENU_ITEMS = [{
     label: 'Thêm video job',
     url: '/video-jobs/create',
     parentKey: 'video-job-management'
+  }]
+},
+{
+  key: 'violation-management',
+  label: 'Quản lý vi phạm',
+  icon: 'ri:alert-line',
+  children: [{
+    key: 'list-violations',
+    label: 'Danh sách vi phạm',
+    url: '/violations/management',
+    parentKey: 'violation-management'
   }]
 }
 ];

@@ -296,6 +296,15 @@ class RedLightViolationEngine:
             front_point = self._front_point(tuple(bbox))
 
             inside_region = self._point_in_violation_region(*front_point)
+            
+            # DEBUG: Log every track's position
+            if self.frame_index % 30 == 0:
+                logger.warning(
+                    f"[TRACK-DEBUG] cam={self.camera_id}, track={track_id}, "
+                    f"bbox={bbox}, front_point={front_point}, inside_region={inside_region}, "
+                    f"light={light_state}"
+                )
+            
             if not inside_region:
                 vehicle.position_vs_line = "BEFORE"
                 vehicle.last_update_time = timestamp

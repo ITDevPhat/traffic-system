@@ -3,6 +3,7 @@ Traffic Light Detection WebSocket Router
 Separate pipeline for traffic light violation detection
 """
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, HTTPException
+from fastapi.encoders import jsonable_encoder
 from app.services.realtime_binary_stream import (
     BinaryAnnotStream,
     DEFAULT_REALTIME_MODEL_PATH,
@@ -267,7 +268,7 @@ async def ws_traffic_light_realtime(
         info = stream.info_packet()
         info['traffic_light_enabled'] = enable_traffic_light
         info['violation_enabled'] = enable_violation
-        await websocket.send_text(json.dumps(info))
+        await websocket.send_text(json.dumps(jsonable_encoder(info)))
         logger.info(f"📤 Sent info: {info}")
         
         # Stream loop
@@ -396,6 +397,14 @@ async def ws_traffic_light_realtime(
                             timestamp=datetime.utcnow(),
                             frame_index=frame_idx,
                         )
+                        
+                        # DEBUG: Log violation detection result
+                        if frame_count % 30 == 0:
+                            logger.warning(
+                                f"[VIOLATION-RESULT] cam={camera_id}, light={traffic_light_state}, "
+                                f"tracks={len(tracks)}, violations={len(violations) if violations else 0}"
+                            )
+                        
                         if violations:
                             for viol in violations:
                                 plate_text = viol.details.get("plate_text")
@@ -498,7 +507,15 @@ async def ws_traffic_light_realtime(
                                 )
                                 label = matching_det.get("class_name") if matching_det else None
                                 det_confidence = matching_det.get("confidence") if matching_det else None
-                                plate_text = matching_det.get("plate") if matching_det else None
+                                
+                                # Extract plate text from dict or use plate_text field
+                                plate_data = matching_det.get("plate") if matching_det else None
+                                if isinstance(plate_data, dict):
+                                    plate_text = plate_data.get("text")
+                                    plate_conf = plate_data.get("conf")
+                                else:
+                                    plate_text = matching_det.get("plate_text") if matching_det else None
+                                    plate_conf = matching_det.get("plate_conf") if matching_det else None
 
                                 filename_prefix = f"{camera_id}_{violation.track_id}_{int(time.time())}"
                                 raw_path = bbox_path = None
@@ -541,6 +558,7 @@ async def ws_traffic_light_realtime(
                                 elif violation.violation_type in {"RED_LIGHT_RUN", "RED_LIGHT_STOPLINE"}:
                                     violation_code = "RED_LIGHT"
 
+                                # Build payload for DB - plate must be string or None
                                 payload = TrafficLightViolationIn(
                                     camera_id=int(camera_id)
                                     if str(camera_id).isdigit()
@@ -550,8 +568,8 @@ async def ws_traffic_light_realtime(
                                     violation_type_code=violation_code,
                                     frame=header.get("frame_idx"),
                                     timestamp=violation.timestamp,
-                                    plate=plate_text or "UNKNOWN",
-                                    confidence=det_confidence,
+                                    plate=plate_text if plate_text else None,  # Must be string or None, not dict
+                                    confidence=plate_conf if plate_conf is not None else det_confidence,
                                     bbox=bbox,
                                     label=label,
                                     traffic_light_state=traffic_light_state,
@@ -561,23 +579,25 @@ async def ws_traffic_light_realtime(
                                     roi_type="traffic_light_stopline",
                                 )
 
+                                # Persist to DB - don't let DB errors block anything
                                 try:
                                     create_traffic_light_violation_with_session(payload)
                                     logger.info(
-                                        f"[TL-VIOLATION] camera={camera_id}, type={violation.violation_type}, "
-                                        f"frame={payload.frame}, bbox={bbox}, evidence_raw={evidence_raw_url}, "
-                                        f"evidence_bbox={evidence_bbox_url}"
+                                        f"[TL-VIOLATION-DB] ✅ Saved: camera={camera_id}, type={violation.violation_type}, "
+                                        f"frame={payload.frame}, plate={plate_text}, bbox={bbox}"
                                     )
                                 except Exception as e:
                                     logger.warning(
-                                        f"[TL-VIOLATION] Failed to persist violation: {e}",
+                                        f"[TL-VIOLATION-DB] ⚠️ Failed to persist violation (non-blocking): {e}",
                                         exc_info=True,
                                     )
 
                     try:
                         # Send header with traffic light data
+                        # Use jsonable_encoder to handle datetime, Decimal, ORM objects, etc.
+                        safe_header = jsonable_encoder(header)
                         await asyncio.wait_for(
-                            websocket.send_text(json.dumps(header)),
+                            websocket.send_text(json.dumps(safe_header)),
                             timeout=1.0
                         )
                         
@@ -637,17 +657,17 @@ async def ws_traffic_light_realtime(
                             if stream:
                                 count = stream.set_roi_polygons(rois_payload)
                                 logger.info(f"🗺️ ROI polygons updated ({count})")
-                                await websocket.send_text(json.dumps({
+                                await websocket.send_text(json.dumps(jsonable_encoder({
                                     "type": "roi_ack",
                                     "count": count
-                                }))
+                                })))
                         elif cmd.get('command') == 'clear_roi':
                             if stream:
                                 stream.clear_roi_polygons()
                                 logger.info("🧹 ROI cleared")
-                                await websocket.send_text(json.dumps({
+                                await websocket.send_text(json.dumps(jsonable_encoder({
                                     "type": "roi_cleared"
-                                }))
+                                })))
                 
                 except asyncio.TimeoutError:
                     continue
@@ -694,10 +714,10 @@ async def ws_traffic_light_realtime(
     except Exception as e:
         logger.error(f"❌ Error: {e}", exc_info=True)
         try:
-            await websocket.send_text(json.dumps({
+            await websocket.send_text(json.dumps(jsonable_encoder({
                 "type": "error",
                 "message": str(e)
-            }))
+            })))
         except:
             pass
     
