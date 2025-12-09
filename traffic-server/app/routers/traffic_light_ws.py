@@ -23,6 +23,7 @@ from app.services.traffic_light_violation_service import (
 )
 from app.violations.violation_manager import violation_manager
 from app.services.traffic_light_manager import traffic_light_manager
+from app.services.plate_ocr_service import recognize_plate_from_crop
 
 logger = logging.getLogger(__name__)
 
@@ -309,11 +310,14 @@ async def ws_traffic_light_realtime(
                 
                 try:
                     header, jpeg_bytes = stream.next_frame()
-                    
+
                     if header is None or jpeg_bytes is None:
                         await asyncio.sleep(0.001)
                         continue
-                    
+
+                    frame_array = np.frombuffer(jpeg_bytes, dtype=np.uint8)
+                    frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
+
                     if websocket.client_state.name == 'DISCONNECTED':
                         break
                     
@@ -325,10 +329,6 @@ async def ws_traffic_light_realtime(
                     
                     # Update traffic light detection every 500ms
                     if enable_traffic_light and (current_time - last_tl_update) >= tl_update_interval:
-                        # Decode JPEG to get frame for TL detection
-                        frame_array = np.frombuffer(jpeg_bytes, dtype=np.uint8)
-                        frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
-
                         if frame is not None:
                             # Log ROI storage status periodically
                             if frame_count % 100 == 0:
@@ -379,6 +379,7 @@ async def ws_traffic_light_realtime(
                     if enable_violation:
                         traffic_light_state = cached_tl_state.get("state") or "GREEN"
                         tracks = header.get("detections", [])
+                        frame_idx = header.get("frame_idx")
 
                         if frame_count % 20 == 0:
                             logger.info(
@@ -393,8 +394,62 @@ async def ws_traffic_light_realtime(
                             tracks=tracks,
                             light_state=traffic_light_state,
                             timestamp=datetime.utcnow(),
+                            frame_index=frame_idx,
                         )
-                        header["violations"] = [v.__dict__ for v in violations]
+                        if violations:
+                            for viol in violations:
+                                plate_text = viol.details.get("plate_text")
+                                plate_conf = viol.details.get("plate_conf")
+
+                                best_bbox = viol.details.get("best_view_bbox") or viol.details.get(
+                                    "first_in_region_bbox"
+                                )
+
+                                if (plate_text is None or plate_conf is None) and best_bbox and frame is not None:
+                                    x1, y1, x2, y2 = [int(v) for v in best_bbox]
+                                    h, w = frame.shape[:2]
+                                    x1 = max(0, min(x1, w - 1))
+                                    y1 = max(0, min(y1, h - 1))
+                                    x2 = max(x1 + 1, min(x2, w))
+                                    y2 = max(y1 + 1, min(y2, h))
+
+                                    if y2 > y1 and x2 > x1:
+                                        crop = frame[y1:y2, x1:x2].copy()
+                                        ocr_text, ocr_conf = recognize_plate_from_crop(crop)
+                                        if ocr_text is not None:
+                                            plate_text = ocr_text
+                                            plate_conf = ocr_conf
+                                            viol.details["plate_text"] = plate_text
+                                            viol.details["plate_conf"] = plate_conf
+
+                                            engine = violation_manager.engines.get(camera_id)
+                                            if engine:
+                                                vehicle_state = engine.vehicles.get(viol.track_id)
+                                                if vehicle_state:
+                                                    vehicle_state.plate_text = plate_text
+                                                    vehicle_state.plate_conf = plate_conf
+                                                    vehicle_state.plate_ocr_done = True
+
+                                        logger.info(
+                                            f"[TL-PLATE] cam={camera_id}, track={viol.track_id}, "
+                                            f"plate={plate_text}, conf={plate_conf}, violation={viol.violation_type}"
+                                        )
+                                    else:
+                                        logger.debug(
+                                            f"[TL-PLATE] Skipping OCR due to invalid bbox for track={viol.track_id}: {best_bbox}"
+                                        )
+
+                                if tracks:
+                                    for det in tracks:
+                                        if det.get("track_id") == viol.track_id:
+                                            det["plate"] = {
+                                                "text": plate_text,
+                                                "conf": plate_conf,
+                                            }
+                                            det["plate_text"] = plate_text
+                                            det["plate_conf"] = plate_conf
+                                            det["violation"] = viol.violation_type
+                                            break
 
                         # Map violation to detections for frontend
                         if violations and tracks:
@@ -403,6 +458,12 @@ async def ws_traffic_light_realtime(
                                 tid = det.get("track_id")
                                 if tid in viol_by_tid:
                                     det["violation"] = viol_by_tid[tid].violation_type
+                                    det.setdefault("plate", {
+                                        "text": viol_by_tid[tid].details.get("plate_text"),
+                                        "conf": viol_by_tid[tid].details.get("plate_conf"),
+                                    })
+
+                        header["violations"] = [v.__dict__ for v in violations]
 
                         if violations:
                             clean_frame, annotated_frame = stream.get_latest_frames()
