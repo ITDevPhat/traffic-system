@@ -278,7 +278,7 @@ async def ws_traffic_light_realtime(
             consecutive_errors = 0
             max_consecutive_errors = 3
             last_tl_update = 0
-            tl_update_interval = 0.25  # Update TL every 250ms per request
+            tl_update_interval = 0.2   # Update TL every 200ms (5 FPS) for better responsiveness
             
             # Cache traffic light state to use for all frames
             cached_tl_state = {

@@ -40,7 +40,7 @@ async def ws_realtime_binary(
         DEFAULT_REALTIME_MODEL_PATH,
         description="YOLO model path (default: 11s TensorRT)",
     ),
-    veh_detect_hz: int = Query(25, description="Vehicle detect frequency for keyframes (Hz)"),
+    veh_detect_hz: int = Query(30, description="Vehicle detect frequency for keyframes (Hz)"),
     enable_yolo: bool = Query(True, description="Enable YOLO detection"),
     enable_tracking: bool = Query(True, description="Enable ByteTrack tracking"),
     enable_bbox_drawing: bool = Query(True, description="Enable bbox drawing"),

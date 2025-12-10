@@ -44,15 +44,15 @@ FRAME_SKIP = 1   # Process every frame (no skip)
 MAX_BATCH_SIZE = 1  # Single frame inference (lowest latency)
 
 # Fixed detection interval for stable FPS (no adaptive throttling)
-FIXED_DETECT_INTERVAL = 0.033  # 30 FPS = 33ms per frame
-ENABLE_ADAPTIVE_INTERVAL = False  # Disable adaptive FPS throttling
+FIXED_DETECT_INTERVAL = 0.067  # 15 FPS = 67ms per frame (balanced for RTX 3050)
+ENABLE_ADAPTIVE_INTERVAL = False  # Disable adaptive FPS throttling for consistent performance
 
-# Inference settings - Optimized for YOLO11s ONNX FP32
+# Inference settings - Optimized for RTX 3050 Performance
 INFERENCE_SETTINGS = {
-    "imgsz": 832,           # Native YOLO11s size for better accuracy
-    "conf": 0.35,           # Lower confidence for better detection (catch small/dim vehicles)
+    "imgsz": 320,           # Much smaller for better RTX 3050 performance
+    "conf": 0.5,            # Higher confidence for better performance (fewer detections)
     "iou": 0.45,            # NMS IOU threshold
-    "max_det": 150,         # Increased for dense traffic scenarios
+    "max_det": 50,          # Further reduced for RTX 3050 performance
     "half": False,          # FP32 precision (ONNX FP32 compatibility)
     "device": "cuda:0",     # GPU device
     "verbose": False,       # No verbose output
@@ -60,17 +60,10 @@ INFERENCE_SETTINGS = {
     "agnostic_nms": False,  # Class-specific NMS (faster)
 }
 
-# ONNX Runtime settings
+# ONNX Runtime settings - Simplified for compatibility
 ONNX_SETTINGS = {
     "providers": [
-        ('CUDAExecutionProvider', {
-            'device_id': 0,
-            'arena_extend_strategy': 'kNextPowerOfTwo',
-            'gpu_mem_limit': 3 * 1024 * 1024 * 1024,  # 3GB limit
-            'cudnn_conv_algo_search': 'EXHAUSTIVE',
-            'do_copy_in_default_stream': True,
-            'cudnn_conv_use_max_workspace': True,
-        }),
+        'CUDAExecutionProvider',  # Simplified CUDA provider
         'CPUExecutionProvider',
     ],
     "sess_options": {
@@ -189,7 +182,7 @@ MODEL_PRIORITY = [
 # ============================================
 
 OCR_SETTINGS = {
-    "enabled": True,                    # Enable OCR
+    "enabled": False,                   # Disable OCR for better performance
     "model_type": "auto",               # Auto-detect: onnx > pt
     "plate_conf_threshold": 0.6,        # Confidence threshold for plate detection
     "ocr_debounce_sec": 1.0,            # Min time between OCR calls per track (seconds)

@@ -249,14 +249,14 @@ function DetectionPageBinaryContent() {
   const [currentFormat, setCurrentFormat] = useState('onnx');
   const [isLoadingVersions, setIsLoadingVersions] = useState(false);
 
-  // Optimized settings defaults
+  // Optimized settings defaults - Synced with backend for stable FPS
   const [settings, setSettings] = useState({
-    conf: 0.5,           // Increased from 0.35
-    target_fps: 45,
+    conf: 0.6,           // Increased for better performance
+    target_fps: 15,      // Realistic target for RTX 3050 (10 FPS detection + overhead)
     jpeg_quality: 60,    // Increased from 55
-    inference_size: 640, // Optimized for RTX 3050 performance
+    inference_size: 320, // Much smaller for better RTX 3050 performance
     encode_width: 960,
-    veh_detect_hz: 25,
+    veh_detect_hz: 15,   // Match with FIXED_DETECT_INTERVAL (15 FPS)
     force_gpu: true
   });
 
@@ -793,14 +793,14 @@ function DetectionPageBinaryContent() {
       if (newLogEntries.length > 0) {
         setLogEntries((prev) => {
           const merged = [...newLogEntries, ...prev];
-          const trimmed = merged.slice(0, 200);
+          const trimmed = merged.slice(0, 100); // Reduced from 200 to 100 for better performance
           logEntriesRef.current = trimmed;
           return trimmed;
         });
       }
 
       if (newViolationEntries.length > 0) {
-        setViolations((prev) => [...newViolationEntries, ...prev].slice(0, 20));
+        setViolations((prev) => [...newViolationEntries, ...prev].slice(0, 10)); // Reduced from 20 to 10 for better performance
       }
     },
     [handleLightState]
@@ -1139,31 +1139,36 @@ function DetectionPageBinaryContent() {
             // BBox visibility is controlled by server settings
             ctx.drawImage(displayBitmapRef.current, 0, 0, c.width, c.height);
 
-            // Draw violation overlay (red bbox + label)
+            // Draw violation overlay (red bbox + label) - Optimized rendering
             const detections = currentDetectionsRef.current;
             if (detections && detections.length > 0) {
-              detections.forEach((det) => {
+              // Pre-filter violations to reduce iterations
+              const violationDetections = detections.filter(det => {
                 const trackId = det?.track_id ?? det?.id ?? null;
-                const bbox = det?.bbox;
-                if (!trackId || !bbox || bbox.length < 4) return;
-
                 const vehicleState = vehicleStatesRef.current.get(trackId);
-                if (vehicleState && vehicleState.violation) {
-                  const [x1, y1, x2, y2] = bbox;
+                return trackId && det?.bbox && det.bbox.length >= 4 && vehicleState?.violation;
+              });
+
+              if (violationDetections.length > 0) {
+                // Set styles once for all violations
+                ctx.strokeStyle = '#FF0000';
+                ctx.lineWidth = 4;
+                ctx.fillStyle = '#FF0000';
+                ctx.font = 'bold 16px Arial';
+
+                violationDetections.forEach((det) => {
+                  const [x1, y1, x2, y2] = det.bbox;
 
                   // Draw red bbox
-                  ctx.strokeStyle = '#FF0000';
-                  ctx.lineWidth = 4;
                   ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
 
                   // Draw "VI PHẠM" label
-                  ctx.fillStyle = '#FF0000';
                   ctx.fillRect(x1, y1 - 25, 100, 25);
                   ctx.fillStyle = '#FFFFFF';
-                  ctx.font = 'bold 16px Arial';
                   ctx.fillText('VI PHẠM', x1 + 5, y1 - 7);
-                }
-              });
+                  ctx.fillStyle = '#FF0000'; // Reset for next label background
+                });
+              }
             }
           } catch { }
           if (prev) {
@@ -1178,12 +1183,12 @@ function DetectionPageBinaryContent() {
     return () => cancelAnimationFrame(rafIdRef.current);
   }, [isPaused]);
 
-  // Throttle UI state updates (reduce React re-render jank)
+  // Throttle UI state updates (reduce React re-render jank) - Optimized for 30 FPS
   useEffect(() => {
     const id = setInterval(() => {
       setFps(fpsRef.current);
       setFrameIdx(frameIdxRef.current);
-    }, 200);
+    }, 300); // Increased to 300ms to reduce UI update frequency
     return () => clearInterval(id);
   }, []);
 
