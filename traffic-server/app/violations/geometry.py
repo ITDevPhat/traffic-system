@@ -196,5 +196,78 @@ def bbox_intersects_polygon(
     for corner in corners:
         if point_in_polygon(corner, polygon):
             return True
-    
+
     return False
+
+
+def is_inside_violation_region(bbox: Tuple[float, float, float, float], polygon: List[Tuple[float, float]]):
+    """
+    Check if bbox center is inside violation region polygon.
+
+    >>> is_inside_violation_region((0, 0, 10, 10), [(0, 0), (10, 0), (10, 10), (0, 10)])
+    True
+    >>> is_inside_violation_region((20, 20, 30, 30), [(0, 0), (10, 0), (10, 10), (0, 10)])
+    False
+    """
+    if not polygon or len(polygon) < 3:
+        return False
+
+    cx, cy = bbox_center(bbox)
+    return point_in_polygon((cx, cy), polygon)
+
+
+def stopline_overlap(bbox: Tuple[float, float, float, float], stopline_band: Tuple[float, float]) -> float:
+    """
+    Compute vertical overlap ratio between bbox and stopline band (y_min, y_max).
+
+    >>> round(stopline_overlap((0, 0, 10, 10), (4, 6)), 2)
+    0.2
+    >>> stopline_overlap((0, 10, 10, 20), (0, 5))
+    0.0
+    """
+    if not stopline_band or len(stopline_band) < 2:
+        return 0.0
+
+    y1, y2 = stopline_band
+    band_min, band_max = min(y1, y2), max(y1, y2)
+
+    x1, y_top, x2, y_bottom = bbox
+    height = max(1e-6, y_bottom - y_top)
+
+    overlap_min = max(y_top, band_min)
+    overlap_max = min(y_bottom, band_max)
+
+    if overlap_max <= overlap_min:
+        return 0.0
+
+    return max(0.0, min(1.0, (overlap_max - overlap_min) / height))
+
+
+def classify_position(bbox: Tuple[float, float, float, float], stopline_band: Tuple[float, float]) -> str:
+    """
+    Classify bbox position relative to stopline band using bbox center.
+
+    BEFORE: Center is below the band (larger y)
+    ON: Center is inside the band
+    AFTER: Center is above the band (smaller y)
+
+    >>> classify_position((0, 0, 10, 10), (4, 6))
+    'ON'
+    >>> classify_position((0, 6, 10, 16), (4, 6))
+    'BEFORE'
+    >>> classify_position((0, -10, 10, 0), (4, 6))
+    'AFTER'
+    """
+    if not stopline_band or len(stopline_band) < 2:
+        return "BEFORE"
+
+    y1, y2 = stopline_band
+    band_min, band_max = min(y1, y2), max(y1, y2)
+    _, y_top, _, y_bottom = bbox
+    center_y = (y_top + y_bottom) / 2.0
+
+    if band_min <= center_y <= band_max:
+        return "ON"
+    if center_y > band_max:
+        return "BEFORE"
+    return "AFTER"

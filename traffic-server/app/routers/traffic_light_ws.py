@@ -299,6 +299,62 @@ async def ws_traffic_light_realtime(
                 except Exception:
                     return str(path)
 
+            def clamp_bbox_to_frame(bbox, frame_shape):
+                if bbox is None or len(bbox) != 4 or frame_shape is None:
+                    return None
+                x1, y1, x2, y2 = [int(v) for v in bbox]
+                h, w = frame_shape[:2]
+                x1 = max(0, min(x1, w - 1))
+                y1 = max(0, min(y1, h - 1))
+                x2 = max(x1 + 1, min(x2, w))
+                y2 = max(y1 + 1, min(y2, h))
+                if y2 <= y1 or x2 <= x1:
+                    return None
+                return (x1, y1, x2, y2)
+
+            def save_crop_and_ocr(
+                vehicle_state,
+                bbox,
+                frame_bgr,
+                evidence_dir: Path,
+                filename_prefix: str,
+            ):
+                """Save crop for bbox and run OCR once if not done."""
+
+                if frame_bgr is None:
+                    return None, vehicle_state.plate_text if vehicle_state else None, vehicle_state.plate_conf if vehicle_state else None
+
+                clamped_bbox = clamp_bbox_to_frame(bbox, frame_bgr.shape)
+                if clamped_bbox is None:
+                    return None, vehicle_state.plate_text if vehicle_state else None, vehicle_state.plate_conf if vehicle_state else None
+
+                x1, y1, x2, y2 = clamped_bbox
+                crop = frame_bgr[y1:y2, x1:x2].copy()
+                if crop.size == 0:
+                    return None, vehicle_state.plate_text if vehicle_state else None, vehicle_state.plate_conf if vehicle_state else None
+
+                evidence_dir.mkdir(parents=True, exist_ok=True)
+                crop_path = evidence_dir / f"{filename_prefix}_crop.jpg"
+                try:
+                    cv2.imwrite(str(crop_path), crop)
+                except Exception as e:
+                    logger.warning(f"[TL-SNAPSHOT] Failed to save crop {crop_path}: {e}")
+                    crop_path = None
+
+                plate_text = vehicle_state.plate_text if vehicle_state else None
+                plate_conf = vehicle_state.plate_conf if vehicle_state else None
+
+                if vehicle_state and not vehicle_state.plate_ocr_done:
+                    ocr_text, ocr_conf = recognize_plate_from_crop(crop)
+                    if ocr_text is not None:
+                        plate_text = ocr_text
+                        plate_conf = ocr_conf
+                        vehicle_state.plate_text = ocr_text
+                        vehicle_state.plate_conf = ocr_conf
+                        vehicle_state.plate_ocr_done = True
+
+                return crop_path, plate_text, plate_conf
+
             while True:
                 # Check connection
                 if websocket.client_state.name == 'DISCONNECTED':
@@ -380,7 +436,7 @@ async def ws_traffic_light_realtime(
                     if enable_violation:
                         traffic_light_state = cached_tl_state.get("state") or "GREEN"
                         tracks = header.get("detections", [])
-                        frame_idx = header.get("frame_idx")
+                        frame_idx = header.get("frame_idx") or frame_count
 
                         if frame_count % 20 == 0:
                             logger.info(
@@ -390,21 +446,91 @@ async def ws_traffic_light_realtime(
                                 f"sample_track={tracks[0] if tracks else None}"
                             )
 
-                        violations = violation_manager.compute_violations(
+                        header["light"] = traffic_light_state
+
+                        violation_result = violation_manager.compute_violations(
                             camera_id=camera_id,
                             tracks=tracks,
                             light_state=traffic_light_state,
                             timestamp=datetime.utcnow(),
                             frame_index=frame_idx,
                         )
-                        
+                        violations = violation_result.violations if violation_result else []
+                        yellow_candidates = (
+                            violation_result.yellow_candidates if violation_result else []
+                        )
+                        violation_flags = (
+                            violation_result.violation_flags if violation_result else {}
+                        )
+
                         # DEBUG: Log violation detection result
                         if frame_count % 30 == 0:
                             logger.warning(
                                 f"[VIOLATION-RESULT] cam={camera_id}, light={traffic_light_state}, "
                                 f"tracks={len(tracks)}, violations={len(violations) if violations else 0}"
                             )
-                        
+
+                        engine = violation_manager.engines.get(camera_id)
+                        yellow_evidence_payload = []
+
+                        if yellow_candidates:
+                            header["yellow_candidates"] = yellow_candidates
+
+                            if frame is not None:
+                                evidence_dir_yellow = (
+                                    Path(settings.STATIC_DIR)
+                                    / "evidence"
+                                    / "traffic_light"
+                                    / str(camera_id)
+                                    / "yellow_candidates"
+                                )
+                                for cand in yellow_candidates:
+                                    track_id = cand.get("track_id")
+                                    if track_id is None:
+                                        continue
+                                    vehicle_state = engine.vehicles.get(track_id) if engine else None
+                                    if vehicle_state and vehicle_state.last_snapshot_saved_frame == frame_idx:
+                                        continue
+
+                                    best_bbox = None
+                                    if vehicle_state and vehicle_state.best_view_bbox:
+                                        best_bbox = vehicle_state.best_view_bbox
+                                    else:
+                                        best_bbox = cand.get("best_view_bbox") or cand.get("bbox")
+
+                                    filename_prefix = f"{camera_id}_{track_id}_yellow_{frame_idx}"
+                                    crop_path, plate_text, plate_conf = save_crop_and_ocr(
+                                        vehicle_state,
+                                        best_bbox,
+                                        frame,
+                                        evidence_dir_yellow,
+                                        filename_prefix,
+                                    )
+
+                                    if vehicle_state:
+                                        vehicle_state.last_snapshot_saved_frame = frame_idx
+
+                                    if crop_path:
+                                        yellow_evidence_payload.append(
+                                            {
+                                                "track_id": track_id,
+                                                "class_name": cand.get("class_name"),
+                                                "frame": frame_idx,
+                                                "first_seen_frame": cand.get("first_seen_frame"),
+                                                "snapshot_frame": cand.get("snapshot_frame"),
+                                                "bbox": clamp_bbox_to_frame(best_bbox, frame.shape),
+                                                "image_url": to_static_url(crop_path),
+                                                "plate_text": plate_text,
+                                                "plate_conf": plate_conf,
+                                                "light": traffic_light_state,
+                                            }
+                                        )
+                                        logger.info(
+                                            f"[YELLOW-SNAPSHOT] cam={camera_id}, track={track_id}, frame={frame_idx}, path={crop_path}"
+                                        )
+
+                        violation_evidence_payload = []
+
                         if violations:
                             for viol in violations:
                                 plate_text = viol.details.get("plate_text")
@@ -461,18 +587,101 @@ async def ws_traffic_light_realtime(
                                             break
 
                         # Map violation to detections for frontend
-                        if violations and tracks:
-                            viol_by_tid = {v.track_id: v for v in violations}
-                            for det in tracks:
-                                tid = det.get("track_id")
-                                if tid in viol_by_tid:
-                                    det["violation"] = viol_by_tid[tid].violation_type
-                                    det.setdefault("plate", {
-                                        "text": viol_by_tid[tid].details.get("plate_text"),
-                                        "conf": viol_by_tid[tid].details.get("plate_conf"),
-                                    })
+                        if tracks:
+                            if violation_flags:
+                                for det in tracks:
+                                    tid = det.get("track_id")
+                                    if tid in violation_flags:
+                                        det["violation"] = violation_flags[tid]
 
-                        header["violations"] = [v.__dict__ for v in violations]
+                            if violations:
+                                viol_by_tid = {v.track_id: v for v in violations}
+                                for det in tracks:
+                                    tid = det.get("track_id")
+                                    if tid in viol_by_tid:
+                                        det.setdefault("plate", {
+                                            "text": viol_by_tid[tid].details.get("plate_text"),
+                                            "conf": viol_by_tid[tid].details.get("plate_conf"),
+                                        })
+
+                        formatted_violations = []
+                        for viol in violations:
+                            payload_bbox = (
+                                viol.details.get("bbox")
+                                or viol.details.get("best_view_bbox")
+                                or viol.details.get("first_in_region_bbox")
+                            )
+                            payload_violation_type = viol.violation_type
+                            if payload_violation_type not in {"STOPLINE", "RED_LIGHT"}:
+                                payload_violation_type = (
+                                    "STOPLINE" if "STOPLINE" in payload_violation_type else "RED_LIGHT"
+                                )
+                            formatted_violations.append({
+                                "track_id": viol.track_id,
+                                "class_name": viol.details.get("class_name"),
+                                "bbox": list(payload_bbox) if payload_bbox else None,
+                                "violation_type": payload_violation_type,
+                                "position": viol.details.get("position_now"),
+                                "overlap": viol.details.get("overlap_ratio"),
+                                "from_yellow": bool(viol.details.get("snapshot_frame_yellow")),
+                                "snapshot_frame_yellow": viol.details.get("snapshot_frame_yellow"),
+                                "best_view_frame": viol.details.get("best_view_frame"),
+                            })
+
+                        if formatted_violations:
+                            header["violations"] = formatted_violations
+
+                        if violations and frame is not None:
+                            evidence_dir_violation = (
+                                Path(settings.STATIC_DIR)
+                                / "evidence"
+                                / "traffic_light"
+                                / str(camera_id)
+                                / "violation_crops"
+                            )
+                            for viol in violations:
+                                best_bbox = (
+                                    viol.details.get("best_view_bbox")
+                                    or viol.details.get("first_in_region_bbox")
+                                    or viol.details.get("bbox")
+                                )
+                                vehicle_state = engine.vehicles.get(viol.track_id) if engine else None
+                                filename_prefix = f"{camera_id}_{viol.track_id}_{viol.violation_type}_{frame_idx}"
+                                crop_path, plate_text, plate_conf = save_crop_and_ocr(
+                                    vehicle_state,
+                                    best_bbox,
+                                    frame,
+                                    evidence_dir_violation,
+                                    filename_prefix,
+                                )
+
+                                if vehicle_state:
+                                    vehicle_state.last_snapshot_saved_frame = frame_idx
+
+                                if crop_path:
+                                    violation_evidence_payload.append(
+                                        {
+                                            "track_id": viol.track_id,
+                                            "violation_type": viol.violation_type,
+                                            "bbox": clamp_bbox_to_frame(best_bbox, frame.shape),
+                                            "frame": frame_idx,
+                                            "image_url": to_static_url(crop_path),
+                                            "plate_text": plate_text,
+                                            "plate_conf": plate_conf,
+                                            "first_seen_frame": viol.details.get("first_in_region_frame"),
+                                            "best_view_frame": viol.details.get("best_view_frame"),
+                                            "light": traffic_light_state,
+                                        }
+                                    )
+                                    logger.info(
+                                        f"[RED-SNAPSHOT] cam={camera_id}, track={viol.track_id}, frame={frame_idx}, path={crop_path}"
+                                    )
+
+                        if yellow_evidence_payload:
+                            header["yellow_evidence"] = yellow_evidence_payload
+
+                        if violation_evidence_payload:
+                            header["violation_evidence"] = violation_evidence_payload
 
                         if violations:
                             clean_frame, annotated_frame = stream.get_latest_frames()
@@ -555,7 +764,12 @@ async def ws_traffic_light_realtime(
                                         violation_code = "BIKE_RED_LIGHT"
                                     elif label.lower() == "car":
                                         violation_code = "CAR_RED_LIGHT"
-                                elif violation.violation_type in {"RED_LIGHT_RUN", "RED_LIGHT_STOPLINE"}:
+                                elif violation.violation_type in {
+                                    "RED_LIGHT_RUN",
+                                    "RED_LIGHT_STOPLINE",
+                                    "RED_LIGHT",
+                                    "STOPLINE",
+                                }:
                                     violation_code = "RED_LIGHT"
 
                                 # Build payload for DB - plate must be string or None

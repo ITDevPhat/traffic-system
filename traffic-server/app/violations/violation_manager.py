@@ -7,7 +7,11 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 
-from app.violations.red_light_engine import RedLightViolationEngine, ViolationRecord
+from app.violations.red_light_engine import (
+    RedLightViolationEngine,
+    ViolationFrameResult,
+    ViolationRecord,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +85,7 @@ class ViolationManager:
         light_state: Optional[str],
         timestamp: Optional[datetime] = None,
         frame_index: Optional[int] = None,
-    ) -> List[ViolationRecord]:
+    ) -> ViolationFrameResult:
         """
         Compute violations for current frame.
 
@@ -100,11 +104,11 @@ class ViolationManager:
         engine = self.engines.get(camera_id)
         if engine is None:
             logger.warning(f"[VIOLATION] No stopline/engine for camera {camera_id}")
-            return []
+            return ViolationFrameResult([], [], {})
 
         if not tracks:
             logger.debug(f"[VIOLATION] No tracks for camera {camera_id} at {timestamp.isoformat()}")
-            return []
+            return ViolationFrameResult([], [], {})
 
         effective_light = light_state if light_state in {"RED", "YELLOW", "GREEN"} else "GREEN"
 
@@ -112,10 +116,10 @@ class ViolationManager:
             f"[VIOLATION] Computing for camera={camera_id}, tracks={len(tracks)}, light={effective_light}"
         )
 
-        violations = engine.update(tracks, effective_light, timestamp, frame_index=frame_index)
-        if violations:
-            logger.info(f"🚨 {len(violations)} violations detected for camera {camera_id}")
-        return violations
+        result = engine.update(tracks, effective_light, timestamp, frame_index=frame_index)
+        if result.violations:
+            logger.info(f"🚨 {len(result.violations)} violations detected for camera {camera_id}")
+        return result
 
     def remove_camera(self, camera_id: str) -> None:
         """Remove engine and stopline for a camera"""

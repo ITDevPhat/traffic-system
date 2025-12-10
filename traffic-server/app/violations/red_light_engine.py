@@ -16,6 +16,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
+from app.violations.geometry import (
+    classify_position,
+    is_inside_violation_region,
+    stopline_overlap,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -32,11 +38,18 @@ class VehicleViolationState:
     first_seen_time: datetime = field(default_factory=datetime.utcnow)
     last_update_time: datetime = field(default_factory=datetime.utcnow)
     # NEW: đánh dấu xe đã chạm vạch trong pha vàng/đỏ
-    touched_during_yellow_or_before_red: bool = False
+    touched_during_yellow: bool = False
+
+    # Frame đánh dấu lần đầu xe vào vùng vi phạm
+    first_seen_in_vr_frame: int | None = None
 
     # Snapshot đầu tiên khi object vào Violation Region
     first_in_region_frame: int | None = None
     first_in_region_bbox: tuple[float, float, float, float] | None = None
+
+    # Snapshot trong pha vàng để liên kết với vi phạm đỏ
+    snapshot_yellow_frame: int | None = None
+    snapshot_yellow_bbox: tuple[float, float, float, float] | None = None
 
     # "Best view" trong Violation Region (bbox to nhất, biển rõ nhất)
     best_view_frame: int | None = None
@@ -47,6 +60,9 @@ class VehicleViolationState:
     plate_text: str | None = None
     plate_conf: float | None = None
     plate_ocr_done: bool = False
+
+    # Frame đã lưu snapshot gần nhất để tránh ghi trùng
+    last_snapshot_saved_frame: int | None = None
 
 
 @dataclass
@@ -66,6 +82,13 @@ class ViolationRecord:
             "timestamp": self.timestamp.isoformat(),
             "details": self.details,
         }
+
+
+@dataclass
+class ViolationFrameResult:
+    violations: List[ViolationRecord]
+    yellow_candidates: List[Dict[str, object]]
+    violation_flags: Dict[int, str]
 
 
 class RedLightViolationEngine:
@@ -120,6 +143,15 @@ class RedLightViolationEngine:
                 f"[DIRECTION] cam={self.camera_id}, region_center_y={region_center_y:.1f}, "
                 f"stopline_y={line_y}, direction={direction}"
             )
+
+    def _stopline_band(self) -> Tuple[float, float]:
+        y1 = float(self.stopline_rect.get("y1", 0))
+        y2 = float(self.stopline_rect.get("y2", y1))
+        band_min, band_max = (min(y1, y2), max(y1, y2))
+        if band_min == band_max:
+            padding = 2.0
+            return (band_min - padding, band_max + padding)
+        return (band_min, band_max)
 
     def _front_point(self, bbox: Tuple[float, float, float, float]) -> Tuple[float, float]:
         """Get front point of vehicle depending on travel direction."""
@@ -237,9 +269,11 @@ class RedLightViolationEngine:
         if self.last_light_state == "RED" and light_state == "GREEN":
             logger.info(f"🟢 Light turned GREEN - resetting violation states")
             for v in self.vehicles.values():
-                v.touched_during_yellow_or_before_red = False
+                v.touched_during_yellow = False
                 v.violated = False  # Reset for new cycle
-        
+                v.snapshot_yellow_frame = None
+                v.snapshot_yellow_bbox = None
+
         # Record when light turns RED
         if light_state != self.last_light_state and light_state == "RED":
             self.last_red_on = timestamp
@@ -262,10 +296,15 @@ class RedLightViolationEngine:
         light_state: LightState,
         timestamp: datetime,
         frame_index: Optional[int] = None,
-    ) -> List[ViolationRecord]:
+    ) -> ViolationFrameResult:
         """Process the current frame and return any new violations."""
+        previous_light_state = self.last_light_state
         self._update_light(light_state, timestamp)
+        bootstrap_red = previous_light_state is None and light_state == "RED"
+
         violations: List[ViolationRecord] = []
+        yellow_candidates: List[Dict[str, object]] = []
+        violation_flags: Dict[int, str] = {}
 
         inside_count = 0
 
@@ -280,6 +319,8 @@ class RedLightViolationEngine:
             f"[VIOLATION] tracks={len(vehicle_tracks)}, light={light_state}, stopline={self.stopline_rect}"
         )
 
+        stopline_band = self._stopline_band()
+
         for track in vehicle_tracks:
             track_id_raw = track.get("track_id") or track.get("id")
             if track_id_raw is None:
@@ -289,87 +330,92 @@ class RedLightViolationEngine:
             if bbox is None or len(bbox) != 4:
                 continue
 
+            bbox_tuple = tuple(bbox)
+            class_name = track.get("class_name")
+
             vehicle, is_new = self._ensure_vehicle(track_id)
             vehicle.last_update_time = timestamp
 
             previous_position = vehicle.position_vs_line
-            front_point = self._front_point(tuple(bbox))
+            position = classify_position(bbox_tuple, stopline_band)
+            overlap_ratio = stopline_overlap(bbox_tuple, stopline_band)
+            inside_region = is_inside_violation_region(bbox_tuple, self.violation_region)
 
-            inside_region = self._point_in_violation_region(*front_point)
-            
             # DEBUG: Log every track's position
             if self.frame_index % 30 == 0:
                 logger.warning(
                     f"[TRACK-DEBUG] cam={self.camera_id}, track={track_id}, "
-                    f"bbox={bbox}, front_point={front_point}, inside_region={inside_region}, "
-                    f"light={light_state}"
+                    f"bbox={bbox}, inside_region={inside_region}, "
+                    f"light={light_state}, position={position}, overlap={overlap_ratio:.2f}"
                 )
-            
+
             if not inside_region:
-                vehicle.position_vs_line = "BEFORE"
+                vehicle.position_vs_line = position
                 vehicle.last_update_time = timestamp
                 continue
 
             # Snapshot logic inside violation region
             if vehicle.first_in_region_frame is None:
                 vehicle.first_in_region_frame = current_frame_index
-                vehicle.first_in_region_bbox = tuple(bbox)
+                vehicle.first_in_region_bbox = bbox_tuple
                 logger.info(
                     f"[PLATE-SNAPSHOT-FIRST] cam={self.camera_id}, "
                     f"track={track_id}, frame={current_frame_index}, bbox={bbox}"
                 )
 
-            x1, y1, x2, y2 = bbox
+            x1, y1, x2, y2 = bbox_tuple
             area = max(0.0, (x2 - x1) * (y2 - y1))
             if vehicle.best_view_area is None or area > vehicle.best_view_area:
                 vehicle.best_view_area = area
                 vehicle.best_view_frame = current_frame_index
-                vehicle.best_view_bbox = tuple(bbox)
+                vehicle.best_view_bbox = bbox_tuple
                 logger.info(
                     f"[PLATE-SNAPSHOT-BEST] cam={self.camera_id}, "
                     f"track={track_id}, frame={current_frame_index}, area={area}, bbox={bbox}"
                 )
 
-            inside_count += 1  # FIX: Đếm số xe trong vùng vi phạm
+            inside_count += 1  # Đếm số xe trong vùng vi phạm
 
-            position = self._position_vs_stopline(front_point)
             vehicle.position_vs_line = position
 
             # Record position when red for new vehicles (informational only)
             if is_new and self.last_light_state == "RED" and self.last_red_on:
                 vehicle.position_when_red = position
 
-            # Calculate overlap ratio (how much of vehicle height has crossed the stopline)
-            overlap_ratio = self._stopline_overlap_ratio(tuple(bbox))
-            
-            # Log overlap when vehicle is near/on stopline
-            if overlap_ratio > 0.0:
-                logger.debug(
-                    f"[VIOLATION] Track {track_id} overlap_ratio={overlap_ratio:.2f}, "
-                    f"light={light_state}, prev={previous_position}, pos={position}"
-                )
-            
             # ==================================================================
-            # DEBUG LOG: Log chi tiết khi đèn YELLOW
+            # YELLOW PHASE: track candidates inside violation region
+            # Start-up RED shortcut: if stream starts while RED, still seed state
+            # quickly so stopline violations can be evaluated without waiting for
+            # a full cycle.
             # ==================================================================
-            if light_state == "YELLOW":
-                logger.info(
-                    f"[DEBUG YELLOW] cam={self.camera_id}, track={track_id}, "
-                    f"inside_region={inside_region}, overlap={overlap_ratio:.2f}, "
-                    f"mark_for_red={vehicle.touched_during_yellow_or_before_red}"
-                )
+            yellow_arm_phase = light_state == "YELLOW" or bootstrap_red
 
-            # ==================================================================
-            # YELLOW PHASE: "Arm" vehicles that touch stopline during yellow
-            # ==================================================================
-            if light_state == "YELLOW" and overlap_ratio > 0.0:
-                if not vehicle.touched_during_yellow_or_before_red:
-                    vehicle.touched_during_yellow_or_before_red = True
-                    logger.info(
-                        f"🟡 Track {track_id} touched stopline during YELLOW "
-                        f"(overlap={overlap_ratio:.2f}, pos={position})"
-                    )
-            
+            if yellow_arm_phase:
+                if vehicle.first_seen_in_vr_frame is None:
+                    vehicle.first_seen_in_vr_frame = current_frame_index
+                if vehicle.snapshot_yellow_frame is None:
+                    vehicle.snapshot_yellow_frame = current_frame_index
+                    vehicle.snapshot_yellow_bbox = bbox_tuple
+                if overlap_ratio >= 0.4:
+                    vehicle.touched_during_yellow = True
+
+                yellow_candidates.append({
+                    "track_id": track_id,
+                    "class_name": class_name,
+                    "bbox": list(bbox_tuple),
+                    "position": position,
+                    "overlap": overlap_ratio,
+                    "snapshot_frame": vehicle.snapshot_yellow_frame or current_frame_index,
+                    "first_seen_frame": vehicle.first_in_region_frame,
+                    "best_view_frame": vehicle.best_view_frame,
+                    "best_view_bbox": list(vehicle.best_view_bbox)
+                    if vehicle.best_view_bbox
+                    else list(bbox_tuple),
+                })
+                continue
+
+            violation_type: Optional[str] = None
+
             # Track crossing for logging purposes
             crossed = previous_position == "BEFORE" and position in {"ON", "AFTER"}
             if crossed and light_state == "RED":
@@ -378,108 +424,86 @@ class RedLightViolationEngine:
                     f"overlap={overlap_ratio:.2f}"
                 )
 
-            violation_type: Optional[str] = None
-
-            # ==================================================================
-            # RED PHASE: Check violations
-            # Logic đơn giản hóa:
-            # 1. Xe trong vùng vi phạm (inside_region == True) ✓
-            # 2. Đè vạch >= 40% chiều cao xe (overlap_ratio >= 0.4)
-            # 3. Chưa bị đánh dấu vi phạm (vehicle.violated == False)
-            # 
-            # Phân loại:
-            # - RED_LIGHT_RUN: Xe vượt đèn đỏ (chạy qua vạch khi đèn đỏ)
-            # - RED_LIGHT_STOPLINE: Xe dừng sai vạch (đã chạm vạch trước đó)
-            # ==================================================================
             if light_state == "RED" and not vehicle.violated:
-                logger.info(
-                    f"[DEBUG RED] cam={self.camera_id}, track={track_id}, "
-                    f"inside_region={inside_region}, overlap={overlap_ratio:.2f}, "
-                    f"prev_pos={previous_position}, pos={position}, "
-                    f"violated={vehicle.violated}, violation_type=None"
-                )
-                
-                # Điều kiện vi phạm: đè vạch >= 40%
                 if overlap_ratio >= 0.4:
-                    # Phân loại vi phạm:
-                    # Case 1: Xe mới xuất hiện khi đèn đỏ và đang vượt vạch → RED_LIGHT_RUN
-                    # Case 2: Xe đã BEFORE trước đó, giờ vượt qua → RED_LIGHT_RUN  
-                    # Case 3: Xe đã chạm vạch trong pha vàng → RED_LIGHT_STOPLINE
-                    # Case 4: Xe đang ON/AFTER từ trước → RED_LIGHT_STOPLINE
-                    
-                    if vehicle.touched_during_yellow_or_before_red:
-                        # Đã chạm vạch trong pha vàng → dừng sai vạch
-                        violation_type = "RED_LIGHT_STOPLINE"
-                    elif previous_position == "BEFORE":
-                        # Xe từ BEFORE vượt qua vạch khi đèn đỏ → vượt đèn đỏ
-                        violation_type = "RED_LIGHT_RUN"
-                    elif is_new and position in {"ON", "AFTER"}:
-                        # Xe mới xuất hiện đã ở ON/AFTER khi đèn đỏ → vượt đèn đỏ
-                        # (có thể xe chạy nhanh, tracking mới bắt được)
-                        violation_type = "RED_LIGHT_RUN"
-                    else:
-                        # Các trường hợp khác (xe đã ở ON/AFTER từ trước) → dừng sai vạch
-                        violation_type = "RED_LIGHT_STOPLINE"
-                    
-                    logger.warning(
-                        f"🚨 RED LIGHT VIOLATION — camera={self.camera_id}, "
-                        f"track={track_id}, type={violation_type}, "
-                        f"overlap={overlap_ratio:.2f}, prev={previous_position}, now={position}, "
-                        f"touched_during_yellow={vehicle.touched_during_yellow_or_before_red}, "
-                        f"is_new={is_new}"
+                    if vehicle.touched_during_yellow and position == "ON":
+                        violation_type = "STOPLINE"
+                    elif (
+                        previous_position == "BEFORE"
+                        and position == "AFTER"
+                        and vehicle.position_when_red == "BEFORE"
+                    ):
+                        violation_type = "RED_LIGHT"
+
+                if violation_type:
+                    vehicle.violated = True
+                    violation_flags[track_id] = violation_type
+                    violation_record = ViolationRecord(
+                        camera_id=self.camera_id,
+                        track_id=vehicle.track_id,
+                        violation_type=violation_type,
+                        timestamp=timestamp,
+                        details={
+                            "stopline": self.stopline_rect,
+                            "light_state": light_state,
+                            "red_since": self.last_red_on.isoformat() if self.last_red_on else None,
+                            "position_now": position,
+                            "previous_position": previous_position,
+                            "overlap_ratio": overlap_ratio,
+                            "touched_during_yellow": vehicle.touched_during_yellow,
+                            "is_new_track": is_new,
+                            "first_in_region_frame": vehicle.first_in_region_frame,
+                            "first_in_region_bbox": vehicle.first_in_region_bbox,
+                            "best_view_frame": vehicle.best_view_frame,
+                            "best_view_bbox": vehicle.best_view_bbox,
+                            "plate_text": vehicle.plate_text,
+                            "plate_conf": vehicle.plate_conf,
+                            "snapshot_frame_yellow": vehicle.snapshot_yellow_frame,
+                            "snapshot_bbox_yellow": vehicle.snapshot_yellow_bbox,
+                            "class_name": class_name,
+                            "bbox": bbox_tuple,
+                        },
                     )
-                elif overlap_ratio > 0.0:
-                    # Xe đang tiến gần vạch nhưng chưa đủ 40%
+                    violations.append(violation_record)
+                elif light_state == "RED" and crossed:
                     logger.debug(
-                        f"[VIOLATION] Track {track_id} approaching stopline "
-                        f"(overlap={overlap_ratio:.2f} < 0.4)"
+                        f"[VIOLATION] Track {track_id} crossed stopline but no violation "
+                        f"(overlap={overlap_ratio:.2f}, violated={vehicle.violated})"
                     )
 
-            if violation_type:
-                vehicle.violated = True
-                violation_record = ViolationRecord(
-                    camera_id=self.camera_id,
-                    track_id=vehicle.track_id,
-                    violation_type=violation_type,
-                    timestamp=timestamp,
-                    details={
-                        "stopline": self.stopline_rect,
-                        "light_state": light_state,
-                        "red_since": self.last_red_on.isoformat() if self.last_red_on else None,
-                        "position_now": position,
-                        "previous_position": previous_position,
-                        "overlap_ratio": overlap_ratio,
-                        "touched_during_yellow": vehicle.touched_during_yellow_or_before_red,
-                        "is_new_track": is_new,
-                        "first_in_region_frame": vehicle.first_in_region_frame,
-                        "first_in_region_bbox": vehicle.first_in_region_bbox,
-                        "best_view_frame": vehicle.best_view_frame,
-                        "best_view_bbox": vehicle.best_view_bbox,
-                        "plate_text": vehicle.plate_text,
-                        "plate_conf": vehicle.plate_conf,
-                    },
-                )
-                violations.append(violation_record)
-                
-                # Log chi tiết sau khi tạo violation
-                logger.info(
-                    f"[DEBUG RED] cam={self.camera_id}, track={track_id}, "
-                    f"inside_region={inside_region}, overlap={overlap_ratio:.2f}, "
-                    f"prev_pos={previous_position}, pos={position}, "
-                    f"violated=True, violation_type={violation_type}"
-                )
-            elif light_state == "RED" and crossed:
-                logger.debug(
-                    f"[VIOLATION] Track {track_id} crossed stopline but no violation "
-                    f"(overlap={overlap_ratio:.2f}, violated={vehicle.violated})"
-                )
+        if light_state == "YELLOW":
+            logger.info(
+                "YELLOW-ARM frame=%d, candidates=%d, ids=%s",
+                current_frame_index,
+                len(yellow_candidates),
+                [c["track_id"] for c in yellow_candidates],
+            )
 
-        
+        if bootstrap_red:
+            logger.info(
+                "RED-BOOT frame=%d, candidates=%d, ids=%s",
+                current_frame_index,
+                len(yellow_candidates),
+                [c["track_id"] for c in yellow_candidates],
+            )
+
+        if light_state == "RED":
+            logger.info(
+                "RED-CHECK frame=%d, violations=%d, ids=%s",
+                current_frame_index,
+                len(violations),
+                [v.track_id for v in violations],
+            )
+
         logger.info(
             f"[TL] camera={self.camera_id}, light={light_state}, tracks={len(vehicle_tracks)}, inside_region={inside_count}"
         )
         self._prune_stale(timestamp)
-        return violations
+        return ViolationFrameResult(
+            violations=violations,
+            yellow_candidates=yellow_candidates,
+            violation_flags=violation_flags,
+        )
 
     def _prune_stale(self, now: datetime, ttl_s: float = 5.0) -> None:
         stale_ids = [tid for tid, v in self.vehicles.items() if (now - v.last_update_time).total_seconds() > ttl_s]
