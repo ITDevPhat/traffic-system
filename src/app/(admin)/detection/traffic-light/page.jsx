@@ -279,7 +279,9 @@ function DetectionPageBinaryContent() {
   const [lightState, setLightState] = useState('GREEN');
   const [lastLightChangeTs, setLastLightChangeTs] = useState(null);
   const [violations, setViolations] = useState([]);
+  const [logEntries, setLogEntries] = useState([]);
   const vehicleStatesRef = useRef(new Map());
+  const logEntriesRef = useRef([]);
   const lightStateRef = useRef({ state: 'GREEN', changedAt: 0 });
   const redStartRef = useRef(null);
   const currentDetectionsRef = useRef([]);
@@ -340,7 +342,9 @@ function DetectionPageBinaryContent() {
       setTlRoiActive(false);
       setIsSelectingTLMode(false);
       setViolations([]);
+      setLogEntries([]);
       vehicleStatesRef.current.clear();
+      logEntriesRef.current = [];
 
       if (clearGeometry) {
         setTlRoi(null);
@@ -354,6 +358,10 @@ function DetectionPageBinaryContent() {
     },
     []
   );
+
+  useEffect(() => {
+    logEntriesRef.current = logEntries;
+  }, [logEntries]);
 
   // Keyboard event handler for debug overlay (D key)
   useEffect(() => {
@@ -655,21 +663,89 @@ function DetectionPageBinaryContent() {
 
   const processTrafficLightLogic = useCallback(
     (pkt) => {
-      if (!pkt || !Array.isArray(pkt.detections)) return;
+      if (!pkt) return;
+
+      const detections = Array.isArray(pkt.detections) ? pkt.detections : [];
 
       // Store detections for overlay rendering
-      currentDetectionsRef.current = pkt.detections;
+      currentDetectionsRef.current = detections;
 
       // Update light state from packet (Fix: Check correctly nested traffic_light object)
-      const tlState = pkt.traffic_light?.state || pkt.light_state;
+      const tlState = pkt.traffic_light?.state || pkt.light_state || pkt.light;
       if (tlState) {
         handleLightState(tlState);
       }
 
       const now = Date.now();
-      const updatedViolations = [];
+      const newLogEntries = [];
+      const newViolationEntries = [];
+      const yellowIds = new Set();
+      const violationIds = new Set();
 
-      pkt.detections.forEach((det) => {
+      if (pkt.light === 'YELLOW' && Array.isArray(pkt.yellow_candidates)) {
+        pkt.yellow_candidates.forEach((candidate) => {
+          const trackId = candidate?.track_id ?? candidate?.trackId;
+          if (!trackId) return;
+          yellowIds.add(trackId);
+          newLogEntries.push({
+            frame: pkt.frame_idx ?? frameIdxRef.current,
+            light: 'YELLOW',
+            trackId,
+            type: 'YELLOW_CANDIDATE',
+            position: candidate.position || 'ON',
+            overlap: typeof candidate.overlap === 'number' ? candidate.overlap : 0,
+            className: candidate.class_name || candidate.className || 'vehicle',
+            fromYellow: false,
+          });
+        });
+      }
+
+      if (Array.isArray(pkt.violations)) {
+        pkt.violations.forEach((viol) => {
+          const trackId = viol?.track_id ?? viol?.trackId;
+          if (!trackId) return;
+          violationIds.add(trackId);
+
+          const existingState = vehicleStatesRef.current.get(trackId) || {
+            firstSeenAt: now,
+            violation: false,
+            lastFrame: pkt.frame_idx ?? 0,
+          };
+          existingState.violation = true;
+          existingState.violationType = viol.violation_type || viol.violationType;
+          existingState.lastFrame = pkt.frame_idx ?? existingState.lastFrame;
+          vehicleStatesRef.current.set(trackId, existingState);
+
+          const alreadyLogged = logEntriesRef.current.some(
+            (entry) => entry.trackId === trackId && entry.type === 'VIOLATION'
+          );
+
+          const fromYellow =
+            viol.from_yellow === true ||
+            yellowIds.has(trackId) ||
+            logEntriesRef.current.some(
+              (entry) => entry.trackId === trackId && entry.type === 'YELLOW_CANDIDATE'
+            );
+
+          const violationEntry = {
+            frame: pkt.frame_idx ?? frameIdxRef.current,
+            light: 'RED',
+            trackId,
+            type: 'VIOLATION',
+            position: viol.position || 'ON',
+            overlap: typeof viol.overlap === 'number' ? viol.overlap : null,
+            className: viol.class_name || viol.className || 'vehicle',
+            fromYellow,
+          };
+
+          if (!alreadyLogged) {
+            newLogEntries.push(violationEntry);
+            newViolationEntries.push(violationEntry);
+          }
+        });
+      }
+
+      detections.forEach((det) => {
         const trackId = det?.track_id ?? det?.id ?? null;
         if (!trackId) return;
 
@@ -679,20 +755,33 @@ function DetectionPageBinaryContent() {
           lastFrame: pkt.frame_idx ?? 0,
         };
 
-        // KIRO CHECK: Use backend violation flag directly
-        // det.violation is populated by RedLightViolationEngine on backend
-        if (det.violation && !current.violation) {
+        const alreadyLogged = logEntriesRef.current.some(
+          (entry) => entry.trackId === trackId && entry.type === 'VIOLATION'
+        );
+
+        if (det.violation && !current.violation && !violationIds.has(trackId) && !alreadyLogged) {
           current.violation = true;
           current.violationType = det.violation;
 
-          updatedViolations.push({
-            trackId,
+          const fromYellow =
+            yellowIds.has(trackId) ||
+            logEntriesRef.current.some(
+              (entry) => entry.trackId === trackId && entry.type === 'YELLOW_CANDIDATE'
+            );
+
+          const violationEntry = {
             frame: pkt.frame_idx ?? frameIdxRef.current,
             light: 'RED',
-            stopline: stoplineBounds?.label || 'Stopline',
-            violationType: det.violation,
-            time: new Date().toLocaleTimeString(),
-          });
+            trackId,
+            type: 'VIOLATION',
+            position: det.position || 'UNKNOWN',
+            overlap: det.overlap ?? null,
+            className: det.class_name,
+            fromYellow,
+          };
+
+          newLogEntries.push(violationEntry);
+          newViolationEntries.push(violationEntry);
 
           console.log(`🚨 VIOLATION CONFIRMED: Track ${trackId} type=${det.violation}`);
         }
@@ -701,11 +790,20 @@ function DetectionPageBinaryContent() {
         vehicleStatesRef.current.set(trackId, current);
       });
 
-      if (updatedViolations.length > 0) {
-        setViolations((prev) => [...updatedViolations, ...prev].slice(0, 20));
+      if (newLogEntries.length > 0) {
+        setLogEntries((prev) => {
+          const merged = [...newLogEntries, ...prev];
+          const trimmed = merged.slice(0, 200);
+          logEntriesRef.current = trimmed;
+          return trimmed;
+        });
+      }
+
+      if (newViolationEntries.length > 0) {
+        setViolations((prev) => [...newViolationEntries, ...prev].slice(0, 20));
       }
     },
-    [handleLightState, stoplineBounds]
+    [handleLightState]
   );
 
   const connectWebSocket = useCallback((src) => {
@@ -3050,6 +3148,66 @@ function DetectionPageBinaryContent() {
             </div>
           )}
         </div>
+
+        <Card className="mt-4">
+          <Card.Body>
+            <div className="d-flex justify-content-between align-items-center mb-3">
+              <h5 className="mb-0">🚥 Violation Log</h5>
+              <Badge bg="secondary">{logEntries.length} entries</Badge>
+            </div>
+            <div className="table-responsive" style={{ maxHeight: '280px' }}>
+              <table className="table table-sm align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th>Frame</th>
+                    <th>Light</th>
+                    <th>Track ID</th>
+                    <th>Type</th>
+                    <th>Position</th>
+                    <th>Overlap</th>
+                    <th>Class</th>
+                    <th>FromYellow</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logEntries.length === 0 && (
+                    <tr>
+                      <td colSpan="8" className="text-center text-muted">
+                        No log entries yet.
+                      </td>
+                    </tr>
+                  )}
+                  {logEntries.slice(0, 50).map((entry, idx) => (
+                    <tr key={`${entry.trackId}-${entry.frame}-${idx}`}>
+                      <td>{entry.frame ?? '-'}</td>
+                      <td>
+                        <Badge bg={entry.light === 'RED' ? 'danger' : entry.light === 'YELLOW' ? 'warning' : 'secondary'}>
+                          {entry.light}
+                        </Badge>
+                      </td>
+                      <td>#{entry.trackId}</td>
+                      <td>
+                        <Badge bg={entry.type === 'VIOLATION' ? 'danger' : 'warning'}>
+                          {entry.type === 'VIOLATION' ? 'Violation' : 'Candidate'}
+                        </Badge>
+                      </td>
+                      <td>{entry.position || '-'}</td>
+                      <td>{typeof entry.overlap === 'number' ? entry.overlap.toFixed(2) : '-'}</td>
+                      <td>{entry.className || '-'}</td>
+                      <td>
+                        {entry.fromYellow ? (
+                          <Badge bg="success">Yes</Badge>
+                        ) : (
+                          <Badge bg="secondary">No</Badge>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card.Body>
+        </Card>
 
         {/* ==== TRAFFIC LIGHT ROI CONTROL & PREVIEW PANEL ==== */}
         <Card className="mt-4" style={{
