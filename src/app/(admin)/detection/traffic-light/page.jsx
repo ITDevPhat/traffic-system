@@ -251,12 +251,12 @@ function DetectionPageBinaryContent() {
 
   // Optimized settings defaults - Synced with backend for stable FPS
   const [settings, setSettings] = useState({
-    conf: 0.6,           // Increased for better performance
-    target_fps: 15,      // Realistic target for RTX 3050 (10 FPS detection + overhead)
-    jpeg_quality: 60,    // Increased from 55
-    inference_size: 320, // Much smaller for better RTX 3050 performance
+    conf: 0.5,           // Balanced confidence
+    target_fps: 30,      // Full speed video playback
+    jpeg_quality: 60,    // Good quality
+    inference_size: 640, // ONNX model requires 640x640 input
     encode_width: 960,
-    veh_detect_hz: 15,   // Match with FIXED_DETECT_INTERVAL (15 FPS)
+    veh_detect_hz: 25,   // Detection frequency
     force_gpu: true
   });
 
@@ -915,8 +915,9 @@ function DetectionPageBinaryContent() {
                 setTlRoiActive(true);
 
                 // Set default Stopline
+                //  (65, 323) → (776, 295)
                 // const defaultStopline = { x1: 37, y1: 334, x2: 804, y2: 320 };
-                const defaultStopline = { x1: 80, y1: 297, x2: 773, y2: 282 };
+                const defaultStopline = { x1: 65, y1: 323, x2: 773, y2: 282 };
 
                 setStopline(defaultStopline);
                 setStoplineActive(true);

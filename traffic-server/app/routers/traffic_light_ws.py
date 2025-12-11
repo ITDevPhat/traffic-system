@@ -191,6 +191,18 @@ async def ws_traffic_light_realtime(
     await websocket.accept()
     logger.info("✅ WebSocket accepted")
     
+    # ÉP imgsz về 640 nếu model là ONNX để tránh lỗi "Got: 320 Expected: 640"
+    try:
+        model_ext = Path(model_path).suffix.lower()
+        if model_ext == ".onnx" and imgsz != 640:
+            logger.warning(
+                f"[TL WS] ONNX model fixed 640x640, overriding imgsz {imgsz} -> 640 "
+                f"for model {model_path}"
+            )
+            imgsz = 640
+    except Exception as e:
+        logger.warning(f"[TL WS] Failed to normalize imgsz for ONNX: {e}")
+    
     # RESET STATE ON NEW CONNECTION
     # When a new connection is made for a specific camera, clear any old state
     # to prevent "ghost" ROIs or stale violation tracking.

@@ -425,14 +425,21 @@ class RedLightViolationEngine:
                 )
 
             if light_state == "RED" and not vehicle.violated:
-                if overlap_ratio >= 0.4:
-                    if vehicle.touched_during_yellow and position == "ON":
+                # Giảm threshold overlap từ 0.4 xuống 0.1 để dễ bắt vi phạm hơn
+                # Hoặc bắt khi position đã là AFTER (đã vượt qua vạch hoàn toàn)
+                overlap_threshold = 0.1
+                
+                if overlap_ratio >= overlap_threshold or position == "AFTER":
+                    if vehicle.touched_during_yellow and position in {"ON", "AFTER"}:
                         violation_type = "STOPLINE"
                     elif (
                         previous_position == "BEFORE"
-                        and position == "AFTER"
+                        and position in {"ON", "AFTER"}
                         and vehicle.position_when_red == "BEFORE"
                     ):
+                        violation_type = "RED_LIGHT"
+                    elif position == "AFTER" and vehicle.position_when_red == "BEFORE":
+                        # Xe đã vượt qua vạch hoàn toàn khi đèn đỏ
                         violation_type = "RED_LIGHT"
 
                 if violation_type:
