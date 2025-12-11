@@ -6,6 +6,6 @@ model.export(
     format="onnx",
     opset=11,
     simplify=True,
-    imgsz=320,  # sẽ thay theo lựa chọn của bạn
+    imgsz=640,  # Match current ONNX model dimensions
     dynamic=False
 )
