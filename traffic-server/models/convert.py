@@ -11,7 +11,7 @@ from ultralytics import YOLO
 import os
 
 # --- Đường dẫn model nguồn (.pt) ---
-model_path = r"D:\ITDevPhat\Python\LVTN\traffic-system\traffic-server\models\yolo_ocr_chars_v8n.pt"
+model_path = r"D:\ITDevPhat\Python\LVTN\traffic-system\traffic-server\models\yolo_ocr_chars_v10n.pt"
 
 # --- Thư mục đích để lưu file .engine ---
 export_dir = os.path.dirname(model_path)  # cùng thư mục models
@@ -22,7 +22,7 @@ model = YOLO(model_path)
 
 # --- Xuất sang TensorRT (FP16) ---
 print("⚙️  Bắt đầu xuất sang TensorRT (.engine)...")
-engine_path = os.path.join(export_dir, "yolo_ocr_chars_v8n.engine")
+engine_path = os.path.join(export_dir, "yolo_ocr_chars_v10n.engine")
 
 model.export(
     format="engine",    # TensorRT

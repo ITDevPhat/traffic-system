@@ -42,7 +42,7 @@ class LicensePlateDetectorOptimized:
     
     def __init__(self,
                  detector_model_path: str = 'models/license_plate/yolo_plate_v10n.pt',
-                 ocr_model_path: str = 'models/ocr/yolo_ocr_chars_v8n.pt',
+                 ocr_model_path: str = 'models/ocr/yolo_ocr_chars_v10n.pt',
                  model_type: str = 'auto',  # 'auto', 'pt', 'onnx', 'engine'
                  confidence_threshold: float = 0.60,
                  device: str = 'auto'):
@@ -398,13 +398,13 @@ def create_detector_optimized(model_type: str = 'auto', device: str = 'auto') ->
     # Auto detect model paths dựa trên model_type
     if model_type == 'onnx':
         detector_path = 'models/license_plate/yolo_plate_v10n.onnx'
-        ocr_path = 'models/ocr/yolo_ocr_chars_v8n.onnx'
+        ocr_path = 'models/ocr/yolo_ocr_chars_v10n.onnx'
     elif model_type == 'engine':
         detector_path = 'models/license_plate/yolo_plate_v10n.engine'
-        ocr_path = 'models/ocr/yolo_ocr_chars_v8n.engine'
+        ocr_path = 'models/ocr/yolo_ocr_chars_v10n.engine'
     else:  # pt or auto
         detector_path = 'models/license_plate/yolo_plate_v10n.pt'
-        ocr_path = 'models/ocr/yolo_ocr_chars_v8n.pt'
+        ocr_path = 'models/ocr/yolo_ocr_chars_v10n.pt'
     
     return LicensePlateDetectorOptimized(
         detector_model_path=detector_path,

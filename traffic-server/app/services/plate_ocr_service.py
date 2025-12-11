@@ -115,9 +115,9 @@ class PlateOCRService:
         }
         
         ocr_paths = {
-            'engine': model_dir / "ocr" / "yolo_ocr_chars_v8n.engine",
-            'onnx': model_dir / "ocr" / "yolo_ocr_chars_v8n.onnx",
-            'pt': model_dir / "ocr" / "yolo_ocr_chars_v8n.pt"
+            'engine': model_dir / "ocr" / "yolo_ocr_chars_v10n.engine",
+            'onnx': model_dir / "ocr" / "yolo_ocr_chars_v10n.onnx",
+            'pt': model_dir / "ocr" / "yolo_ocr_chars_v10n.pt"
         }
         
         # Determine model type

@@ -33,9 +33,9 @@ class Settings(BaseSettings):
     
     # Model paths will be set dynamically based on VEHICLE_MODEL_VERSION
     YOLO_VEHICLE_MODEL: Optional[str] = None  # Will be set after initialization
-    YOLO_PLATE_MODEL: str = os.path.join(MODELS_DIR, "license_plate", "yolo_plate_v10n")
-    YOLO_OCR_MODEL: str = os.path.join(MODELS_DIR, "ocr", "yolo_ocr_chars_v8n")
-    YOLO_TRAFFIC_LIGHT_MODEL: str = os.path.join(MODELS_DIR, "traffic_light", "yolo_trafficlight_v10n")
+    YOLO_PLATE_MODEL: Optional[str] = None
+    YOLO_OCR_MODEL: Optional[str] = None
+    YOLO_TRAFFIC_LIGHT_MODEL: Optional[str] = None
     
     # ============================================
     # ⚙️ Inference Configuration
@@ -99,9 +99,12 @@ class Settings(BaseSettings):
     ]
     
     @model_validator(mode='after')
-    def set_vehicle_model_path(self):
-        """Set vehicle model path after validation"""
+    def set_model_paths(self):
+        """Set all model paths after validation"""
         self.YOLO_VEHICLE_MODEL = self.vehicle_model_path
+        self.YOLO_PLATE_MODEL = os.path.join(self.MODELS_DIR, "license_plate", "yolo_plate_v10n")
+        self.YOLO_OCR_MODEL = os.path.join(self.MODELS_DIR, "ocr", "yolo_ocr_chars_v10n")
+        self.YOLO_TRAFFIC_LIGHT_MODEL = os.path.join(self.MODELS_DIR, "traffic_light", "yolo_trafficlight_v10n")
         return self
     
     class Config:

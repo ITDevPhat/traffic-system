@@ -305,9 +305,9 @@ VALUES
 ('yolo_plate_v10n_engine', 'plate', 'models/license_plate/yolo_plate_v10n.engine', 'v10n', 'YOLOv10n', 0.6, 'Nhận dạng biển số xe Việt Nam (.engine)'),
 
 -- 🔤 OCR CHARACTER RECOGNITION
-('yolo_ocr_chars_v8n_pt', 'ocr', 'models/ocr/yolo_ocr_chars_v8n.pt', 'v8n', 'YOLOv8n', 0.65, 'Nhận diện ký tự OCR trên biển số (.pt)'),
-('yolo_ocr_chars_v8n_onnx', 'ocr', 'models/ocr/yolo_ocr_chars_v8n.onnx', 'v8n', 'YOLOv8n', 0.65, 'Nhận diện ký tự OCR trên biển số (.onnx)'),
-('yolo_ocr_chars_v8n_engine', 'ocr', 'models/ocr/yolo_ocr_chars_v8n.engine', 'v8n', 'YOLOv8n', 0.65, 'Nhận diện ký tự OCR trên biển số (.engine)'),
+('yolo_ocr_chars_v10n_pt', 'ocr', 'models/ocr/yolo_ocr_chars_v10n.pt', 'v10n', 'YOLOv10n', 0.65, 'Nhận diện ký tự OCR trên biển số (.pt)'),
+('yolo_ocr_chars_v10n_onnx', 'ocr', 'models/ocr/yolo_ocr_chars_v10n.onnx', 'v10n', 'YOLOv10n', 0.65, 'Nhận diện ký tự OCR trên biển số (.onnx)'),
+('yolo_ocr_chars_v10n_engine', 'ocr', 'models/ocr/yolo_ocr_chars_v10n.engine', 'v10n', 'YOLOv10n', 0.65, 'Nhận diện ký tự OCR trên biển số (.engine)'),
 
 -- 🚦 TRAFFIC LIGHT DETECTION
 ('yolo_trafficlight_v10n_pt', 'traffic_light', 'models/traffic_light/yolo_trafficlight_v10n.pt', 'v10n', 'YOLOv10n', 0.6, 'Phát hiện đèn giao thông (.pt)'),

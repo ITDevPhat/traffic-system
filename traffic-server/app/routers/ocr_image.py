@@ -32,7 +32,7 @@ def get_ocr_detector():
         try:
             ocr_detector = LicensePlateDetectorOptimized(
                 detector_model_path='models/license_plate/yolo_plate_v10n.pt',
-                ocr_model_path='models/ocr/yolo_ocr_chars_v8n.pt',
+                ocr_model_path='models/ocr/yolo_ocr_chars_v10n.pt',
                 model_type='auto',
                 confidence_threshold=0.60,
                 device='auto'

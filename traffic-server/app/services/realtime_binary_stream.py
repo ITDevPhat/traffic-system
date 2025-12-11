@@ -196,7 +196,7 @@ class BinaryAnnotStream:
         jpeg_quality: int = 60,
         encode_width: int = 960,
         model_path: Optional[str] = None,
-        veh_detect_hz: int = 30,
+        veh_detect_hz: int = 25,
         enable_yolo: bool = True,
         enable_tracking: bool = True,
         enable_bbox_drawing: bool = True,
@@ -819,7 +819,7 @@ class BinaryAnnotStream:
             self._last_detect_duration = duration
             
             # Log performance metrics periodically
-            if self.frame_idx % 90 == 1:   # Every ~3 seconds at 30fps (more frequent monitoring)
+            if self.frame_idx % 150 == 1:  # Every ~5 seconds at 30fps
                 current_fps = 1.0 / duration if duration > 0 else 0
                 logger.info(f"📊 Fixed Interval Mode: detect_fps={current_fps:.1f}, interval={self.detect_interval:.3f}s (stable)")
                 
@@ -834,7 +834,7 @@ class BinaryAnnotStream:
 
         # Legacy adaptive FPS monitoring (if enabled)
         current_fps = 1.0 / duration if duration > 0 else 0
-        target_detect_fps = self.veh_detect_hz or 30
+        target_detect_fps = self.veh_detect_hz or 25
         
         # If detection is too slow (< 28 FPS), increase interval to maintain overall pipeline FPS
         if current_fps < 28 and current_fps > 0:
@@ -1010,14 +1010,13 @@ class BinaryAnnotStream:
                 logger.info("⚠️  End of video or read error")
                 break
             # Pace capture to avoid finishing the file too fast
-            # DISABLED: Let video run at full speed, detection interval will control FPS
-            # if self.capture_interval is not None:
-            #     now = time.perf_counter()
-            #     dt = now - last_capture_ts
-            #     if dt < self.capture_interval:
-            #         time.sleep(self.capture_interval - dt)
-            #         now = time.perf_counter()
-            #     last_capture_ts = now
+            if self.capture_interval is not None:
+                now = time.perf_counter()
+                dt = now - last_capture_ts
+                if dt < self.capture_interval:
+                    time.sleep(self.capture_interval - dt)
+                    now = time.perf_counter()
+                last_capture_ts = now
             self._put_latest(self.q_cap, frame)
         logger.info("🛑 Capture thread stopped")
     
@@ -1884,14 +1883,13 @@ class BinaryAnnotStream:
             self.last_sent_ts = time.perf_counter()
 
         # Server-side pacing: maintain target FPS
-        # DISABLED: Let frames stream at detection rate for better performance
         now = time.perf_counter()
-        # dt = now - self.last_sent_ts
+        dt = now - self.last_sent_ts
 
-        # if dt < self.interval:
-        #     time.sleep(self.interval - dt)
-        #     now = time.perf_counter()
-        #     dt = now - self.last_sent_ts
+        if dt < self.interval:
+            time.sleep(self.interval - dt)
+            now = time.perf_counter()
+            dt = now - self.last_sent_ts
         
         self.last_sent_ts = now
         
@@ -1918,5 +1916,4 @@ class BinaryAnnotStream:
             logger.info(f"🎬 Frame {self.frame_idx}: {fps} FPS")
         
         return header, jpeg_bytes
-
 

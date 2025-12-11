@@ -186,48 +186,61 @@ def load_onnx_model(
     half: bool = True
 ):
     """
-    Load ONNX model với ONNX Runtime optimized cho RTX 3050
-    Ưu tiên CUDAExecutionProvider cho GPU acceleration
+    Load ONNX model với xử lý lỗi IR version + CUDA provider
     """
-    if not HAVE_ULTRALYTICS:
-        raise RuntimeError("❌ ultralytics not available")
-    
     if not HAVE_ONNX:
         raise RuntimeError("❌ onnxruntime not available")
-    
+
     logger.info(f"⚡ Loading ONNX model: {model_path}")
-    
-    # Configure ONNX Runtime providers for optimal performance
-    providers = []
-    if device.startswith("cuda") and torch.cuda.is_available():
-        # Prioritize CUDA provider with optimized settings for RTX 3050
-        cuda_provider_options = {
-            'device_id': 0,
-            'arena_extend_strategy': 'kNextPowerOfTwo',
-            'gpu_mem_limit': 3 * 1024 * 1024 * 1024,  # 3GB limit for RTX 3050 4GB
-            'cudnn_conv_algo_search': 'EXHAUSTIVE',
-            'do_copy_in_default_stream': True,
-        }
-        providers.append(('CUDAExecutionProvider', cuda_provider_options))
-        logger.info("🚀 ONNX using CUDAExecutionProvider with RTX 3050 optimizations")
-    
-    # Always add CPU as fallback
-    providers.append('CPUExecutionProvider')
-    
-    # Load model with Ultralytics (it will use our ONNX Runtime config)
+
+    providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+    # ---------------------------
+    # TRY LOAD WITH CUDA + CPU
+    # ---------------------------
+    try:
+        session = ort.InferenceSession(model_path, providers=providers)
+
+    except Exception as e:
+        err = str(e)
+
+        # CASE 1: IR VERSION TOO HIGH -> MUST FALLBACK
+        if "Unsupported model IR version" in err:
+            logger.error("❌ Model IR version quá cao, ONNX Runtime không hỗ trợ.")
+            logger.error("➡ Fallback sang PyTorch hoặc export lại ONNX opset=11.")
+
+            # Tự fallback sang YOLO .pt nếu tồn tại
+            pt_path = model_path.replace(".onnx", ".pt")
+            if os.path.exists(pt_path):
+                logger.info(f"♻️ Fallback sang PyTorch model: {pt_path}")
+                return load_pytorch_model(pt_path, device, imgsz, half)
+
+            raise RuntimeError(
+                f"❌ Không thể load ONNX vì IR version quá cao: {err}"
+            )
+
+        # CASE 2: CUDA NOT AVAILABLE → fallback CPU
+        logger.warning(f"⚠️ CUDAExecutionProvider không khả dụng → fallback CPU. Lỗi: {e}")
+        session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+
+    # Log providers thực tế
+    active = session.get_providers()
+    if "CUDAExecutionProvider" in active:
+        logger.info(f"✅ ONNX đang dùng CUDA: {active}")
+    else:
+        logger.warning(f"⚠️ ONNX chạy CPU-only: {active}")
+
+    # Cuối cùng load bằng Ultralytics wrapper
     model = YOLO(model_path)
-    
-    # Set PyTorch CUDA optimizations for any torch operations
+
+    # CUDA optimizations
     if device.startswith("cuda") and torch.cuda.is_available():
-        try:
-            torch.backends.cudnn.benchmark = True
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
-            logger.info("✅ PyTorch CUDA optimizations enabled")
-        except Exception as e:
-            logger.warning(f"⚠️  CUDA optimization failed: {e}")
-    
-    logger.info(f"✅ ONNX model loaded successfully")
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        logger.info("✅ CUDA optimizations enabled")
+
+    logger.info("✅ ONNX model loaded successfully (with fallback logic)")
     return model
 
 
