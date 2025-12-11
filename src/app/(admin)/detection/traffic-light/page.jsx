@@ -732,6 +732,7 @@ function DetectionPageBinaryContent() {
             light: 'RED',
             trackId,
             type: 'VIOLATION',
+            violationType: viol.violation_type || viol.violationType || 'RED_LIGHT',
             position: viol.position || 'ON',
             overlap: typeof viol.overlap === 'number' ? viol.overlap : null,
             className: viol.class_name || viol.className || 'vehicle',
@@ -774,6 +775,7 @@ function DetectionPageBinaryContent() {
             light: 'RED',
             trackId,
             type: 'VIOLATION',
+            violationType: det.violation || 'RED_LIGHT',
             position: det.position || 'UNKNOWN',
             overlap: det.overlap ?? null,
             className: det.class_name,
@@ -2938,22 +2940,26 @@ function DetectionPageBinaryContent() {
                   maxHeight: '60px',
                   overflowY: 'auto'
                 }}>
-                  {violations.slice(0, 10).map((v, idx) => (
-                    <span
-                      key={`${v.trackId}-${v.frame}-${idx}`}
-                      style={{
-                        padding: '4px 8px',
-                        borderRadius: '4px',
-                        background: 'rgba(239,68,68,0.2)',
-                        border: '1px solid rgba(239,68,68,0.4)',
-                        fontSize: '12px',
-                        color: '#fca5a5',
-                        fontWeight: 600
-                      }}
-                    >
-                      #{v.trackId}
-                    </span>
-                  ))}
+                  {violations.slice(0, 10).map((v, idx) => {
+                    const isCrossLine = v.violationType?.includes('CROSS_LINE');
+                    const isBike = v.violationType?.includes('BIKE');
+                    return (
+                      <span
+                        key={`${v.trackId}-${v.frame}-${idx}`}
+                        style={{
+                          padding: '4px 8px',
+                          borderRadius: '4px',
+                          background: isCrossLine ? 'rgba(234,179,8,0.2)' : 'rgba(239,68,68,0.2)',
+                          border: isCrossLine ? '1px solid rgba(234,179,8,0.6)' : '1px solid rgba(239,68,68,0.4)',
+                          fontSize: '11px',
+                          color: isCrossLine ? '#fbbf24' : '#fca5a5',
+                          fontWeight: 600
+                        }}
+                      >
+                        {isCrossLine ? '🛑' : '🚨'} {isBike ? '🏍️' : '🚗'} #{v.trackId}
+                      </span>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -3193,8 +3199,16 @@ function DetectionPageBinaryContent() {
                       </td>
                       <td>#{entry.trackId}</td>
                       <td>
-                        <Badge bg={entry.type === 'VIOLATION' ? 'danger' : 'warning'}>
-                          {entry.type === 'VIOLATION' ? 'Violation' : 'Candidate'}
+                        <Badge bg={
+                          entry.type === 'VIOLATION' 
+                            ? (entry.violationType?.includes('CROSS_LINE') ? 'warning' : 'danger')
+                            : 'secondary'
+                        }>
+                          {entry.type === 'VIOLATION' 
+                            ? (entry.violationType?.includes('CROSS_LINE') 
+                                ? `🛑 ${entry.violationType?.includes('BIKE') ? 'Xe máy' : 'Ô tô'} đè vạch` 
+                                : `🚨 ${entry.violationType?.includes('BIKE') ? 'Xe máy' : 'Ô tô'} vượt đèn đỏ`)
+                            : 'Candidate'}
                         </Badge>
                       </td>
                       <td>{entry.position || '-'}</td>

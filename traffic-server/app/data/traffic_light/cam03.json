@@ -1,0 +1,24 @@
+{
+  "camera_id": "cam03",
+  "description": "Config cho video8.mp4 - Cần điều chỉnh qua UI",
+  "traffic_light_roi": {
+    "x": 0.85,
+    "y": 0.05,
+    "width": 0.1,
+    "height": 0.15
+  },
+  "stopline": {
+    "x1": 50,
+    "y1": 400,
+    "x2": 800,
+    "y2": 400
+  },
+  "violation_region": {
+    "points": [
+      [50.0, 200.0],
+      [800.0, 200.0],
+      [850.0, 400.0],
+      [0.0, 400.0]
+    ]
+  }
+}

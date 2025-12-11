@@ -17,6 +17,7 @@ import numpy as np
 import time
 from datetime import datetime
 from pathlib import Path
+from app.utils.timezone_utils import now_vietnam
 from app.core.config import settings
 from app.schemas.traffic_light_violation import TrafficLightViolationIn
 from app.services.traffic_light_violation_service import (
@@ -411,7 +412,7 @@ async def ws_traffic_light_realtime(
                                 raw_state, raw_confidence = detect_traffic_light_state(roi_frame)
                                 normalized_raw = raw_state if raw_state in {"RED", "YELLOW", "GREEN"} else None
                                 state, confidence = traffic_light_manager.stabilize_state(
-                                    camera_id, normalized_raw, raw_confidence, timestamp=datetime.utcnow()
+                                    camera_id, normalized_raw, raw_confidence, timestamp=now_vietnam()
                                 )
 
                                 # Encode ROI frame
@@ -464,7 +465,7 @@ async def ws_traffic_light_realtime(
                             camera_id=camera_id,
                             tracks=tracks,
                             light_state=traffic_light_state,
-                            timestamp=datetime.utcnow(),
+                            timestamp=now_vietnam(),
                             frame_index=frame_idx,
                         )
                         violations = violation_result.violations if violation_result else []

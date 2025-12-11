@@ -21,6 +21,7 @@ from app.violations.geometry import (
     is_inside_violation_region,
     stopline_overlap,
 )
+from app.utils.timezone_utils import now_vietnam
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +36,8 @@ class VehicleViolationState:
     position_vs_line: Position = "BEFORE"
     violated: bool = False
     position_when_red: Position = "BEFORE"  # Informational only, not used in violation logic
-    first_seen_time: datetime = field(default_factory=datetime.utcnow)
-    last_update_time: datetime = field(default_factory=datetime.utcnow)
+    first_seen_time: datetime = field(default_factory=now_vietnam)
+    last_update_time: datetime = field(default_factory=now_vietnam)
     # NEW: đánh dấu xe đã chạm vạch trong pha vàng/đỏ
     touched_during_yellow: bool = False
 
@@ -89,6 +90,31 @@ class ViolationFrameResult:
     violations: List[ViolationRecord]
     yellow_candidates: List[Dict[str, object]]
     violation_flags: Dict[int, str]
+
+
+def map_violation_to_db_code(violation_type: str, class_name: str) -> str:
+    """
+    Map violation type + class_name sang mã CSDL.
+    
+    STOPLINE (đè vạch):
+        - bike → CROSS_LINE_BIKE_RED_LIGHT
+        - car/truck/bus → CROSS_LINE_CAR_RED_LIGHT
+    
+    RED_LIGHT (vượt đèn đỏ):
+        - bike → BIKE_RED_LIGHT
+        - car/truck/bus → CAR_RED_LIGHT
+    """
+    class_lower = (class_name or "car").lower()
+    is_bike = class_lower in ("bike", "motorbike", "motorcycle")
+    
+    if violation_type == "STOPLINE":
+        return "CROSS_LINE_BIKE_RED_LIGHT" if is_bike else "CROSS_LINE_CAR_RED_LIGHT"
+    
+    if violation_type == "RED_LIGHT":
+        return "BIKE_RED_LIGHT" if is_bike else "CAR_RED_LIGHT"
+    
+    # Fallback
+    return violation_type
 
 
 class RedLightViolationEngine:
@@ -444,11 +470,19 @@ class RedLightViolationEngine:
 
                 if violation_type:
                     vehicle.violated = True
-                    violation_flags[track_id] = violation_type
+                    # Map sang mã CSDL dựa trên class_name
+                    violation_type_db = map_violation_to_db_code(violation_type, class_name)
+                    violation_flags[track_id] = violation_type_db
+                    
+                    logger.info(
+                        f"🚨 VIOLATION DETECTED: track={track_id}, class={class_name}, "
+                        f"raw_type={violation_type}, db_type={violation_type_db}"
+                    )
+                    
                     violation_record = ViolationRecord(
                         camera_id=self.camera_id,
                         track_id=vehicle.track_id,
-                        violation_type=violation_type,
+                        violation_type=violation_type_db,  # Dùng mã CSDL
                         timestamp=timestamp,
                         details={
                             "stopline": self.stopline_rect,
@@ -469,6 +503,7 @@ class RedLightViolationEngine:
                             "snapshot_bbox_yellow": vehicle.snapshot_yellow_bbox,
                             "class_name": class_name,
                             "bbox": bbox_tuple,
+                            "raw_violation_type": violation_type,  # Lưu loại gốc để debug
                         },
                     )
                     violations.append(violation_record)

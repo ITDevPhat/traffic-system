@@ -16,6 +16,7 @@ from typing import Optional, Dict, Tuple, List
 import numpy as np
 
 from app.services.traffic_light_worker import TrafficLightWorker
+from app.utils.timezone_utils import now_vietnam
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +195,7 @@ class TrafficLightManager:
     ) -> Tuple[str, float]:
         """Apply FSM smoothing and return effective state with passthrough confidence."""
         machine = self.state_machines.setdefault(camera_id, TrafficLightStateMachine())
-        effective_state = machine.update(raw_state, timestamp or datetime.utcnow())
+        effective_state = machine.update(raw_state, timestamp or now_vietnam())
         return effective_state, confidence
 
 

@@ -12,6 +12,7 @@ from app.violations.red_light_engine import (
     ViolationFrameResult,
     ViolationRecord,
 )
+from app.utils.timezone_utils import now_vietnam
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +100,7 @@ class ViolationManager:
             List of ViolationRecord objects
         """
         if timestamp is None:
-            timestamp = datetime.utcnow()
+            timestamp = now_vietnam()
 
         engine = self.engines.get(camera_id)
         if engine is None:
