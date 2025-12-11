@@ -133,6 +133,18 @@ app.mount("/static", StaticFiles(directory=settings.STATIC_DIR), name="static")
 # FastAPI chạy từ traffic-server/, videos nằm ở traffic-server/videos/
 from pathlib import Path
 
+# Mount uploads directory để serve uploaded images
+uploads_dir = Path(__file__).parent.parent / "uploads"
+if not uploads_dir.exists():
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"📁 Created uploads directory: {uploads_dir}")
+
+try:
+    app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
+    logger.info(f"✅ Mounted /uploads endpoint to {uploads_dir}")
+except Exception as e:
+    logger.error(f"❌ Failed to mount /uploads: {e}")
+
 # Try multiple possible video directory paths (relative to traffic-server/)
 possible_video_dirs = [
     Path(__file__).parent.parent / "videos",  # traffic-server/app/main.py -> traffic-server/videos/

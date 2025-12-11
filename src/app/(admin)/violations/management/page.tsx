@@ -134,21 +134,20 @@ export default function ViolationsManagementPage() {
                   <th>Video Job</th>
                   <th>Độ tin cậy</th>
                   <th>Trạng thái</th>
-                  <th>Bằng chứng</th>
                   <th className="text-end pe-4">Thao tác</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={9} className="text-center py-5">
+                    <td colSpan={8} className="text-center py-5">
                       <div className="spinner-border text-primary" role="status"></div>
                       <p className="mt-2 text-muted">Đang tải dữ liệu...</p>
                     </td>
                   </tr>
                 ) : visibleViolations.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="text-center py-5 text-muted">
+                    <td colSpan={8} className="text-center py-5 text-muted">
                       Chưa có vi phạm nào.
                     </td>
                   </tr>
@@ -192,23 +191,18 @@ export default function ViolationsManagementPage() {
                           {getStatusLabel(violation.verification_status)}
                         </Badge>
                       </td>
-                      <td>
-                        {violation.evidence_img ? (
-                          <a 
-                            href={`${API_URL}${violation.evidence_img}`} 
-                            target="_blank" 
-                            rel="noreferrer"
-                            className="btn btn-sm btn-outline-primary"
-                          >
-                            <i className="ri-image-line me-1"></i>
-                            Xem
-                          </a>
-                        ) : (
-                          <span className="text-muted">Không có</span>
-                        )}
-                      </td>
                       <td className="text-end pe-4">
                         <div className="d-flex gap-2 justify-content-end">
+                          <Link 
+                            href={`/violations/management/${violation.violation_id}`} 
+                            passHref 
+                            legacyBehavior
+                          >
+                            <Button variant="outline-info" size="sm">
+                              <i className="ri-eye-line me-1"></i>
+                              Xem chi tiết
+                            </Button>
+                          </Link>
                           <Link 
                             href={`/violations/management/edit/${violation.violation_id}`} 
                             passHref 

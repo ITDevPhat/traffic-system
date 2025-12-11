@@ -6,6 +6,25 @@ import { ocrImage, validateImageFile, checkOCRHealth } from '@/services/ocrServi
 import { toast } from 'react-toastify';
 
 export default function OCRImagePage() {
+  // Add CSS for animations
+  React.useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+      .animate-pulse {
+        animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+      }
+      @keyframes pulse {
+        0%, 100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: .5;
+        }
+      }
+    `;
+    document.head.appendChild(style);
+    return () => document.head.removeChild(style);
+  }, []);
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -15,6 +34,9 @@ export default function OCRImagePage() {
   const [ocrHealth, setOcrHealth] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [editingPlates, setEditingPlates] = useState({});
+  const [hasChanges, setHasChanges] = useState(false);
+  const [editedResults, setEditedResults] = useState(null);
   
   const canvasRef = useRef(null);
   const imageRef = useRef(null);
@@ -116,6 +138,9 @@ export default function OCRImagePage() {
       });
 
       setOcrResult(result);
+      setEditedResults(null); // Reset edited results
+      setEditingPlates({}); // Reset editing state
+      setHasChanges(false); // Reset changes flag
       
       // If padded image is returned, use it as preview
       if (result.padded_image?.data) {
@@ -145,7 +170,6 @@ export default function OCRImagePage() {
     const img = imageRef.current;
 
     // Set canvas size to match displayed image size
-    const rect = img.getBoundingClientRect();
     canvas.width = img.naturalWidth;
     canvas.height = img.naturalHeight;
 
@@ -153,12 +177,21 @@ export default function OCRImagePage() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // Draw bounding boxes
-    result.plates.forEach((plate, index) => {
-      const { bbox, text, confidence } = plate;
+    result.plates.forEach((plate) => {
+      const { bbox, text, confidence, edited } = plate;
+      
+      // Choose colors based on edit status
+      let strokeColor = confidence >= confidenceThreshold ? '#00ff00' : '#ff9800';
+      let fillColor = confidence >= confidenceThreshold ? '#00ff00' : '#ff9800';
+      
+      if (edited) {
+        strokeColor = '#00ff00'; // Green for edited plates
+        fillColor = '#00ff00';
+      }
       
       // Draw rectangle
-      ctx.strokeStyle = confidence >= confidenceThreshold ? '#00ff00' : '#ff9800';
-      ctx.lineWidth = 4;
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = edited ? 6 : 4; // Thicker border for edited plates
       ctx.strokeRect(bbox.x1, bbox.y1, bbox.width, bbox.height);
 
       // Draw label background
@@ -168,7 +201,7 @@ export default function OCRImagePage() {
       const textWidth = textMetrics.width;
       const textHeight = 24;
 
-      ctx.fillStyle = confidence >= confidenceThreshold ? '#00ff00' : '#ff9800';
+      ctx.fillStyle = fillColor;
       ctx.fillRect(bbox.x1, bbox.y1 - textHeight - 6, textWidth + 12, textHeight + 6);
 
       // Draw label text
@@ -239,11 +272,68 @@ export default function OCRImagePage() {
     };
   }, [ocrResult]);
 
+  // Handle plate text editing
+  const handlePlateEdit = (plateIndex, newText) => {
+    setEditingPlates(prev => ({
+      ...prev,
+      [plateIndex]: newText
+    }));
+    setHasChanges(true);
+  };
+
+  // Apply edited changes
+  const handleApplyChanges = () => {
+    if (!ocrResult || !hasChanges) return;
+
+    const updatedResult = {
+      ...ocrResult,
+      plates: ocrResult.plates.map((plate, index) => ({
+        ...plate,
+        text: editingPlates[index] !== undefined ? editingPlates[index] : plate.text,
+        edited: editingPlates[index] !== undefined && editingPlates[index] !== plate.text
+      }))
+    };
+
+    // Update recognition count
+    const recognizedCount = updatedResult.plates.filter(p => 
+      p.confidence >= confidenceThreshold && p.text.trim() !== ''
+    ).length;
+
+    updatedResult.detection_results = {
+      ...updatedResult.detection_results,
+      plates_recognized: recognizedCount
+    };
+
+    setEditedResults(updatedResult);
+    setHasChanges(false);
+    
+    // Redraw bounding boxes with updated text
+    drawBoundingBoxes(updatedResult);
+    
+    toast.success('Đã áp dụng thay đổi!');
+  };
+
+  // Reset changes
+  const handleResetChanges = () => {
+    setEditingPlates({});
+    setHasChanges(false);
+    setEditedResults(null);
+    
+    if (ocrResult) {
+      drawBoundingBoxes(ocrResult);
+    }
+    
+    toast.info('Đã hủy các thay đổi');
+  };
+
   // Reset
   const handleReset = () => {
     setSelectedFile(null);
     setPreviewUrl(null);
     setOcrResult(null);
+    setEditedResults(null);
+    setEditingPlates({});
+    setHasChanges(false);
     setError(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -383,18 +473,27 @@ export default function OCRImagePage() {
             {/* Results Summary */}
             {ocrResult && (
               <Card className="shadow-sm">
-                <Card.Header className="bg-success text-white">
+                <Card.Header className="bg-success text-white d-flex justify-content-between align-items-center">
                   <h5 className="mb-0">📊 Kết Quả</h5>
+                  {hasChanges && (
+                    <Badge bg="warning" className="animate-pulse">
+                      Có thay đổi
+                    </Badge>
+                  )}
                 </Card.Header>
                 <Card.Body>
                   <div className="mb-3">
                     <div className="d-flex justify-content-between align-items-center mb-2">
                       <span>Biển số phát hiện:</span>
-                      <Badge bg="primary">{ocrResult.detection_results.plates_detected}</Badge>
+                      <Badge bg="primary">
+                        {(editedResults || ocrResult).detection_results.plates_detected}
+                      </Badge>
                     </div>
                     <div className="d-flex justify-content-between align-items-center mb-2">
                       <span>Biển số nhận dạng:</span>
-                      <Badge bg="success">{ocrResult.detection_results.plates_recognized}</Badge>
+                      <Badge bg="success">
+                        {(editedResults || ocrResult).detection_results.plates_recognized}
+                      </Badge>
                     </div>
                     <div className="d-flex justify-content-between align-items-center mb-2">
                       <span>Thời gian xử lý:</span>
@@ -402,25 +501,90 @@ export default function OCRImagePage() {
                     </div>
                   </div>
 
+                  {/* Edit Controls */}
+                  {hasChanges && (
+                    <div className="mb-3 p-2 bg-light rounded">
+                      <div className="d-flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="success"
+                          onClick={handleApplyChanges}
+                          className="flex-fill"
+                        >
+                          ✅ Áp dụng thay đổi
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline-secondary"
+                          onClick={handleResetChanges}
+                        >
+                          ↶ Hủy
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Plate List */}
                   {ocrResult.plates.length > 0 && (
                     <div>
                       <h6 className="mb-2">Danh sách biển số:</h6>
                       {ocrResult.plates
                         .filter(p => p.confidence >= confidenceThreshold)
-                        .map((plate, index) => (
-                          <div key={index} className="border rounded p-2 mb-2">
-                            <div className="d-flex justify-content-between align-items-center">
-                              <strong className="text-primary">{plate.text}</strong>
-                              <Badge bg={plate.confidence >= 0.8 ? 'success' : 'warning'}>
-                                {(plate.confidence * 100).toFixed(1)}%
-                              </Badge>
+                        .map((plate, index) => {
+                          const currentText = editingPlates[index] !== undefined 
+                            ? editingPlates[index] 
+                            : plate.text;
+                          const isEdited = editingPlates[index] !== undefined && 
+                            editingPlates[index] !== plate.text;
+                          const finalResult = editedResults?.plates[index];
+                          
+                          return (
+                            <div 
+                              key={index} 
+                              className={`border rounded p-2 mb-2 ${
+                                isEdited ? 'border-warning bg-warning bg-opacity-10' : ''
+                              } ${
+                                finalResult?.edited ? 'border-success bg-success bg-opacity-10' : ''
+                              }`}
+                            >
+                              <div className="d-flex justify-content-between align-items-center mb-2">
+                                <div className="flex-fill me-2">
+                                  <Form.Control
+                                    size="sm"
+                                    type="text"
+                                    value={currentText}
+                                    onChange={(e) => handlePlateEdit(index, e.target.value)}
+                                    className={`${
+                                      isEdited ? 'border-warning' : ''
+                                    } ${
+                                      finalResult?.edited ? 'border-success' : ''
+                                    }`}
+                                    placeholder="Nhập biển số..."
+                                  />
+                                </div>
+                                <div className="d-flex align-items-center gap-1">
+                                  {finalResult?.edited && (
+                                    <Badge bg="success" className="me-1">✓</Badge>
+                                  )}
+                                  {isEdited && !finalResult?.edited && (
+                                    <Badge bg="warning" className="me-1">⚠️</Badge>
+                                  )}
+                                  <Badge bg={plate.confidence >= 0.8 ? 'success' : 'warning'}>
+                                    {(plate.confidence * 100).toFixed(1)}%
+                                  </Badge>
+                                </div>
+                              </div>
+                              <small className="text-muted">
+                                Position: ({plate.bbox.x1}, {plate.bbox.y1}) - ({plate.bbox.x2}, {plate.bbox.y2})
+                                {finalResult?.edited && (
+                                  <span className="text-success ms-2">
+                                    • Đã chỉnh sửa từ: "{plate.text}"
+                                  </span>
+                                )}
+                              </small>
                             </div>
-                            <small className="text-muted">
-                              Position: ({plate.bbox.x1}, {plate.bbox.y1}) - ({plate.bbox.x2}, {plate.bbox.y2})
-                            </small>
-                          </div>
-                        ))}
+                          );
+                        })}
                     </div>
                   )}
                 </Card.Body>

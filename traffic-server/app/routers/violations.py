@@ -1,10 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from sqlmodel import Session, select
 from app.core.database import get_session
 from app.models.violation import Violation
 from typing import Optional, List
 from pydantic import BaseModel
 from datetime import datetime
+import os
+import uuid
+from pathlib import Path
 
 router = APIRouter()
 
@@ -74,12 +77,19 @@ async def get_violations(
     return violations
 
 
-@router.get("/{violation_id}", response_model=Violation)
+@router.get("/{violation_id}")
 async def get_violation_detail(
     violation_id: int,
     session: Session = Depends(get_session)
 ):
-    """Lấy chi tiết một vi phạm cụ thể."""
+    """Lấy chi tiết một vi phạm cụ thể với thông tin joined."""
+    from app.models.video_job import VideoJob
+    from app.models.camera import Camera
+    from app.models.location import Location
+    from app.models.violation_type import ViolationType
+    from app.models.bbox import BBox
+    
+    # Get violation
     violation = session.exec(
         select(Violation).where(Violation.violation_id == violation_id)
     ).first()
@@ -87,7 +97,86 @@ async def get_violation_detail(
     if not violation:
         raise HTTPException(status_code=404, detail="Không tìm thấy vi phạm")
     
-    return violation
+    # Get related data
+    video_job = None
+    camera = None
+    location = None
+    violation_type = None
+    bboxes = []
+    
+    if violation.video_job_id:
+        video_job = session.exec(
+            select(VideoJob).where(VideoJob.video_job_id == violation.video_job_id)
+        ).first()
+        
+        if video_job and video_job.camera_id:
+            camera = session.exec(
+                select(Camera).where(Camera.camera_id == video_job.camera_id)
+            ).first()
+            
+            if camera and camera.location_id:
+                location = session.exec(
+                    select(Location).where(Location.location_id == camera.location_id)
+                ).first()
+    
+    if violation.violation_type_code:
+        violation_type = session.exec(
+            select(ViolationType).where(ViolationType.violation_type_code == violation.violation_type_code)
+        ).first()
+    
+    # Get bounding boxes
+    bboxes = session.exec(
+        select(BBox).where(BBox.violation_id == violation_id)
+    ).all()
+    
+    # Build response
+    result = {
+        "violation_id": violation.violation_id,
+        "video_job_id": violation.video_job_id,
+        "vehicle_id": violation.vehicle_id,
+        "violation_type_code": violation.violation_type_code,
+        "frame": violation.frame,
+        "timestamp": violation.timestamp,
+        "roi_type": violation.roi_type,
+        "evidence_img": violation.evidence_img,
+        "plate": violation.plate,
+        "confidence": violation.confidence,
+        "verification_status": violation.verification_status,
+        "verified_by": violation.verified_by,
+        "verified_at": violation.verified_at,
+        "created_at": violation.created_at,
+        
+        # Joined data
+        "violation_type": {
+            "description": violation_type.description if violation_type else None,
+            "fine_amount": violation_type.fine_amount if violation_type else None,
+            "severity": violation_type.severity if violation_type else None,
+        } if violation_type else None,
+        
+        "camera": {
+            "name": camera.name if camera else None,
+            "model": camera.model if camera else None,
+        } if camera else None,
+        
+        "location": {
+            "name": location.name if location else None,
+            "address": location.address if location else None,
+        } if location else None,
+        
+        "bboxes": [
+            {
+                "x1": bbox.x1,
+                "y1": bbox.y1,
+                "x2": bbox.x2,
+                "y2": bbox.y2,
+                "label": bbox.label,
+                "confidence": bbox.confidence,
+            }
+            for bbox in bboxes
+        ]
+    }
+    
+    return result
 
 
 @router.post("/", response_model=Violation)
@@ -213,6 +302,75 @@ async def delete_violation(
     session.commit()
     
     return {"message": "Đã xóa vi phạm thành công", "violation_id": violation_id}
+
+
+@router.post("/{violation_id}/upload-image")
+async def upload_violation_image(
+    violation_id: int,
+    file: UploadFile = File(...),
+    image_type: str = Form(...),  # 'plate', 'location', 'evidence'
+    session: Session = Depends(get_session)
+):
+    """Upload hình ảnh cho vi phạm (biển số, địa điểm, bằng chứng)."""
+    
+    # Validate violation exists
+    violation = session.exec(
+        select(Violation).where(Violation.violation_id == violation_id)
+    ).first()
+    
+    if not violation:
+        raise HTTPException(status_code=404, detail="Không tìm thấy vi phạm")
+    
+    # Validate image type
+    valid_types = ['plate', 'location', 'evidence']
+    if image_type not in valid_types:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Loại ảnh phải là một trong: {', '.join(valid_types)}"
+        )
+    
+    # Validate file type
+    if not file.content_type or not file.content_type.startswith('image/'):
+        raise HTTPException(status_code=400, detail="File phải là hình ảnh")
+    
+    # Validate file size (max 5MB)
+    if file.size and file.size > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Kích thước file không được vượt quá 5MB")
+    
+    try:
+        # Create upload directory if not exists
+        upload_dir = Path("uploads") / "violations" / str(violation_id)
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate unique filename
+        file_extension = Path(file.filename or "").suffix or ".jpg"
+        unique_filename = f"{image_type}_{uuid.uuid4().hex}{file_extension}"
+        file_path = upload_dir / unique_filename
+        
+        # Save file
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+        
+        # Generate URL path
+        url_path = f"/uploads/violations/{violation_id}/{unique_filename}"
+        
+        # Update violation if it's evidence image
+        if image_type == 'evidence':
+            violation.evidence_img = url_path
+            session.add(violation)
+            session.commit()
+            session.refresh(violation)
+        
+        return {
+            "ok": True,
+            "message": f"Đã upload {image_type} thành công",
+            "url": url_path,
+            "filename": unique_filename
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi upload file: {str(e)}")
 
 
 

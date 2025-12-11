@@ -138,7 +138,7 @@ traffic-system/
 |-------|------|---------|----------|
 | Vehicle Detection | `yolo_vehicle_v10m.pt` | Detect vehicles | 95%+ |
 | License Plate | `yolo_plate_v10n.pt` | Detect plates | 90%+ |
-| OCR | `yolo_ocr_chars_v8n.pt` | Read plate text | 85%+ |
+| OCR | `yolo_ocr_chars_v10n.pt` | Read plate text | 85%+ |
 | Traffic Light | `yolo_trafficlight_v10n.pt` | Detect light status | 92%+ |
 
 ## 🔧 Configuration
