@@ -7,7 +7,7 @@ import Link from 'next/link';
 import { fetchViolationsManagement, ViolationItem } from '@/services/violationsApi';
 import { toast } from 'react-toastify';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
 
 export default function ViolationsManagementPage() {
   const [violations, setViolations] = useState<ViolationItem[]>([]);
@@ -75,7 +75,7 @@ export default function ViolationsManagementPage() {
       <PageTitle title="Quản lý vi phạm" subName="Danh sách" />
 
       <Card className="shadow-sm">
-        <Card.Header className="bg-white py-3">
+        <Card.Header className="bg-white py-3 sticky-top" style={{ zIndex: 1020 }}>
           <Row className="align-items-center">
             <Col md={6}>
               <h5 className="mb-0">🚨 Danh sách vi phạm giao thông</h5>
@@ -102,12 +102,7 @@ export default function ViolationsManagementPage() {
                 <option value="verified">Đã xác minh</option>
                 <option value="rejected">Từ chối</option>
               </Form.Select>
-              <Link href="/violations/management/create" passHref legacyBehavior>
-                <Button variant="primary">
-                  <i className="ri-add-line me-1"></i>
-                  Thêm vi phạm
-                </Button>
-              </Link>
+
               <Button variant="secondary" onClick={loadViolations}>
                 <i className="ri-refresh-line me-1"></i>
                 Làm mới
@@ -123,9 +118,9 @@ export default function ViolationsManagementPage() {
             </Alert>
           )}
 
-          <div className="table-responsive">
+          <div className="table-responsive" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
             <Table hover className="mb-0 align-middle">
-              <thead className="bg-light">
+              <thead className="bg-light sticky-top" style={{ zIndex: 1010 }}>
                 <tr>
                   <th className="ps-4">ID</th>
                   <th>Thời gian</th>
@@ -200,26 +195,16 @@ export default function ViolationsManagementPage() {
                           >
                             <Button variant="outline-info" size="sm">
                               <i className="ri-eye-line me-1"></i>
-                              Xem chi tiết
-                            </Button>
-                          </Link>
-                          <Link 
-                            href={`/violations/management/edit/${violation.violation_id}`} 
-                            passHref 
-                            legacyBehavior
-                          >
-                            <Button variant="outline-primary" size="sm">
-                              <i className="ri-edit-line me-1"></i>
-                              Sửa
+                              Chi tiết
                             </Button>
                           </Link>
                           <Button
                             variant="outline-danger"
                             size="sm"
                             onClick={() => handleDelete(violation.violation_id)}
+                            title="Ẩn khỏi danh sách"
                           >
-                            <i className="ri-delete-bin-line me-1"></i>
-                            Xóa
+                            🗑️
                           </Button>
                         </div>
                       </td>

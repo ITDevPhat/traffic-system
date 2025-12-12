@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Card, Row, Col, Badge, Button, Form, Alert, Spinner } from 'react-bootstrap';
+import { Card, Row, Col, Badge, Button, Form, Alert, Spinner, Modal } from 'react-bootstrap';
 import PageTitle from '@/components/PageTitle';
 import { useParams, useRouter } from 'next/navigation';
 import { toast } from 'react-toastify';
@@ -17,6 +17,7 @@ interface ViolationDetail {
   timestamp?: string;
   roi_type?: string;
   evidence_img?: string;
+  plate_img?: string;
   plate?: string;
   confidence?: number;
   verification_status: string;
@@ -69,19 +70,23 @@ export default function ViolationDetailPage() {
   
   // Image upload states
   const [plateImage, setPlateImage] = useState<string | null>(null);
-  const [locationImage, setLocationImage] = useState<string | null>(null);
-  const [evidenceImage, setEvidenceImage] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  
+  // Evidence images states
+  const [evidenceImages, setEvidenceImages] = useState<string[]>([]);
+  const [mainEvidence, setMainEvidence] = useState<string | null>(null);
+  
+  // Modal preview states
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
   
   // Violation types
   const [violationTypes, setViolationTypes] = useState<ViolationType[]>([]);
   const [loadingTypes, setLoadingTypes] = useState(false);
   
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const imageRef = useRef<HTMLImageElement>(null);
   const plateFileRef = useRef<HTMLInputElement>(null);
-  const locationFileRef = useRef<HTMLInputElement>(null);
   const evidenceFileRef = useRef<HTMLInputElement>(null);
+  const mainEvidenceFileRef = useRef<HTMLInputElement>(null);
 
   // Load violation details
   const loadViolationDetail = async () => {
@@ -97,6 +102,12 @@ export default function ViolationDetailPage() {
       const data = await response.json();
       setViolation(data);
       setEditedData(data);
+      
+      // Initialize evidence images if available
+      if (data.evidence_img) {
+        setEvidenceImages([data.evidence_img]);
+        setMainEvidence(data.evidence_img);
+      }
     } catch (err: any) {
       console.error('Error loading violation:', err);
       setError(err.message || 'Không thể tải thông tin vi phạm');
@@ -132,70 +143,29 @@ export default function ViolationDetailPage() {
     }
   }, [violationId]);
 
-  // Draw bounding boxes on canvas
-  const drawBoundingBoxes = () => {
-    if (!canvasRef.current || !imageRef.current || !violation?.bboxes) return;
 
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    const img = imageRef.current;
-
-    if (!ctx) return;
-
-    // Set canvas size to match image
-    canvas.width = img.naturalWidth;
-    canvas.height = img.naturalHeight;
-
-    // Clear canvas
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // Draw bounding boxes
-    violation.bboxes.forEach((bbox) => {
-      const { x1, y1, x2, y2, label, confidence } = bbox;
-      
-      // Choose color based on label
-      let color = '#00ff00'; // Default green
-      if (label?.includes('vehicle')) color = '#0066ff'; // Blue for vehicles
-      if (label?.includes('plate')) color = '#ff6600'; // Orange for plates
-      if (label?.includes('violation')) color = '#ff0000'; // Red for violations
-      
-      // Draw rectangle
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 3;
-      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-
-      // Draw label background
-      const labelText = `${label || 'Object'} ${confidence ? `(${(confidence * 100).toFixed(1)}%)` : ''}`;
-      ctx.font = 'bold 16px Arial';
-      const textMetrics = ctx.measureText(labelText);
-      const textWidth = textMetrics.width;
-      const textHeight = 20;
-
-      ctx.fillStyle = color;
-      ctx.fillRect(x1, y1 - textHeight - 4, textWidth + 8, textHeight + 4);
-
-      // Draw label text
-      ctx.fillStyle = '#fff';
-      ctx.fillText(labelText, x1 + 4, y1 - 8);
-    });
-  };
-
-  // Handle image load
-  const handleImageLoad = () => {
-    setTimeout(() => drawBoundingBoxes(), 100);
-  };
 
   // Handle save changes
   const handleSave = async () => {
     setSaving(true);
     
     try {
+      // Prepare data for backend
+      const saveData = {
+        ...editedData,
+        // Ensure location is properly formatted
+        location_name: editedData.location?.name || null,
+      };
+      
+      // Remove nested location object to avoid conflicts
+      delete saveData.location;
+
       const response = await fetch(`${API_URL}/api/violations/${violationId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(editedData),
+        body: JSON.stringify(saveData),
       });
 
       if (!response.ok) {
@@ -204,6 +174,7 @@ export default function ViolationDetailPage() {
 
       const updatedViolation = await response.json();
       setViolation(updatedViolation);
+      setEditedData(updatedViolation);
       setIsEditing(false);
       toast.success('Đã cập nhật thông tin vi phạm');
     } catch (err: any) {
@@ -219,12 +190,18 @@ export default function ViolationDetailPage() {
     setEditedData(violation || {});
     setIsEditing(false);
     setPlateImage(null);
-    setLocationImage(null);
-    setEvidenceImage(null);
+    // Reset evidence images to original state
+    if (violation?.evidence_img) {
+      setEvidenceImages([violation.evidence_img]);
+      setMainEvidence(violation.evidence_img);
+    } else {
+      setEvidenceImages([]);
+      setMainEvidence(null);
+    }
   };
 
   // Handle image upload
-  const handleImageUpload = async (file: File, type: 'plate' | 'location' | 'evidence') => {
+  const handleImageUpload = async (file: File, type: 'plate' | 'evidence') => {
     if (!file) return;
 
     // Validate file type
@@ -234,8 +211,8 @@ export default function ViolationDetailPage() {
     }
 
     // Validate file size (max 5MB)
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error('Kích thước file không được vượt quá 5MB');
+    if (file.size > 20 * 1024 * 1024) {
+      toast.error('Kích thước file không được vượt quá 20MB');
       return;
     }
 
@@ -245,8 +222,7 @@ export default function ViolationDetailPage() {
       // Create FormData for upload
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('type', type);
-      formData.append('violation_id', violationId);
+      formData.append('image_type', type);
 
       const response = await fetch(`${API_URL}/api/violations/${violationId}/upload-image`, {
         method: 'POST',
@@ -260,20 +236,22 @@ export default function ViolationDetailPage() {
       const result = await response.json();
       
       // Update the appropriate image state
-      switch (type) {
-        case 'plate':
-          setPlateImage(result.url);
-          break;
-        case 'location':
-          setLocationImage(result.url);
-          break;
-        case 'evidence':
-          setEvidenceImage(result.url);
-          setEditedData(prev => ({ ...prev, evidence_img: result.url }));
-          break;
+      if (type === 'plate') {
+        setPlateImage(result.url);
+        // Auto OCR for plate image
+        if (result.url) {
+          performOCR(result.url);
+        }
+      } else if (type === 'evidence') {
+        // Add to evidence images
+        setEvidenceImages(prev => [...prev, result.url]);
+        // Set as main evidence if no main evidence exists
+        if (!mainEvidence) {
+          setMainEvidence(result.url);
+        }
       }
 
-      toast.success(`Đã upload ${type === 'plate' ? 'ảnh biển số' : type === 'location' ? 'ảnh địa điểm' : 'ảnh bằng chứng'} thành công`);
+      toast.success(`Đã upload ${type === 'plate' ? 'ảnh biển số' : 'ảnh bằng chứng'} thành công`);
     } catch (err: any) {
       console.error('Upload error:', err);
       toast.error('Không thể upload hình ảnh');
@@ -282,11 +260,191 @@ export default function ViolationDetailPage() {
     }
   };
 
+  // Handle multiple evidence images upload
+  const handleEvidenceUpload = async (files: FileList) => {
+    if (!files || files.length === 0) return;
+
+    // Check total limit
+    if (files.length + evidenceImages.length > 5) {
+      toast.error('Tối đa 5 ảnh bằng chứng');
+      return;
+    }
+
+    setUploading(true);
+    const uploadedUrls: string[] = [];
+
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        
+        // Validate file type
+        if (!file.type.startsWith('image/')) {
+          toast.error(`File ${file.name} không phải là hình ảnh`);
+          continue;
+        }
+
+        // Validate file size (max 20MB)
+        if (file.size > 20 * 1024 * 1024) {
+          toast.error(`File ${file.name} vượt quá 20MB`);
+          continue;
+        }
+
+        // Create FormData for upload
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('image_type', 'evidence');
+
+        const response = await fetch(`${API_URL}/api/violations/${violationId}/upload-image`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          uploadedUrls.push(result.url);
+        }
+      }
+
+      if (uploadedUrls.length > 0) {
+        setEvidenceImages(prev => [...prev, ...uploadedUrls]);
+        
+        // Set first uploaded image as main evidence if no main evidence exists
+        if (!mainEvidence) {
+          setMainEvidence(uploadedUrls[0]);
+        }
+        
+        toast.success(`Đã upload ${uploadedUrls.length} ảnh bằng chứng thành công`);
+      }
+    } catch (err: any) {
+      console.error('Evidence upload error:', err);
+      toast.error('Không thể upload ảnh bằng chứng');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   // Handle file input change
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, type: 'plate' | 'location' | 'evidence') => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      handleImageUpload(file, type);
+      handleImageUpload(file, 'plate');
+    }
+  };
+
+  // Handle evidence file input change
+  const handleEvidenceFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files) {
+      handleEvidenceUpload(files);
+    }
+  };
+
+  // Handle main evidence file input change
+  const handleMainEvidenceFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      handleImageUpload(file, 'evidence');
+    }
+  };
+
+  // Handle delete evidence image
+  const handleDeleteEvidenceImage = async (imageUrl: string) => {
+    if (!confirm('Bạn có chắc chắn muốn xóa ảnh này không?')) {
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const response = await fetch(`${API_URL}/api/violations/${violationId}/delete-image?image_url=${encodeURIComponent(imageUrl)}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        // Remove from evidence images
+        setEvidenceImages(prev => prev.filter(img => img !== imageUrl));
+        
+        // If deleted image was main evidence, set new main evidence
+        if (mainEvidence === imageUrl) {
+          const remainingImages = evidenceImages.filter(img => img !== imageUrl);
+          setMainEvidence(remainingImages.length > 0 ? remainingImages[0] : null);
+        }
+        
+        toast.success('Đã xóa ảnh bằng chứng thành công');
+      } else {
+        throw new Error('Không thể xóa ảnh');
+      }
+    } catch (err: any) {
+      console.error('Delete evidence image error:', err);
+      toast.error('Không thể xóa ảnh bằng chứng');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // Handle delete plate image
+  const handleDeletePlateImage = async () => {
+    if (!plateImage || !confirm('Bạn có chắc chắn muốn xóa ảnh biển số này không?')) {
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const response = await fetch(`${API_URL}/api/violations/${violationId}/delete-image?image_url=${encodeURIComponent(plateImage)}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        setPlateImage(null);
+        toast.success('Đã xóa ảnh biển số thành công');
+      } else {
+        throw new Error('Không thể xóa ảnh');
+      }
+    } catch (err: any) {
+      console.error('Delete plate image error:', err);
+      toast.error('Không thể xóa ảnh biển số');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+
+
+
+
+  // Perform OCR on plate image
+  const performOCR = async (imageUrl: string) => {
+    try {
+      // Tải ảnh và chuyển thành FormData
+      const imageResponse = await fetch(`${API_URL}${imageUrl}`);
+      if (!imageResponse.ok) return;
+      
+      const imageBlob = await imageResponse.blob();
+      const formData = new FormData();
+      formData.append('file', imageBlob, 'plate.jpg');
+      formData.append('confidence_threshold', '0.5');
+
+      const response = await fetch(`${API_URL}/api/ocr/image`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (response.ok) {
+        const ocrResult = await response.json();
+        if (ocrResult.success && ocrResult.plates && ocrResult.plates.length > 0) {
+          const bestPlate = ocrResult.plates[0];
+          if (bestPlate.text && bestPlate.text !== 'unknown') {
+            setEditedData(prev => ({ 
+              ...prev, 
+              plate: bestPlate.text,
+              confidence: bestPlate.confidence 
+            }));
+            toast.success(`Đã nhận diện biển số: ${bestPlate.text}`);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('OCR error:', err);
+      // Không hiển thị lỗi OCR để không làm phiền user
     }
   };
 
@@ -383,7 +541,7 @@ export default function ViolationDetailPage() {
           <Col>
             <Card className="shadow-lg border-danger">
               <Card.Header className="bg-danger text-white text-center py-4">
-                <h2 className="mb-1 fw-bold">🚨 HỆ THỐNG GIÁM SÁT TRẬT TỰ GIAO THÔNG</h2>
+                <h2 className="mb-1 fw-bold">HỆ THỐNG GIÁM SÁT TRẬT TỰ GIAO THÔNG</h2>
                 <h3 className="mb-0 fw-bold">ĐƯỜNG BỘ BẰNG HÌNH ẢNH</h3>
               </Card.Header>
               <Card.Body className="p-4">
@@ -487,60 +645,27 @@ export default function ViolationDetailPage() {
                     {/* Location */}
                     <div className="mb-4">
                       <label className="form-label fw-bold fs-5 text-info">Địa điểm vi phạm:</label>
-                      <div className="d-flex align-items-start gap-3">
-                        <div className="flex-grow-1">
-                          <div className="fw-bold text-info fs-4">
-                            {violation.location?.name || 'UNKNOWN'}
-                          </div>
-                          {violation.location?.address && (
-                            <div className="text-muted fs-6 mt-1">
-                              {violation.location.address}
-                            </div>
-                          )}
+                      {isEditing ? (
+                        <Form.Control
+                          type="text"
+                          value={editedData.location?.name || ''}
+                          onChange={(e) => setEditedData({
+                            ...editedData, 
+                            location: { ...editedData.location, name: e.target.value }
+                          })}
+                          placeholder="Nhập địa điểm vi phạm..."
+                          className="fs-5"
+                        />
+                      ) : (
+                        <div className="fw-bold text-info fs-4">
+                          {violation.location?.name || 'UNKNOWN'}
                         </div>
-                        
-                        {/* Location Image */}
-                        <div className="text-center">
-                          <div 
-                            className="border rounded p-2 mb-2 bg-light"
-                            style={{ width: '120px', height: '80px', cursor: 'pointer' }}
-                            onClick={() => locationFileRef.current?.click()}
-                          >
-                            {locationImage ? (
-                              <img 
-                                src={locationImage} 
-                                alt="Location" 
-                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                className="rounded"
-                              />
-                            ) : (
-                              <div className="d-flex align-items-center justify-content-center h-100">
-                                <div className="text-center">
-                                  <i className="ri-map-pin-add-line fs-4 text-muted"></i>
-                                  <div className="small text-muted">Ảnh địa điểm</div>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                          {isEditing && (
-                            <Button 
-                              size="sm" 
-                              variant="outline-info"
-                              onClick={() => locationFileRef.current?.click()}
-                              disabled={uploading}
-                            >
-                              {uploading ? <Spinner size="sm" /> : '📍'} Upload
-                            </Button>
-                          )}
-                          <input
-                            ref={locationFileRef}
-                            type="file"
-                            accept="image/*"
-                            style={{ display: 'none' }}
-                            onChange={(e) => handleFileChange(e, 'location')}
-                          />
+                      )}
+                      {violation.location?.address && (
+                        <div className="text-muted fs-6 mt-1">
+                          {violation.location.address}
                         </div>
-                      </div>
+                      )}
                     </div>
 
                     {/* Direction */}
@@ -566,73 +691,156 @@ export default function ViolationDetailPage() {
                     {/* License Plate */}
                     <div className="mb-4">
                       <label className="form-label fw-bold fs-5 text-dark">Biển số xe vi phạm:</label>
-                      <div className="d-flex align-items-start gap-3">
-                        <div className="flex-grow-1">
-                          {isEditing ? (
-                            <Form.Control
-                              type="text"
-                              value={editedData.plate || ''}
-                              onChange={(e) => setEditedData({...editedData, plate: e.target.value})}
-                              placeholder="Nhập biển số xe..."
-                              className="text-uppercase fs-5"
+                      {isEditing ? (
+                        <div className="d-flex align-items-center gap-3">
+                          <Form.Control
+                            type="text"
+                            value={editedData.plate || ''}
+                            onChange={(e) => setEditedData({...editedData, plate: e.target.value})}
+                            placeholder="Nhập biển số xe..."
+                            className="text-uppercase fs-5"
+                            style={{ flex: 1 }}
+                          />
+                          {(plateImage || violation.plate_img) && (
+                            <img
+                              src={`${API_URL}${plateImage || violation.plate_img}`}
+                              alt="License plate"
+                              style={{
+                                width: '160px',
+                                height: 'auto',
+                                border: '2px solid #000',
+                                borderRadius: '6px',
+                                objectFit: 'contain',
+                                cursor: 'pointer'
+                              }}
+                              onClick={() => {
+                                setPreviewImage(`${API_URL}${plateImage || violation.plate_img}`);
+                                setPreviewOpen(true);
+                              }}
+                              onError={(e) => {
+                                e.currentTarget.style.display = 'none';
+                              }}
                             />
-                          ) : (
-                            <div>
-                              <Badge bg="dark" className="fs-3 px-4 py-3 mb-2">
-                                {violation.plate || 'UNKNOWN'}
-                              </Badge>
-                              {violation.confidence && (
-                                <div className="text-muted fs-6 mt-2">
-                                  <strong>Độ tin cậy OCR:</strong> {(violation.confidence * 100).toFixed(1)}%
-                                </div>
-                              )}
-                            </div>
                           )}
                         </div>
-                        
-                        {/* Plate Image */}
-                        <div className="text-center">
-                          <div 
-                            className="border rounded p-2 mb-2 bg-light"
-                            style={{ width: '120px', height: '60px', cursor: 'pointer' }}
-                            onClick={() => plateFileRef.current?.click()}
-                          >
-                            {plateImage ? (
-                              <img 
-                                src={plateImage} 
-                                alt="Plate" 
-                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                                className="rounded"
-                              />
-                            ) : (
-                              <div className="d-flex align-items-center justify-content-center h-100">
-                                <div className="text-center">
-                                  <i className="ri-image-add-line fs-4 text-muted"></i>
-                                  <div className="small text-muted">Ảnh biển số</div>
-                                </div>
+                      ) : (
+                        <div className="d-flex align-items-center gap-3">
+                          <div>
+                            <Badge bg="dark" className="fs-3 px-4 py-3 mb-2">
+                              {violation.plate || 'UNKNOWN'}
+                            </Badge>
+                            {violation.confidence && (
+                              <div className="text-muted fs-6 mt-2">
+                                <strong>Độ tin cậy OCR:</strong> {(violation.confidence * 100).toFixed(1)}%
                               </div>
                             )}
                           </div>
-                          {isEditing && (
-                            <Button 
-                              size="sm" 
-                              variant="outline-primary"
-                              onClick={() => plateFileRef.current?.click()}
-                              disabled={uploading}
-                            >
-                              {uploading ? <Spinner size="sm" /> : '📷'} Upload
-                            </Button>
+                          {(plateImage || violation.plate_img) && (
+                            <img
+                              src={`${API_URL}${plateImage || violation.plate_img}`}
+                              alt="License plate"
+                              style={{
+                                width: '160px',
+                                height: 'auto',
+                                border: '2px solid #000',
+                                borderRadius: '6px',
+                                objectFit: 'contain',
+                                cursor: 'pointer'
+                              }}
+                              onClick={() => {
+                                setPreviewImage(`${API_URL}${plateImage || violation.plate_img}`);
+                                setPreviewOpen(true);
+                              }}
+                              onError={(e) => {
+                                e.currentTarget.style.display = 'none';
+                              }}
+                            />
                           )}
-                          <input
-                            ref={plateFileRef}
-                            type="file"
-                            accept="image/*"
-                            style={{ display: 'none' }}
-                            onChange={(e) => handleFileChange(e, 'plate')}
-                          />
                         </div>
-                      </div>
+                      )}
                     </div>
+
+                    {/* License Plate Image Section - Only show in edit mode */}
+                    {isEditing && (
+                      <div className="mb-4">
+                        <Card className="border-primary">
+                          <Card.Header className="bg-primary text-white py-2">
+                            <h6 className="mb-0">🚗 Hình ảnh biển số xe (đã cắt)</h6>
+                          </Card.Header>
+                          <Card.Body className="p-3">
+                            {plateImage ? (
+                              <div className="text-center">
+                                <img
+                                  src={`${API_URL}${plateImage}`}
+                                  alt="License plate"
+                                  style={{
+                                    maxWidth: '100%',
+                                    maxHeight: '150px',
+                                    borderRadius: '8px',
+                                    border: '2px solid #0d6efd',
+                                    objectFit: 'contain',
+                                    boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                                  }}
+                                  onError={(e) => {
+                                    console.error('Plate image load error:', plateImage);
+                                    e.currentTarget.style.display = 'none';
+                                  }}
+                                />
+                                <div className="mt-2">
+                                  <Badge bg="success" className="px-2 py-1">
+                                    ✅ Đã có ảnh biển số
+                                  </Badge>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="text-center py-3">
+                                <div style={{ fontSize: '48px', opacity: 0.3 }}>🚗</div>
+                                <p className="text-muted mb-2">Chưa có ảnh biển số</p>
+                                <Button
+                                  variant="outline-primary"
+                                  size="sm"
+                                  onClick={() => plateFileRef.current?.click()}
+                                  disabled={uploading}
+                                >
+                                  {uploading ? <Spinner size="sm" /> : '📤'} Upload ảnh biển số
+                                </Button>
+                              </div>
+                            )}
+                            
+                            {/* Upload Button for existing image */}
+                            {plateImage && (
+                              <div className="text-center mt-2 d-flex gap-2 justify-content-center">
+                                <Button
+                                  variant="outline-primary"
+                                  size="sm"
+                                  onClick={() => plateFileRef.current?.click()}
+                                  disabled={uploading}
+                                >
+                                  {uploading ? <Spinner size="sm" /> : '🔄'} Thay đổi
+                                </Button>
+                                <Button
+                                  variant="outline-danger"
+                                  size="sm"
+                                  onClick={handleDeletePlateImage}
+                                  disabled={uploading}
+                                >
+                                  {uploading ? <Spinner size="sm" /> : '🗑️'} Xóa
+                                </Button>
+                              </div>
+                            )}
+                            
+                            {/* Hidden file input for plate */}
+                            <input
+                              ref={plateFileRef}
+                              type="file"
+                              accept="image/*"
+                              style={{ display: 'none' }}
+                              onChange={handleFileChange}
+                            />
+                          </Card.Body>
+                        </Card>
+                      </div>
+                    )}
 
                     {/* Operating Unit */}
                     <div className="mb-4">
@@ -719,102 +927,390 @@ export default function ViolationDetailPage() {
           </Col>
         </Row>
 
-        {/* Evidence Image - Bottom */}
-        <Row>
+        {/* Evidence Gallery */}
+        <Row className="mb-4">
           <Col>
-            <Card className="shadow-lg">
-              <Card.Header className="bg-danger text-white d-flex justify-content-between align-items-center">
-                <h4 className="mb-0">📸 Các hình bằng chứng vi phạm</h4>
+            <Card className="shadow-sm">
+              <Card.Header className="bg-warning text-dark d-flex justify-content-between align-items-center">
+                <h5 className="mb-0">📸 Bằng chứng vi phạm (tối đa 5 ảnh)</h5>
                 {isEditing && (
-                  <Button 
-                    variant="light" 
-                    size="sm"
-                    onClick={() => evidenceFileRef.current?.click()}
-                    disabled={uploading}
-                  >
-                    {uploading ? <Spinner size="sm" /> : '📤'} Upload Ảnh Mới
-                  </Button>
+                  <div className="d-flex gap-2">
+                    <Button
+                      variant="outline-dark"
+                      size="sm"
+                      onClick={() => mainEvidenceFileRef.current?.click()}
+                      disabled={uploading || evidenceImages.length >= 5}
+                    >
+                      {uploading ? <Spinner size="sm" /> : '📤'} Upload ảnh chính
+                    </Button>
+                    <Button
+                      variant="outline-dark"
+                      size="sm"
+                      onClick={() => evidenceFileRef.current?.click()}
+                      disabled={uploading || evidenceImages.length >= 5}
+                    >
+                      {uploading ? <Spinner size="sm" /> : '📤'} Upload nhiều ảnh
+                    </Button>
+                  </div>
                 )}
               </Card.Header>
-              <Card.Body className="p-0">
-                <div 
-                  style={{
-                    position: 'relative',
-                    backgroundColor: '#000',
-                    minHeight: '500px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}
-                >
-                  {(evidenceImage || violation.evidence_img) ? (
-                    <div style={{ position: 'relative', width: '100%' }}>
-                      <img
-                        ref={imageRef}
-                        src={evidenceImage || `${API_URL}${violation.evidence_img}`}
-                        alt="Evidence"
-                        style={{
-                          maxWidth: '100%',
-                          maxHeight: '700px',
-                          width: '100%',
-                          height: 'auto',
-                          objectFit: 'contain',
-                          display: 'block'
-                        }}
-                        onLoad={handleImageLoad}
-                        onError={(e) => {
-                          console.error('Image load error:', e);
-                          toast.error('Không thể tải hình ảnh bằng chứng');
-                        }}
-                      />
-                      
-                      {/* Canvas overlay for bounding boxes */}
-                      <canvas
-                        ref={canvasRef}
-                        style={{
-                          position: 'absolute',
-                          top: 0,
-                          left: 0,
-                          width: '100%',
-                          height: '100%',
-                          objectFit: 'contain',
-                          pointerEvents: 'none'
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    <div 
-                      className="text-center text-white p-5"
-                      style={{ cursor: isEditing ? 'pointer' : 'default' }}
-                      onClick={isEditing ? () => evidenceFileRef.current?.click() : undefined}
-                    >
-                      <div style={{ fontSize: '64px', marginBottom: '16px' }}>📷</div>
-                      <h5>Không có hình ảnh bằng chứng</h5>
-                      <p className="text-muted">
-                        {isEditing ? 'Nhấn để upload hình ảnh bằng chứng' : 'Chưa có hình ảnh được lưu cho vi phạm này'}
-                      </p>
-                      {isEditing && (
-                        <Button variant="outline-light" className="mt-3">
-                          📤 Upload Hình Ảnh
+              <Card.Body>
+                {evidenceImages.length > 0 ? (
+                  <>
+                    {evidenceImages.length === 1 ? (
+                      // Single image - display centered
+                      <div className="text-center">
+                        <img
+                          src={`${API_URL}${mainEvidence}`}
+                          alt="Evidence"
+                          style={{
+                            maxWidth: '100%',
+                            maxHeight: '500px',
+                            objectFit: 'contain',
+                            border: '3px solid #ffc107',
+                            borderRadius: '8px',
+                            cursor: 'pointer',
+                            boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+                          }}
+                          onClick={() => {
+                            setPreviewImage(`${API_URL}${mainEvidence}`);
+                            setPreviewOpen(true);
+                          }}
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none';
+                          }}
+                        />
+                        <div className="mt-3 d-flex justify-content-center align-items-center gap-2">
+                          <Badge bg="warning" text="dark" className="px-3 py-2">
+                            ⭐ Ảnh bằng chứng vi phạm
+                          </Badge>
+                          {isEditing && (
+                            <Button
+                              variant="outline-danger"
+                              size="sm"
+                              onClick={() => mainEvidence && handleDeleteEvidenceImage(mainEvidence)}
+                              title="Xóa ảnh"
+                            >
+                              🗑️ Xóa
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    ) : evidenceImages.length === 2 ? (
+                      // Two images - display side by side
+                      <Row>
+                        <Col md={6}>
+                          <div className="text-center">
+                            <img
+                              src={`${API_URL}${mainEvidence}`}
+                              alt="Main evidence"
+                              style={{
+                                width: '100%',
+                                maxHeight: '300px',
+                                objectFit: 'contain',
+                                border: '3px solid #ffc107',
+                                borderRadius: '8px',
+                                cursor: 'pointer',
+                                boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+                              }}
+                              onClick={() => {
+                                setPreviewImage(`${API_URL}${mainEvidence}`);
+                                setPreviewOpen(true);
+                              }}
+                              onError={(e) => {
+                                e.currentTarget.style.display = 'none';
+                              }}
+                            />
+                            <div className="mt-2 d-flex justify-content-center align-items-center gap-2">
+                              <Badge bg="warning" text="dark" className="px-2 py-1">
+                                ⭐ Ảnh chính (toàn cục)
+                              </Badge>
+                              {isEditing && (
+                                <Button
+                                  variant="outline-danger"
+                                  size="sm"
+                                  onClick={() => mainEvidence && handleDeleteEvidenceImage(mainEvidence)}
+                                  title="Xóa ảnh chính"
+                                >
+                                  🗑️ Xóa
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        </Col>
+                        <Col md={6}>
+                          {evidenceImages.filter(img => img !== mainEvidence).map((img, index) => (
+                            <div key={index} className="text-center position-relative">
+                              <img
+                                src={`${API_URL}${img}`}
+                                alt="Secondary evidence"
+                                style={{
+                                  width: '100%',
+                                  maxHeight: '300px',
+                                  objectFit: 'contain',
+                                  border: '2px solid #dee2e6',
+                                  borderRadius: '8px',
+                                  cursor: 'pointer',
+                                  boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                                }}
+                                onClick={() => {
+                                  setPreviewImage(`${API_URL}${img}`);
+                                  setPreviewOpen(true);
+                                }}
+                                onError={(e) => {
+                                  e.currentTarget.style.display = 'none';
+                                }}
+                              />
+                              <div className="mt-2 d-flex justify-content-center align-items-center gap-2">
+                                <Badge bg="secondary" className="px-2 py-1">
+                                  📷 Ảnh phụ (chi tiết)
+                                </Badge>
+                                {isEditing && (
+                                  <div className="d-flex gap-1">
+                                    <Button
+                                      variant="outline-primary"
+                                      size="sm"
+                                      onClick={() => setMainEvidence(img)}
+                                      title="Đặt làm ảnh chính"
+                                    >
+                                      ⭐
+                                    </Button>
+                                    <Button
+                                      variant="outline-danger"
+                                      size="sm"
+                                      onClick={() => handleDeleteEvidenceImage(img)}
+                                      title="Xóa ảnh"
+                                    >
+                                      🗑️
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </Col>
+                      </Row>
+                    ) : (
+                      // Multiple images - original layout
+                      <Row>
+                        {/* Main Evidence Image - 65% width */}
+                        <Col md={8}>
+                          {mainEvidence && (
+                            <div className="text-center">
+                              <img
+                                src={`${API_URL}${mainEvidence}`}
+                                alt="Main evidence"
+                                style={{
+                                  width: '100%',
+                                  maxHeight: '400px',
+                                  objectFit: 'contain',
+                                  border: '3px solid #ffc107',
+                                  borderRadius: '8px',
+                                  cursor: 'pointer',
+                                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+                                }}
+                                onClick={() => {
+                                  setPreviewImage(`${API_URL}${mainEvidence}`);
+                                  setPreviewOpen(true);
+                                }}
+                                onError={(e) => {
+                                  e.currentTarget.style.display = 'none';
+                                }}
+                              />
+                              <div className="mt-2 d-flex justify-content-center align-items-center gap-2">
+                                <Badge bg="warning" text="dark" className="px-2 py-1">
+                                  ⭐ Ảnh chính (toàn cục)
+                                </Badge>
+                                {isEditing && (
+                                  <Button
+                                    variant="outline-danger"
+                                    size="sm"
+                                    onClick={() => mainEvidence && handleDeleteEvidenceImage(mainEvidence)}
+                                    title="Xóa ảnh chính"
+                                  >
+                                    🗑️ Xóa
+                                  </Button>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </Col>
+                        
+                        {/* Secondary Evidence Images - 35% width */}
+                        <Col md={4}>
+                          <div className="d-flex flex-column gap-2">
+                            {evidenceImages
+                              .filter(img => img !== mainEvidence)
+                              .slice(0, 4)
+                              .map((img, index) => (
+                                <div key={index} className="position-relative">
+                                  <img
+                                    src={`${API_URL}${img}`}
+                                    alt={`Evidence ${index + 1}`}
+                                    style={{
+                                      width: '100%',
+                                      height: '90px',
+                                      objectFit: 'cover',
+                                      border: '2px solid #dee2e6',
+                                      borderRadius: '6px',
+                                      cursor: 'pointer'
+                                    }}
+                                    onClick={() => {
+                                      setPreviewImage(`${API_URL}${img}`);
+                                      setPreviewOpen(true);
+                                    }}
+                                    onError={(e) => {
+                                      e.currentTarget.style.display = 'none';
+                                    }}
+                                  />
+                                  <div className="position-absolute bottom-0 start-0 m-1">
+                                    <Badge bg="secondary" style={{ fontSize: '10px' }}>
+                                      📷 Chi tiết {index + 1}
+                                    </Badge>
+                                  </div>
+                                  {isEditing && (
+                                    <div className="position-absolute top-0 end-0 m-1 d-flex gap-1">
+                                      <Button
+                                        variant="outline-primary"
+                                        size="sm"
+                                        style={{ fontSize: '10px', padding: '2px 6px' }}
+                                        onClick={() => setMainEvidence(img)}
+                                        title="Đặt làm ảnh chính"
+                                      >
+                                        ⭐
+                                      </Button>
+                                      <Button
+                                        variant="outline-danger"
+                                        size="sm"
+                                        style={{ fontSize: '10px', padding: '2px 6px' }}
+                                        onClick={() => handleDeleteEvidenceImage(img)}
+                                        title="Xóa ảnh"
+                                      >
+                                        🗑️
+                                      </Button>
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            
+                            {/* Empty slots for remaining images - only show in edit mode */}
+                            {isEditing && Array.from({ length: Math.max(0, 4 - evidenceImages.filter(img => img !== mainEvidence).length) }).map((_, index) => (
+                              <div
+                                key={`empty-${index}`}
+                                style={{
+                                  width: '100%',
+                                  height: '90px',
+                                  border: '2px dashed #dee2e6',
+                                  borderRadius: '6px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  backgroundColor: '#f8f9fa'
+                                }}
+                              >
+                                <span className="text-muted" style={{ fontSize: '12px' }}>
+                                  Ảnh phụ {evidenceImages.filter(img => img !== mainEvidence).length + index + 1}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </Col>
+                      </Row>
+                    )}
+                  </>
+                ) : (
+                  <div className="text-center py-5">
+                    <div style={{ fontSize: '64px', opacity: 0.3 }}>📸</div>
+                    <h5 className="text-muted mb-3">Chưa có ảnh bằng chứng vi phạm</h5>
+                    <p className="text-muted mb-3">
+                      Ảnh chính thường là ảnh toàn cục video vi phạm<br />
+                      Ảnh phụ là ảnh được cắt nhỏ ra (chi tiết)
+                    </p>
+                    {isEditing && (
+                      <div className="d-flex gap-2 justify-content-center">
+                        <Button
+                          variant="outline-warning"
+                          onClick={() => mainEvidenceFileRef.current?.click()}
+                          disabled={uploading}
+                        >
+                          {uploading ? <Spinner size="sm" /> : '📤'} Upload ảnh chính
                         </Button>
-                      )}
-                    </div>
-                  )}
-                </div>
+                        <Button
+                          variant="outline-secondary"
+                          onClick={() => evidenceFileRef.current?.click()}
+                          disabled={uploading}
+                        >
+                          {uploading ? <Spinner size="sm" /> : '📤'} Upload nhiều ảnh
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
                 
-                {/* Hidden file input */}
+                {/* Upload progress info */}
+                {isEditing && evidenceImages.length > 0 && (
+                  <div className="mt-3 text-center">
+                    <small className="text-muted">
+                      Đã có {evidenceImages.length}/5 ảnh bằng chứng
+                      {evidenceImages.length >= 5 && (
+                        <span className="text-warning ms-2">⚠️ Đã đạt giới hạn tối đa</span>
+                      )}
+                    </small>
+                  </div>
+                )}
+                
+                {/* Hidden file input for evidence */}
                 <input
                   ref={evidenceFileRef}
                   type="file"
                   accept="image/*"
+                  multiple
                   style={{ display: 'none' }}
-                  onChange={(e) => handleFileChange(e, 'evidence')}
+                  onChange={handleEvidenceFileChange}
+                />
+                
+                {/* Hidden file input for main evidence */}
+                <input
+                  ref={mainEvidenceFileRef}
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={handleMainEvidenceFileChange}
                 />
               </Card.Body>
             </Card>
           </Col>
         </Row>
+
+
       </div>
+
+      {/* Image Preview Modal */}
+      <Modal 
+        show={previewOpen} 
+        onHide={() => setPreviewOpen(false)} 
+        centered 
+        size="xl"
+        className="image-preview-modal"
+      >
+        <Modal.Header closeButton className="border-0">
+          <Modal.Title>Xem ảnh chi tiết</Modal.Title>
+        </Modal.Header>
+        <Modal.Body className="text-center p-0">
+          {previewImage && (
+            <img 
+              src={previewImage} 
+              alt="Preview" 
+              style={{ 
+                width: '100%', 
+                height: 'auto',
+                maxHeight: '80vh',
+                objectFit: 'contain'
+              }} 
+            />
+          )}
+        </Modal.Body>
+      </Modal>
     </>
   );
 }

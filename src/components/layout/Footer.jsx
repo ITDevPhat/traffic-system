@@ -10,7 +10,7 @@ const Footer = () => {
         <Col xs={12} className="text-center">
           {currentYear}
           <Link href="" className="fw-bold footer-text" target="_blank">
-            Techzaa
+            ITDevPhat
           </Link>
         </Col>
       </Row>

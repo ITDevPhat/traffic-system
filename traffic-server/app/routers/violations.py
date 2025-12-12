@@ -28,9 +28,15 @@ class ViolationCreate(BaseModel):
     verified_source: str = "manual"
 
 
+class LocationUpdate(BaseModel):
+    """Schema để cập nhật thông tin địa điểm"""
+    name: Optional[str] = None
+    address: Optional[str] = None
+
+
 class ViolationUpdate(BaseModel):
     """Schema để cập nhật vi phạm"""
-    video_job_id: int
+    video_job_id: Optional[int] = None
     vehicle_id: Optional[int] = None
     violation_type_code: Optional[str] = None
     frame: Optional[int] = None
@@ -40,10 +46,11 @@ class ViolationUpdate(BaseModel):
     plate: Optional[str] = None
     confidence: Optional[float] = None
     model_id: Optional[int] = None
-    verification_status: str
+    verification_status: Optional[str] = None
     verified_by: Optional[int] = None
-    verified_source: str
+    verified_source: Optional[str] = None
     verified_at: Optional[datetime] = None
+    location: Optional[LocationUpdate] = None
 
 
 @router.get("/", response_model=List[Violation])
@@ -239,44 +246,71 @@ async def update_violation(
     if not violation:
         raise HTTPException(status_code=404, detail="Không tìm thấy vi phạm")
     
-    # Validate verification_status
-    valid_statuses = ['unverified', 'verified', 'rejected']
-    if violation_data.verification_status not in valid_statuses:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Trạng thái xác minh phải là một trong: {', '.join(valid_statuses)}"
-        )
+    # Validate verification_status if provided
+    if violation_data.verification_status is not None:
+        valid_statuses = ['unverified', 'verified', 'rejected']
+        if violation_data.verification_status not in valid_statuses:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Trạng thái xác minh phải là một trong: {', '.join(valid_statuses)}"
+            )
     
-    # Validate verified_source
-    valid_sources = ['manual', 'ai', 'external']
-    if violation_data.verified_source not in valid_sources:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Nguồn xác minh phải là một trong: {', '.join(valid_sources)}"
-        )
+    # Validate verified_source if provided
+    if violation_data.verified_source is not None:
+        valid_sources = ['manual', 'ai', 'external']
+        if violation_data.verified_source not in valid_sources:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Nguồn xác minh phải là một trong: {', '.join(valid_sources)}"
+            )
     
-    # Validate confidence
+    # Validate confidence if provided
     if violation_data.confidence is not None and not (0 <= violation_data.confidence <= 1):
         raise HTTPException(
             status_code=400,
             detail="Độ tin cậy phải từ 0 đến 1"
         )
     
-    # Cập nhật
-    violation.video_job_id = violation_data.video_job_id
-    violation.vehicle_id = violation_data.vehicle_id
-    violation.violation_type_code = violation_data.violation_type_code
-    violation.frame = violation_data.frame
-    violation.timestamp = violation_data.timestamp
-    violation.roi_type = violation_data.roi_type
-    violation.evidence_img = violation_data.evidence_img
-    violation.plate = violation_data.plate
-    violation.confidence = violation_data.confidence
-    violation.model_id = violation_data.model_id
-    violation.verification_status = violation_data.verification_status
-    violation.verified_by = violation_data.verified_by
-    violation.verified_source = violation_data.verified_source
-    violation.verified_at = violation_data.verified_at
+    # Cập nhật chỉ các field có giá trị
+    update_data = violation_data.model_dump(exclude_unset=True)
+    
+    # Handle location update separately
+    location_update = update_data.pop('location', None)
+    
+    # Update violation fields
+    for field, value in update_data.items():
+        if value is not None:
+            setattr(violation, field, value)
+    
+    # Handle location update if provided
+    if location_update:
+        from app.models.video_job import VideoJob
+        from app.models.camera import Camera
+        from app.models.location import Location
+        
+        # Get the location through video_job -> camera -> location
+        video_job = session.exec(
+            select(VideoJob).where(VideoJob.video_job_id == violation.video_job_id)
+        ).first()
+        
+        if video_job and video_job.camera_id:
+            camera = session.exec(
+                select(Camera).where(Camera.camera_id == video_job.camera_id)
+            ).first()
+            
+            if camera and camera.location_id:
+                location = session.exec(
+                    select(Location).where(Location.location_id == camera.location_id)
+                ).first()
+                
+                if location:
+                    # Update location fields
+                    if location_update.get('name') is not None:
+                        location.name = location_update['name']
+                    if location_update.get('address') is not None:
+                        location.address = location_update['address']
+                    
+                    session.add(location)
     
     session.add(violation)
     session.commit()
@@ -302,6 +336,57 @@ async def delete_violation(
     session.commit()
     
     return {"message": "Đã xóa vi phạm thành công", "violation_id": violation_id}
+
+
+@router.delete("/{violation_id}/delete-image")
+async def delete_violation_image(
+    violation_id: int,
+    image_url: str = Query(..., description="URL của ảnh cần xóa"),
+    session: Session = Depends(get_session)
+):
+    """Xóa hình ảnh của vi phạm."""
+    
+    # Validate violation exists
+    violation = session.exec(
+        select(Violation).where(Violation.violation_id == violation_id)
+    ).first()
+    
+    if not violation:
+        raise HTTPException(status_code=404, detail="Không tìm thấy vi phạm")
+    
+    try:
+        # Extract filename from URL
+        # URL format: /static/violations/{violation_id}/{filename}
+        if not image_url.startswith('/static/violations/'):
+            raise HTTPException(status_code=400, detail="URL ảnh không hợp lệ")
+        
+        # Get file path
+        from app.core.config import settings
+        static_base = Path(settings.STATIC_DIR)
+        
+        # Remove /static/ prefix and construct file path
+        relative_path = image_url.replace('/static/', '')
+        file_path = static_base / relative_path
+        
+        # Check if file exists and delete
+        if file_path.exists():
+            file_path.unlink()
+            
+        # If this was the main evidence image, clear it from violation
+        if violation.evidence_img == image_url:
+            violation.evidence_img = None
+            session.add(violation)
+            session.commit()
+            session.refresh(violation)
+        
+        return {
+            "ok": True,
+            "message": "Đã xóa ảnh thành công",
+            "deleted_url": image_url
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi xóa file: {str(e)}")
 
 
 @router.post("/{violation_id}/upload-image")
@@ -333,13 +418,16 @@ async def upload_violation_image(
     if not file.content_type or not file.content_type.startswith('image/'):
         raise HTTPException(status_code=400, detail="File phải là hình ảnh")
     
-    # Validate file size (max 5MB)
-    if file.size and file.size > 5 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Kích thước file không được vượt quá 5MB")
+    # Validate file size (max 20MB)
+    if file.size and file.size > 20 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Kích thước file không được vượt quá 20MB")
     
     try:
-        # Create upload directory if not exists
-        upload_dir = Path("uploads") / "violations" / str(violation_id)
+        # Use static directory for uploads
+        from app.core.config import settings
+        # Tạo thư mục trong STATIC_DIR
+        static_base = Path(settings.STATIC_DIR)
+        upload_dir = static_base / "violations" / str(violation_id)
         upload_dir.mkdir(parents=True, exist_ok=True)
         
         # Generate unique filename
@@ -353,7 +441,7 @@ async def upload_violation_image(
             buffer.write(content)
         
         # Generate URL path
-        url_path = f"/uploads/violations/{violation_id}/{unique_filename}"
+        url_path = f"/static/violations/{violation_id}/{unique_filename}"
         
         # Update violation if it's evidence image
         if image_type == 'evidence':

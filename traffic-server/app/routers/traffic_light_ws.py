@@ -624,16 +624,13 @@ async def ws_traffic_light_realtime(
                                 or viol.details.get("best_view_bbox")
                                 or viol.details.get("first_in_region_bbox")
                             )
-                            payload_violation_type = viol.violation_type
-                            if payload_violation_type not in {"STOPLINE", "RED_LIGHT"}:
-                                payload_violation_type = (
-                                    "STOPLINE" if "STOPLINE" in payload_violation_type else "RED_LIGHT"
-                                )
+                            # Giữ nguyên violation_type từ engine (đã map sang mã CSDL)
+                            # VD: BIKE_RED_LIGHT, CAR_RED_LIGHT, CROSS_LINE_BIKE_RED_LIGHT, CROSS_LINE_CAR_RED_LIGHT
                             formatted_violations.append({
                                 "track_id": viol.track_id,
                                 "class_name": viol.details.get("class_name"),
                                 "bbox": list(payload_bbox) if payload_bbox else None,
-                                "violation_type": payload_violation_type,
+                                "violation_type": viol.violation_type,  # Giữ nguyên mã CSDL
                                 "position": viol.details.get("position_now"),
                                 "overlap": viol.details.get("overlap_ratio"),
                                 "from_yellow": bool(viol.details.get("snapshot_frame_yellow")),
