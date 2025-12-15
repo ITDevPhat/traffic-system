@@ -1,24 +1,40 @@
 {
   "camera_id": "cam03",
-  "description": "Config cho video8.mp4 - Cần điều chỉnh qua UI",
+  "description": "Config cho video8.mp4 - Nguy\u1ec5n H\u1eefu C\u1ea3nh - T\u00f4n \u0110\u1ee9c Th\u1eafng",
   "traffic_light_roi": {
-    "x": 0.85,
-    "y": 0.05,
-    "width": 0.1,
-    "height": 0.15
+    "x": 0.6493055555555556,
+    "y": 0.10092592592592593,
+    "width": 0.10208333333333333,
+    "height": 0.08055555555555556
   },
   "stopline": {
-    "x1": 50,
-    "y1": 400,
-    "x2": 800,
-    "y2": 400
+    "x1": 146,
+    "y1": 885,
+    "x2": 1306,
+    "y2": 879
   },
   "violation_region": {
     "points": [
-      [50.0, 200.0],
-      [800.0, 200.0],
-      [850.0, 400.0],
-      [0.0, 400.0]
+      [
+        16.0,
+        796.0
+      ],
+      [
+        59.0,
+        624.0
+      ],
+      [
+        216.0,
+        482.0
+      ],
+      [
+        1283.0,
+        450.0
+      ],
+      [
+        1414.0,
+        799.0
+      ]
     ]
   }
 }
