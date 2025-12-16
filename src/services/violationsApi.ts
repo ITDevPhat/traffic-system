@@ -161,3 +161,44 @@ export async function deleteViolationItem(violationId: number): Promise<{ messag
   
   return res.json();
 }
+
+/**
+ * Tự động tạo vi phạm cho video8.mp4 với hình ảnh có sẵn
+ */
+export interface AutoViolationRequest {
+  violation_type: 'CAR_RED_LIGHT' | 'BIKE_RED_LIGHT';
+  track_id: number;
+  frame?: number;
+  confidence?: number;
+  plate?: string;
+  timestamp?: string;
+}
+
+export interface AutoViolationResponse {
+  ok: boolean;
+  message: string;
+  violation_id: number;
+  track_id: number;
+  violation_type: string;
+  images: {
+    plate: string | null;
+    evidence: string | null;
+  };
+  video_job_id: number;
+}
+
+export async function autoCreateVideo8Violation(data: AutoViolationRequest): Promise<AutoViolationResponse> {
+  const url = `${API_URL}${API_PREFIX}/violations/auto-create-video8`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(error.detail || 'Không thể tạo vi phạm tự động');
+  }
+  
+  return res.json();
+}

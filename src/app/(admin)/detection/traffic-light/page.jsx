@@ -4,6 +4,8 @@ import { Button, Form, Row, Col, Card, Badge, Modal, Alert } from 'react-bootstr
 import { toast } from 'react-toastify';
 import { useSearchParams } from 'next/navigation';
 import PageTitle from '@/components/PageTitle';
+import { autoCreateVideo8Violation } from '@/services/violationsApi';
+import ViolationAutoCreateNotification from '@/components/ViolationAutoCreateNotification';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
@@ -281,6 +283,18 @@ function DetectionPageBinaryContent() {
   const [violations, setViolations] = useState([]);
   const [logEntries, setLogEntries] = useState([]);
   const vehicleStatesRef = useRef(new Map());
+  
+  // Track auto-created violations to prevent duplicates
+  const autoCreatedViolationsRef = useRef(new Set());
+  
+  // Auto-created violations notifications
+  const [autoCreatedNotifications, setAutoCreatedNotifications] = useState([]);
+  
+  const dismissNotification = useCallback((violationId) => {
+    setAutoCreatedNotifications(prev => 
+      prev.filter(n => n.violationId !== violationId)
+    );
+  }, []);
   const logEntriesRef = useRef([]);
   const lightStateRef = useRef({ state: 'GREEN', changedAt: 0 });
   const redStartRef = useRef(null);
@@ -324,7 +338,9 @@ function DetectionPageBinaryContent() {
   const resolveCameraId = useCallback(
     (srcValue) => {
       const path = (srcValue || source || '').toLowerCase();
-      return path.includes('viphamgiaothong') ? 'cam02' : 'cam01';
+      if (path.includes('viphamgiaothong')) return 'cam02';
+      if (path.includes('video8')) return 'cam03';
+      return 'cam01';
     },
     [source]
   );
@@ -345,6 +361,9 @@ function DetectionPageBinaryContent() {
       setLogEntries([]);
       vehicleStatesRef.current.clear();
       logEntriesRef.current = [];
+      
+      // Reset auto-created violations tracking
+      autoCreatedViolationsRef.current.clear();
 
       if (clearGeometry) {
         setTlRoi(null);
@@ -362,6 +381,73 @@ function DetectionPageBinaryContent() {
   useEffect(() => {
     logEntriesRef.current = logEntries;
   }, [logEntries]);
+
+  // Auto-create violation for video8.mp4
+  const autoCreateViolation = useCallback(async (violationEntry) => {
+    // Only for video8.mp4
+    if (!source || !source.toLowerCase().includes('video8')) {
+      return;
+    }
+
+    const trackId = violationEntry.trackId;
+    const violationType = violationEntry.violationType;
+    
+    // Prevent duplicate creation
+    const violationKey = `${trackId}_${violationType}`;
+    if (autoCreatedViolationsRef.current.has(violationKey)) {
+      return;
+    }
+
+    try {
+      // Determine violation type based on class and violation
+      let autoViolationType;
+      if (violationEntry.className === 'car' || violationType.includes('CAR')) {
+        autoViolationType = 'CAR_RED_LIGHT';
+      } else if (violationEntry.className === 'motorbike' || violationType.includes('BIKE')) {
+        autoViolationType = 'BIKE_RED_LIGHT';
+      } else {
+        // Default to car for unknown types
+        autoViolationType = 'CAR_RED_LIGHT';
+      }
+
+      console.log(`🤖 Auto-creating violation: ${autoViolationType} for track ${trackId}`);
+
+      const result = await autoCreateVideo8Violation({
+        violation_type: autoViolationType,
+        track_id: trackId,
+        frame: violationEntry.frame,
+        confidence: 0.85,
+        timestamp: new Date().toISOString()
+      });
+
+      // Mark as created
+      autoCreatedViolationsRef.current.add(violationKey);
+
+      console.log(`✅ Auto-created violation ID: ${result.violation_id}`);
+      console.log(`📸 Images: plate=${result.images.plate}, evidence=${result.images.evidence}`);
+
+      // Add to notifications
+      const notification = {
+        violationId: result.violation_id,
+        trackId: trackId,
+        violationType: autoViolationType,
+        frame: violationEntry.frame,
+        confidence: 0.85,
+        timestamp: new Date()
+      };
+      
+      setAutoCreatedNotifications(prev => [notification, ...prev.slice(0, 4)]); // Keep max 5
+
+      safeToast.success(
+        `🚨 Vi phạm ${autoViolationType} đã được tạo tự động! ID: ${result.violation_id}`,
+        { autoClose: 3000 }
+      );
+
+    } catch (error) {
+      console.error(`❌ Failed to auto-create violation for track ${trackId}:`, error);
+      safeToast.error(`Không thể tạo vi phạm tự động: ${error.message}`);
+    }
+  }, [source, safeToast]);
 
   // Keyboard event handler for debug overlay (D key)
   useEffect(() => {
@@ -803,9 +889,14 @@ function DetectionPageBinaryContent() {
 
       if (newViolationEntries.length > 0) {
         setViolations((prev) => [...newViolationEntries, ...prev].slice(0, 10)); // Reduced from 20 to 10 for better performance
+        
+        // Auto-create violations for video8.mp4
+        newViolationEntries.forEach((violationEntry) => {
+          autoCreateViolation(violationEntry);
+        });
       }
     },
-    [handleLightState]
+    [handleLightState, autoCreateViolation]
   );
 
   const connectWebSocket = useCallback((src) => {
@@ -905,7 +996,82 @@ function DetectionPageBinaryContent() {
                 setStopline(cam02Stopline);
                 setStoplineActive(true);
 
+                console.log('🚦 Traffic Light ROI:', cam02Roi);
+                console.log('🛑 Stopline:', cam02Stopline);
+                console.log('📍 Stopline Midpoint:', { x: Math.round((cam02Stopline.x1 + cam02Stopline.x2) / 2), y: Math.round((cam02Stopline.y1 + cam02Stopline.y2) / 2) });
+
                 safeToast.success('✅ Loaded cam02 configuration', { autoClose: 2000 });
+              }
+
+              // Auto-load ROI for video8.mp4
+              if (source && source.toLowerCase().includes('video8')) {
+                console.log('🎬 Video8.mp4 detected - Loading cam03 config...');
+
+                // Values for video8.mp4 based on your specifications
+                const video8TlRoi = { x: 935, y: 109, w: 147, h: 87 };
+                setTlRoi(video8TlRoi);
+                setTlRoiActive(true);
+
+                // Stopline for video8.mp4: (146, 885) → (1306, 879)
+                const video8Stopline = { x1: 146, y1: 885, x2: 1306, y2: 879 };
+                setStopline(video8Stopline);
+                setStoplineActive(true);
+
+                // Violation region for video8.mp4 - từ backend response
+                const video8ViolationRegion = [
+                  { x: 16, y: 796 },
+                  { x: 59, y: 624 },
+                  { x: 216, y: 482 },
+                  { x: 1283, y: 450 },
+                  { x: 1414, y: 799 }
+                ];
+                setViolationRegionPoints(video8ViolationRegion);
+                setViolationRegionActive(true);
+
+                // Auto-save TL ROI to backend
+                const roi_pixel = {
+                  x1: Math.round(video8TlRoi.x),
+                  y1: Math.round(video8TlRoi.y),
+                  x2: Math.round(video8TlRoi.x + video8TlRoi.w),
+                  y2: Math.round(video8TlRoi.y + video8TlRoi.h)
+                };
+
+                const cameraId = resolveCameraId(source);
+
+                fetch(`${API_URL}/api/traffic-light/roi`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    camera_id: cameraId,
+                    roi_pixel,
+                    frame_width: newWidth,
+                    frame_height: newHeight
+                  })
+                }).then(res => {
+                  if (res.ok) {
+                    console.log('✅ TL ROI auto-saved for video8.mp4');
+                    console.log('🚦 Traffic Light ROI:', video8TlRoi);
+                    console.log('🛑 Stopline:', video8Stopline);
+                    console.log('📍 Stopline Midpoint:', { x: Math.round((video8Stopline.x1 + video8Stopline.x2) / 2), y: Math.round((video8Stopline.y1 + video8Stopline.y2) / 2) });
+                    
+                    // Log violation region
+                    console.log('🚧 Violation Region (Polygon) auto-loaded:');
+                    video8ViolationRegion.forEach((pt, idx) => {
+                      console.log(`  Point ${idx + 1}: (${pt.x}, ${pt.y})`);
+                    });
+                    const midX = Math.round(video8ViolationRegion.reduce((sum, pt) => sum + pt.x, 0) / video8ViolationRegion.length);
+                    const midY = Math.round(video8ViolationRegion.reduce((sum, pt) => sum + pt.y, 0) / video8ViolationRegion.length);
+                    console.log(`📍 Violation Region Midpoint: (${midX}, ${midY})`);
+                    
+                    safeToast.success('✅ Auto-loaded video8 complete config', { autoClose: 2000 });
+                  } else {
+                    console.error('❌ Failed to auto-save TL ROI for video8.mp4');
+                  }
+                }).catch(err => {
+                  console.warn('Failed to auto-save TL ROI:', err);
+                });
+
+                console.log('🚦 Auto-loaded complete config for video8.mp4');
               }
 
               // Auto-load ROI for video3 after detection starts
@@ -1686,6 +1852,18 @@ function DetectionPageBinaryContent() {
     setIsDrawingViolationRegion(false);
     setDraftViolationPoints([]);
     setMousePos(null);
+
+    // Console log violation region coordinates
+    console.log('🚧 Violation Region (Polygon) created:');
+    pixels.forEach((pt, idx) => {
+      console.log(`  Point ${idx + 1}: (${pt.x}, ${pt.y})`);
+    });
+    
+    // Calculate and log midpoint
+    const midX = Math.round(pixels.reduce((sum, pt) => sum + pt.x, 0) / pixels.length);
+    const midY = Math.round(pixels.reduce((sum, pt) => sum + pt.y, 0) / pixels.length);
+    console.log(`📍 Midpoint: (${midX}, ${midY})`);
+
     safeToast.success('Violation region captured. Click save to persist.');
   }, [draftViolationPoints, frameDimensions.width, frameDimensions.height, safeToast]);
 
@@ -1744,6 +1922,11 @@ function DetectionPageBinaryContent() {
     try {
       setIsSavingViolationRegion(true);
       const payloadPoints = violationRegionPoints.map((pt) => [Math.round(pt.x), Math.round(pt.y)]);
+      
+      console.log('💾 Saving violation region to backend...');
+      console.log('📤 Camera ID:', resolveCameraId());
+      console.log('📤 Points payload:', payloadPoints);
+      
       const response = await fetch(`${API_URL}/api/traffic-light/violation-region`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -1753,15 +1936,21 @@ function DetectionPageBinaryContent() {
         })
       });
 
+      console.log('📥 Response status:', response.status);
+
       if (!response.ok) {
         const error = await response.json();
+        console.error('❌ Backend error:', error);
         throw new Error(error.detail || error.error || 'Failed to save violation region');
       }
+
+      const result = await response.json();
+      console.log('✅ Violation region saved successfully:', result);
 
       safeToast.success('Violation region saved.');
       setViolationRegionActive(true);
     } catch (error) {
-      console.error('Save violation region error:', error);
+      console.error('❌ Save violation region error:', error);
       safeToast.error(error.message || 'Failed to save violation region');
     } finally {
       setIsSavingViolationRegion(false);
@@ -1883,7 +2072,11 @@ function DetectionPageBinaryContent() {
         y2: parseInt(tlRoi.y + tlRoi.h) || 0,
       };
 
-      console.log('🚦 Saving TL ROI:', { tlRoi, roi_pixel });
+      console.log('� SSaving Traffic Light ROI to backend...');
+      console.log('🚦 TL ROI (pixels):', tlRoi);
+      console.log('📤 ROI pixel coordinates:', roi_pixel);
+      console.log('📤 Camera ID:', resolveCameraId());
+      console.log('📐 Frame dimensions:', { width: frameDimensions.width, height: frameDimensions.height });
 
       // Validation
       if (roi_pixel.x2 <= roi_pixel.x1 || roi_pixel.y2 <= roi_pixel.y1) {
@@ -1902,18 +2095,21 @@ function DetectionPageBinaryContent() {
         })
       });
 
+      console.log('📥 Response status:', response.status);
+
       if (response.ok) {
         const result = await response.json();
-        console.log('✅ TL ROI saved:', result);
+        console.log('✅ Traffic Light ROI saved successfully:', result);
         setTlRoiActive(true);
         safeToast.success('Traffic Light ROI saved!');
         startTrafficLightWS();
       } else {
         const error = await response.json();
+        console.error('❌ Backend error:', error);
         safeToast.error(`Failed to save ROI: ${error.detail || error.error || 'Unknown error'}`);
       }
     } catch (error) {
-      console.error('Error saving TL ROI:', error);
+      console.error('❌ Error saving TL ROI:', error);
       safeToast.error('Failed to save Traffic Light ROI');
     }
   };
@@ -2375,7 +2571,13 @@ function DetectionPageBinaryContent() {
         y2: Math.round(stopline.y2)
       };
 
-      console.log('📤 Saving stopline:', stoplineData);
+      console.log('� SSaving stopline to backend...');
+      console.log('🛑 Stopline coordinates:', stoplineData);
+      console.log('📍 Stopline Midpoint:', { 
+        x: Math.round((stoplineData.x1 + stoplineData.x2) / 2), 
+        y: Math.round((stoplineData.y1 + stoplineData.y2) / 2) 
+      });
+      console.log('📤 Camera ID:', resolveCameraId());
 
       const response = await fetch(`${API_URL}/api/violations/stopline`, {
         method: "POST",
@@ -2386,19 +2588,21 @@ function DetectionPageBinaryContent() {
         })
       });
 
+      console.log('📥 Response status:', response.status);
+
       if (response.ok) {
         const result = await response.json();
-        console.log('✅ Stopline saved:', result);
+        console.log('✅ Stopline saved successfully:', result);
         setStoplineActive(true);
         setIsDrawingStopline(false);
         safeToast.success('Stopline saved!');
       } else {
         const error = await response.json();
-        console.error('❌ Stopline save error:', error);
+        console.error('❌ Backend error:', error);
         safeToast.error(`Failed to save stopline: ${error.detail || error.error || 'Unknown error'}`);
       }
     } catch (error) {
-      console.error('Error saving stopline:', error);
+      console.error('❌ Error saving stopline:', error);
       safeToast.error('Failed to save stopline');
     }
   };
@@ -2462,6 +2666,14 @@ function DetectionPageBinaryContent() {
   return (
     <>
       <PageTitle title="Realtime Detection (Binary Turbo Stream)" />
+      
+      {/* Auto-created violations notifications */}
+      <ViolationAutoCreateNotification
+        violations={autoCreatedNotifications}
+        onDismiss={dismissNotification}
+        show={autoCreatedNotifications.length > 0}
+      />
+      
       <div className="container-fluid mt-3">
         <Card className="mb-3 shadow-sm">
           <Card.Body>

@@ -15,8 +15,8 @@ const AnalyticsPage = () => {
     <PageTitle title="Thống kê" subName="Dashboard" />
     <Statistics />
     <Row>
-      <SalesChart />
-      <BalanceCard />
+      {/* <SalesChart /> */}
+      {/* <BalanceCard /> */}
     </Row>
 
 

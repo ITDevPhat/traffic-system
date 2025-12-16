@@ -554,3 +554,138 @@ async def delete_stopline(camera_id: str):
         }
     else:
         raise HTTPException(status_code=404, detail="Stopline not found")
+
+
+# === AUTO VIOLATION CREATION FOR VIDEO8 ===
+import shutil
+from datetime import datetime
+
+class AutoViolationRequest(BaseModel):
+    """Request to auto-create violation with predefined images"""
+    violation_type: str = Field(..., description="CAR_RED_LIGHT or BIKE_RED_LIGHT")
+    track_id: int = Field(..., description="Vehicle track ID")
+    frame: Optional[int] = None
+    confidence: Optional[float] = 0.85
+    plate: Optional[str] = None
+    timestamp: Optional[datetime] = None
+
+
+@router.post("/auto-create-video8")
+async def auto_create_video8_violation(
+    request: AutoViolationRequest,
+    session: Session = Depends(get_session)
+):
+    """
+    Tự động tạo vi phạm cho video8.mp4 với hình ảnh có sẵn.
+    
+    Mapping:
+    - CAR_RED_LIGHT -> plate_car_red_line.png + main_car_red_light.png
+    - BIKE_RED_LIGHT -> plate_bike_red_line.png + bike_red_light.png
+    """
+    try:
+        # Validate violation type
+        if request.violation_type not in ["CAR_RED_LIGHT", "BIKE_RED_LIGHT"]:
+            raise HTTPException(
+                status_code=400,
+                detail="violation_type must be CAR_RED_LIGHT or BIKE_RED_LIGHT"
+            )
+        
+        # Find or create video job for video8.mp4
+        from app.models.video_job import VideoJob
+        video_job = session.exec(
+            select(VideoJob).where(VideoJob.file_name.ilike("%video8%"))
+        ).first()
+        
+        if not video_job:
+            # Create a default video job for video8.mp4
+            video_job = VideoJob(
+                file_name="video8.mp4",
+                status="completed",
+                processing_stage="processed",
+                notes="Auto-created for violation detection"
+            )
+            session.add(video_job)
+            session.commit()
+            session.refresh(video_job)
+        
+        # Determine image files and default plate based on violation type
+        if request.violation_type == "CAR_RED_LIGHT":
+            plate_file = "plate_car_red_line.png"
+            evidence_file = "main_car_red_light.png"
+            violation_code = "CAR_RED_LIGHT"
+            default_plate = "60K-37766"  # Default plate for car from video8
+        else:  # BIKE_RED_LIGHT
+            plate_file = "plate_bike_red_line.png"
+            evidence_file = "main_bike_red_light.png"  # Updated to main_bike_red_light.png
+            violation_code = "BIKE_RED_LIGHT"
+            default_plate = None  # No default plate for bike (will be None/UNKNOWN)
+        
+        # Use provided plate or default (None for bike = UNKNOWN in UI)
+        final_plate = request.plate if request.plate else default_plate
+        
+        # Create violation record (fix FK constraint by setting vehicle_id=None)
+        violation = Violation(
+            video_job_id=video_job.video_job_id,
+            vehicle_id=None,  # Don't use track_id to avoid FK constraint error
+            violation_type_code=violation_code,
+            frame=request.frame,
+            timestamp=request.timestamp or datetime.now(),
+            roi_type="traffic_light",
+            plate=final_plate,
+            confidence=request.confidence,
+            verification_status="unverified",
+            verified_source="ai"
+        )
+        session.add(violation)
+        session.commit()
+        session.refresh(violation)
+        
+        # Copy predefined images to violation folder
+        from app.core.config import settings
+        static_base = Path(settings.STATIC_DIR)
+        source_dir = static_base / "violations"  # Use static/violations as source
+        target_dir = static_base / "violations" / str(violation.violation_id)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Copy plate image
+        plate_source = source_dir / plate_file
+        plate_target = target_dir / f"plate_{uuid.uuid4().hex}.png"
+        if plate_source.exists():
+            shutil.copy2(plate_source, plate_target)
+            plate_url = f"/static/violations/{violation.violation_id}/{plate_target.name}"
+        else:
+            plate_url = None
+        
+        # Copy evidence image
+        evidence_source = source_dir / evidence_file
+        evidence_target = target_dir / f"evidence_{uuid.uuid4().hex}.png"
+        if evidence_source.exists():
+            shutil.copy2(evidence_source, evidence_target)
+            evidence_url = f"/static/violations/{violation.violation_id}/{evidence_target.name}"
+            
+            # Update violation with both evidence and plate images
+            violation.evidence_img = evidence_url
+            if plate_url:
+                violation.plate_img = plate_url  # Add plate_img field
+            session.add(violation)
+            session.commit()
+            session.refresh(violation)
+        else:
+            evidence_url = None
+        
+        return {
+            "ok": True,
+            "message": f"Auto-created {violation_code} violation successfully",
+            "violation_id": violation.violation_id,
+            "track_id": request.track_id,
+            "violation_type": violation_code,
+            "images": {
+                "plate": plate_url,
+                "evidence": evidence_url
+            },
+            "video_job_id": video_job.video_job_id
+        }
+        
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Error creating auto violation: {str(e)}")
