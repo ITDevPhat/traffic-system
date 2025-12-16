@@ -26,34 +26,35 @@ export const MENU_ITEMS = [{
       url: '/detection/traffic-light',
       parentKey: 'detection'
     },
-    {
-      key: 'detection-traffic-live',
-      label: 'Giám sát đèn giao thông',
-      url: '/detection/traffic-live',
-      parentKey: 'detection'
-    }
+    // {
+    //   key: 'detection-traffic-live',
+    //   label: 'Giám sát đèn giao thông',
+    //   url: '/detection/traffic-live',
+    //   parentKey: 'detection'
+    // }
   ]
-}, {
-  key: 'dashboards',
-  label: 'Dashboards',
-  icon: 'ri:dashboard-line',
-  children: [{
-    key: 'analytics',
-    label: 'Analytics',
-    url: '/dashboards/analytics',
-    parentKey: 'dashboards'
-  }, {
-    key: 'agent',
-    label: 'Agent',
-    url: '/dashboards/agent',
-    parentKey: 'dashboards'
-  }, {
-    key: 'customer',
-    label: 'Customer',
-    url: '/dashboards/customer',
-    parentKey: 'dashboards'
-  }]
-},
+}, 
+// {
+//   key: 'dashboards',
+//   label: 'Dashboards',
+//   icon: 'ri:dashboard-line',
+//   children: [{
+//     key: 'analytics',
+//     label: 'Analytics',
+//     url: '/dashboards/analytics',
+//     parentKey: 'dashboards'
+//   }, {
+//     key: 'agent',
+//     label: 'Agent',
+//     url: '/dashboards/agent',
+//     parentKey: 'dashboards'
+//   }, {
+//     key: 'customer',
+//     label: 'Customer',
+//     url: '/dashboards/customer',
+//     parentKey: 'dashboards'
+//   }]
+// },
 {
   key: 'management-section',
   label: 'QUẢN LÝ HỆ THỐNG',

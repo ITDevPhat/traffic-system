@@ -580,7 +580,7 @@ async def auto_create_video8_violation(
     
     Mapping:
     - CAR_RED_LIGHT -> plate_car_red_line.png + main_car_red_light.png
-    - BIKE_RED_LIGHT -> plate_bike_red_line.png + bike_red_light.png
+    - BIKE_RED_LIGHT -> plate_bike_red_line.png + main_bike_red_light.png
     """
     try:
         # Validate violation type

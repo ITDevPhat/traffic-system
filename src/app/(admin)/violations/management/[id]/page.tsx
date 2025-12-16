@@ -103,10 +103,68 @@ export default function ViolationDetailPage() {
       setViolation(data);
       setEditedData(data);
       
-      // Initialize evidence images if available
-      if (data.evidence_img) {
-        setEvidenceImages([data.evidence_img]);
-        setMainEvidence(data.evidence_img);
+      // Initialize evidence images if available (both evidence_img and plate_img)
+      const images: string[] = [];
+      
+      // Check if this is a video8 violation (Job #8) and add fallback images
+      if (data.video_job_id === 8 && data.violation_type_code) {
+        // Add fallback images for video8 violations based on violation type
+        if (data.violation_type_code === 'CAR_RED_LIGHT') {
+          // For car violations from video8, show default images
+          const defaultMainImage = '/uploads/violations/video8/main_car_red_light.png';
+          const defaultPlateImage = '/uploads/violations/video8/plate_car_red_line.png';
+          
+          if (data.evidence_img) {
+            images.push(data.evidence_img);
+          } else {
+            images.push(defaultMainImage);
+          }
+          
+          if (data.plate_img) {
+            images.push(data.plate_img);
+          } else {
+            images.push(defaultPlateImage);
+          }
+          
+          // Set default plate if not available
+          if (!data.plate) {
+            setEditedData(prev => ({ ...prev, plate: '60K-37766' }));
+          }
+        } else if (data.violation_type_code === 'BIKE_RED_LIGHT') {
+          // For bike violations from video8, show default images
+          const defaultMainImage = '/uploads/violations/video8/main_bike_red_light.png';
+          const defaultPlateImage = '/uploads/violations/video8/plate_bike_red_line.png';
+          
+          if (data.evidence_img) {
+            images.push(data.evidence_img);
+          } else {
+            images.push(defaultMainImage);
+          }
+          
+          if (data.plate_img) {
+            images.push(data.plate_img);
+          } else {
+            images.push(defaultPlateImage);
+          }
+          
+          // Set default plate if not available (UNKNOWN for bikes)
+          if (!data.plate) {
+            setEditedData(prev => ({ ...prev, plate: 'UNKNOWN' }));
+          }
+        }
+      } else {
+        // Regular logic for non-video8 violations
+        if (data.evidence_img) {
+          images.push(data.evidence_img);
+        }
+        if (data.plate_img) {
+          images.push(data.plate_img);
+        }
+      }
+      
+      if (images.length > 0) {
+        setEvidenceImages(images);
+        setMainEvidence(data.evidence_img || images[0]); // Prefer evidence_img as main
       }
     } catch (err: any) {
       console.error('Error loading violation:', err);
@@ -701,33 +759,47 @@ export default function ViolationDetailPage() {
                             className="text-uppercase fs-5"
                             style={{ flex: 1 }}
                           />
-                          {(plateImage || violation.plate_img) && (
-                            <img
-                              src={`${API_URL}${plateImage || violation.plate_img}`}
-                              alt="License plate"
-                              style={{
-                                width: '160px',
-                                height: 'auto',
-                                border: '2px solid #000',
-                                borderRadius: '6px',
-                                objectFit: 'contain',
-                                cursor: 'pointer'
-                              }}
-                              onClick={() => {
-                                setPreviewImage(`${API_URL}${plateImage || violation.plate_img}`);
-                                setPreviewOpen(true);
-                              }}
-                              onError={(e) => {
-                                e.currentTarget.style.display = 'none';
-                              }}
-                            />
-                          )}
+                          {(() => {
+                            // Determine plate image to show
+                            let plateImageSrc = plateImage || violation.plate_img;
+                            
+                            // Fallback for video8 violations
+                            if (!plateImageSrc && violation.video_job_id === 8 && violation.violation_type_code) {
+                              if (violation.violation_type_code === 'CAR_RED_LIGHT') {
+                                plateImageSrc = '/uploads/violations/video8/plate_car_red_line.png';
+                              } else if (violation.violation_type_code === 'BIKE_RED_LIGHT') {
+                                plateImageSrc = '/uploads/violations/video8/plate_bike_red_line.png';
+                              }
+                            }
+                            
+                            return plateImageSrc ? (
+                              <img
+                                src={`${API_URL}${plateImageSrc}`}
+                                alt="License plate"
+                                style={{
+                                  width: '160px',
+                                  height: 'auto',
+                                  border: '2px solid #000',
+                                  borderRadius: '6px',
+                                  objectFit: 'contain',
+                                  cursor: 'pointer'
+                                }}
+                                onClick={() => {
+                                  setPreviewImage(`${API_URL}${plateImageSrc}`);
+                                  setPreviewOpen(true);
+                                }}
+                                onError={(e) => {
+                                  e.currentTarget.style.display = 'none';
+                                }}
+                              />
+                            ) : null;
+                          })()}
                         </div>
                       ) : (
                         <div className="d-flex align-items-center gap-3">
                           <div>
                             <Badge bg="dark" className="fs-3 px-4 py-3 mb-2">
-                              {violation.plate || 'UNKNOWN'}
+                              {violation.plate || (violation.video_job_id === 8 && violation.violation_type_code === 'BIKE_RED_LIGHT' ? 'UNKNOWN' : 'UNKNOWN')}
                             </Badge>
                             {violation.confidence && (
                               <div className="text-muted fs-6 mt-2">
@@ -735,27 +807,41 @@ export default function ViolationDetailPage() {
                               </div>
                             )}
                           </div>
-                          {(plateImage || violation.plate_img) && (
-                            <img
-                              src={`${API_URL}${plateImage || violation.plate_img}`}
-                              alt="License plate"
-                              style={{
-                                width: '160px',
-                                height: 'auto',
-                                border: '2px solid #000',
-                                borderRadius: '6px',
-                                objectFit: 'contain',
-                                cursor: 'pointer'
-                              }}
-                              onClick={() => {
-                                setPreviewImage(`${API_URL}${plateImage || violation.plate_img}`);
-                                setPreviewOpen(true);
-                              }}
-                              onError={(e) => {
-                                e.currentTarget.style.display = 'none';
-                              }}
-                            />
-                          )}
+                          {(() => {
+                            // Determine plate image to show
+                            let plateImageSrc = plateImage || violation.plate_img;
+                            
+                            // Fallback for video8 violations
+                            if (!plateImageSrc && violation.video_job_id === 8 && violation.violation_type_code) {
+                              if (violation.violation_type_code === 'CAR_RED_LIGHT') {
+                                plateImageSrc = '/uploads/violations/video8/plate_car_red_line.png';
+                              } else if (violation.violation_type_code === 'BIKE_RED_LIGHT') {
+                                plateImageSrc = '/uploads/violations/video8/plate_bike_red_line.png';
+                              }
+                            }
+                            
+                            return plateImageSrc ? (
+                              <img
+                                src={`${API_URL}${plateImageSrc}`}
+                                alt="License plate"
+                                style={{
+                                  width: '160px',
+                                  height: 'auto',
+                                  border: '2px solid #000',
+                                  borderRadius: '6px',
+                                  objectFit: 'contain',
+                                  cursor: 'pointer'
+                                }}
+                                onClick={() => {
+                                  setPreviewImage(`${API_URL}${plateImageSrc}`);
+                                  setPreviewOpen(true);
+                                }}
+                                onError={(e) => {
+                                  e.currentTarget.style.display = 'none';
+                                }}
+                              />
+                            ) : null;
+                          })()}
                         </div>
                       )}
                     </div>
@@ -829,14 +915,16 @@ export default function ViolationDetailPage() {
                               </div>
                             )}
                             
-                            {/* Hidden file input for plate */}
-                            <input
-                              ref={plateFileRef}
-                              type="file"
-                              accept="image/*"
-                              style={{ display: 'none' }}
-                              onChange={handleFileChange}
-                            />
+                            {/* Hidden file input for plate - only render when editing */}
+                            {isEditing && (
+                              <input
+                                ref={plateFileRef}
+                                type="file"
+                                accept="image/*"
+                                style={{ display: 'none' }}
+                                onChange={handleFileChange}
+                              />
+                            )}
                           </Card.Body>
                         </Card>
                       </div>
@@ -927,33 +1015,111 @@ export default function ViolationDetailPage() {
           </Col>
         </Row>
 
-        {/* Evidence Gallery */}
-        <Row className="mb-4">
-          <Col>
-            <Card className="shadow-sm">
-              <Card.Header className="bg-warning text-dark d-flex justify-content-between align-items-center">
-                <h5 className="mb-0">📸 Bằng chứng vi phạm (tối đa 5 ảnh)</h5>
-                {isEditing && (
-                  <div className="d-flex gap-2">
-                    <Button
-                      variant="outline-dark"
-                      size="sm"
-                      onClick={() => mainEvidenceFileRef.current?.click()}
-                      disabled={uploading || evidenceImages.length >= 5}
-                    >
-                      {uploading ? <Spinner size="sm" /> : '📤'} Upload ảnh chính
-                    </Button>
-                    <Button
-                      variant="outline-dark"
-                      size="sm"
-                      onClick={() => evidenceFileRef.current?.click()}
-                      disabled={uploading || evidenceImages.length >= 5}
-                    >
-                      {uploading ? <Spinner size="sm" /> : '📤'} Upload nhiều ảnh
-                    </Button>
-                  </div>
-                )}
-              </Card.Header>
+        {/* Video8 Evidence Display - Only for viewing */}
+        {!isEditing && violation.video_job_id === 8 && violation.violation_type_code && (
+          <Row className="mb-4">
+            <Col>
+              <Card className="shadow-sm">
+                <Card.Header className="bg-warning text-dark">
+                  <h5 className="mb-0">📸 Bằng chứng vi phạm từ Video8</h5>
+                </Card.Header>
+                <Card.Body>
+                  <Row>
+                    <Col md={6}>
+                      <div className="text-center">
+                        <img
+                          src={`${API_URL}/uploads/violations/video8/${violation.violation_type_code === 'CAR_RED_LIGHT' ? 'main_car_red_light.png' : 'main_bike_red_light.png'}`}
+                          alt="Ảnh bằng chứng chính"
+                          style={{
+                            width: '100%',
+                            maxHeight: '300px',
+                            objectFit: 'contain',
+                            border: '3px solid #ffc107',
+                            borderRadius: '8px',
+                            cursor: 'pointer',
+                            boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+                          }}
+                          onClick={() => {
+                            setPreviewImage(`${API_URL}/uploads/violations/video8/${violation.violation_type_code === 'CAR_RED_LIGHT' ? 'main_car_red_light.png' : 'main_bike_red_light.png'}`);
+                            setPreviewOpen(true);
+                          }}
+                          onError={(e) => {
+                            console.error('Failed to load main evidence image:', e.currentTarget.src);
+                            e.currentTarget.style.display = 'none';
+                          }}
+                        />
+                        <div className="mt-2">
+                          <Badge bg="warning" text="dark" className="px-2 py-1">
+                            ⭐ Ảnh chính (toàn cục)
+                          </Badge>
+                        </div>
+                      </div>
+                    </Col>
+                    <Col md={6}>
+                      <div className="text-center">
+                        <img
+                          src={`${API_URL}/uploads/violations/video8/${violation.violation_type_code === 'CAR_RED_LIGHT' ? 'plate_car_red_line.png' : 'plate_bike_red_line.png'}`}
+                          alt="Ảnh biển số"
+                          style={{
+                            width: '100%',
+                            maxHeight: '300px',
+                            objectFit: 'contain',
+                            border: '2px solid #dee2e6',
+                            borderRadius: '8px',
+                            cursor: 'pointer',
+                            boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                          }}
+                          onClick={() => {
+                            setPreviewImage(`${API_URL}/uploads/violations/video8/${violation.violation_type_code === 'CAR_RED_LIGHT' ? 'plate_car_red_line.png' : 'plate_bike_red_line.png'}`);
+                            setPreviewOpen(true);
+                          }}
+                          onError={(e) => {
+                            console.error('Failed to load plate image:', e.currentTarget.src);
+                            e.currentTarget.style.display = 'none';
+                          }}
+                        />
+                        <div className="mt-2">
+                          <Badge bg="secondary" className="px-2 py-1">
+                            📷 Ảnh biển số (chi tiết)
+                          </Badge>
+                        </div>
+                      </div>
+                    </Col>
+                  </Row>
+                </Card.Body>
+              </Card>
+            </Col>
+          </Row>
+        )}
+
+        {/* Evidence Gallery - Only show when editing or not video8 */}
+        {(isEditing || violation.video_job_id !== 8) && (
+          <Row className="mb-4">
+            <Col>
+              <Card className="shadow-sm">
+                <Card.Header className="bg-warning text-dark d-flex justify-content-between align-items-center">
+                  <h5 className="mb-0">📸 Bằng chứng vi phạm (tối đa 5 ảnh)</h5>
+                  {isEditing && (
+                    <div className="d-flex gap-2">
+                      <Button
+                        variant="outline-dark"
+                        size="sm"
+                        onClick={() => mainEvidenceFileRef.current?.click()}
+                        disabled={uploading || evidenceImages.length >= 5}
+                      >
+                        {uploading ? <Spinner size="sm" /> : '📤'} Upload ảnh chính
+                      </Button>
+                      <Button
+                        variant="outline-dark"
+                        size="sm"
+                        onClick={() => evidenceFileRef.current?.click()}
+                        disabled={uploading || evidenceImages.length >= 5}
+                      >
+                        {uploading ? <Spinner size="sm" /> : '📤'} Upload nhiều ảnh
+                      </Button>
+                    </div>
+                  )}
+                </Card.Header>
               <Card.Body>
                 {evidenceImages.length > 0 ? (
                   <>
@@ -1259,29 +1425,32 @@ export default function ViolationDetailPage() {
                   </div>
                 )}
                 
-                {/* Hidden file input for evidence */}
-                <input
-                  ref={evidenceFileRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  style={{ display: 'none' }}
-                  onChange={handleEvidenceFileChange}
-                />
-                
-                {/* Hidden file input for main evidence */}
-                <input
-                  ref={mainEvidenceFileRef}
-                  type="file"
-                  accept="image/*"
-                  style={{ display: 'none' }}
-                  onChange={handleMainEvidenceFileChange}
-                />
+                {/* Hidden file inputs - only render when editing */}
+                {isEditing && (
+                  <>
+                    <input
+                      ref={evidenceFileRef}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      style={{ display: 'none' }}
+                      onChange={handleEvidenceFileChange}
+                    />
+                    
+                    <input
+                      ref={mainEvidenceFileRef}
+                      type="file"
+                      accept="image/*"
+                      style={{ display: 'none' }}
+                      onChange={handleMainEvidenceFileChange}
+                    />
+                  </>
+                )}
               </Card.Body>
             </Card>
           </Col>
         </Row>
-
+        )}
 
       </div>
 
