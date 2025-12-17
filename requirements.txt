@@ -1,0 +1,68 @@
+# Core Framework
+fastapi==0.104.1
+uvicorn==0.24.0
+starlette==0.27.0
+websockets==15.0.1
+python-multipart==0.0.6
+
+# Deep Learning & Computer Vision
+torch==2.5.1
+torchvision==0.20.1
+torchaudio==2.5.1
+ultralytics==8.3.0
+opencv-python==4.10.0
+opencv-contrib-python==4.10.0.84
+easyocr==1.7.2
+paddleocr==3.2.0
+paddlepaddle==3.1.1
+boxmot==15.0.9
+supervision==0.21.0
+
+# Database & ORM
+sqlalchemy==2.0.43
+sqlmodel==0.0.14
+asyncpg==0.30.0
+psycopg2-binary==2.9.9
+
+# Authentication & Security
+python-jose==3.3.0
+passlib==1.7.4
+bcrypt==5.0.0
+cryptography==44.0.3
+
+# Data Processing
+numpy==1.26.4
+pandas==2.3.2
+pillow==11.3.0
+matplotlib==3.10.5
+scipy==1.16.1
+scikit-learn==1.7.2
+scikit-image==0.25.2
+
+# Utilities
+pydantic==2.5.0
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+requests==2.32.4
+loguru==0.7.3
+tqdm==4.67.1
+
+# NVIDIA CUDA Support (if using GPU)
+nvidia-cublas-cu12==12.9.1.4
+nvidia-cuda-nvrtc-cu12==12.9.86
+nvidia-cuda-runtime==13.0.96
+nvidia-cudnn-cu12==9.1.0.70
+
+# ONNX Runtime (for optimized inference)
+onnxruntime-gpu==1.20.0
+onnx==1.14.1
+onnxsim==0.4.33
+
+# Additional OCR & Image Processing
+pytesseract==0.3.13
+pypdfium2==4.30.0
+pillow-heif==1.1.1
+
+# Development Tools
+pytest
+black

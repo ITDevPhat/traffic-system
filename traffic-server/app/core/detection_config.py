@@ -10,7 +10,7 @@ CLASS_CONFIDENCE_THRESHOLDS = {
     "bus": 0.70,        # Bus: 40% - Dễ nhận diện (kích thước lớn)
     "car": 0.4,        # Car: 35% - Standard (phổ biến nhất)
     "bike": 0.25,       # Bike: 30% - Khó hơn (kích thước nhỏ, nhiều góc nhìn)
-    "truck": 0.70,      # Truck: 40% - Dễ nhận diện (kích thước lớn)
+    "truck": 0.85,      # Truck: 40% - Dễ nhận diện (kích thước lớn)
 }
 
 # Global confidence threshold (fallback)

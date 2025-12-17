@@ -1,22 +1,23 @@
-# 🚦 Traffic Violation Detection System
+# 🚦 Hệ Thống Phát Hiện Vi Phạm Giao Thông - LVTN
 
-A real-time traffic violation detection system using computer vision and deep learning, built with Next.js frontend and FastAPI backend.
+Hệ thống phát hiện vi phạm giao thông thời gian thực sử dụng computer vision và deep learning, được xây dựng với Next.js frontend và FastAPI backend.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Python](https://img.shields.io/badge/python-3.8+-blue.svg)
-![Node](https://img.shields.io/badge/node-16+-green.svg)
+![Python](https://img.shields.io/badge/python-3.11-blue.svg)
+![Node](https://img.shields.io/badge/node-18+-green.svg)
 
-## 🌟 Features
+## 🌟 Tính Năng Chính
 
-- **Real-time Vehicle Detection**: Detect and track vehicles (cars, buses, trucks, motorbikes) using YOLOv10
-- **License Plate Recognition**: Automatic license plate detection and OCR for Vietnamese plates
-- **Traffic Light Detection**: Monitor traffic light status (red/yellow/green)
-- **Violation Detection**: Automatically detect red light violations
-- **Live Streaming**: WebSocket-based real-time video processing with 25+ FPS
-- **Tracking System**: ByteTrack integration for stable multi-object tracking
-- **Web Dashboard**: Modern React/Next.js interface for monitoring and management
+- **Phát hiện xe thời gian thực**: Phát hiện và theo dõi các loại xe (ô tô, xe buýt, xe tải, xe máy) sử dụng YOLOv10
+- **Nhận dạng biển số xe**: Pipeline OCR biển số - YOLO detection → character detection → OCR refinement (EasyOCR/PaddleOCR)
+- **Phát hiện đèn giao thông**: Giám sát trạng thái đèn giao thông (đỏ/vàng/xanh)
+- **Phát hiện vi phạm**: Tự động phát hiện vi phạm vượt đèn đỏ
+- **Live Streaming**: Real-time video processing via WebSocket (≈20–30 FPS depending on hardware)
+- **Hệ thống theo dõi**: Multi-object tracking framework (using ByteTrack algorithm)
+- **Dashboard Web**: Giao diện React/Next.js hiện đại để giám sát và quản lý
+- **REST API & WebSocket**: REST API for management & configuration, WebSocket for real-time video inference and violation events
 
-## 🏗️ System Architecture
+## 🏗️ Kiến Trúc Hệ Thống
 
 ```
 Frontend (Next.js)     ←→     WebSocket     ←→     Backend (FastAPI)
@@ -26,64 +27,43 @@ Frontend (Next.js)     ←→     WebSocket     ←→     Backend (FastAPI)
    Admin Panel            Violations                 OCR Engine
 ```
 
-## 📖 Documentation
+## 🚀 Hướng Dẫn Cài Đặt
 
-**👉 Xem [COMPLETE_GUIDE.md](COMPLETE_GUIDE.md) để có hướng dẫn chi tiết đầy đủ!**
+### Yêu Cầu Hệ Thống
 
-Bao gồm:
-- ✅ Hướng dẫn cài đặt từ A-Z (Anaconda, GPU, Database)
-- ✅ Kiến trúc hệ thống chi tiết
-- ✅ Luồng xử lý (Pipeline)
-- ✅ Model YOLO (.pt, .onnx, .engine)
-- ✅ Giải thích Confidence Threshold
-- ✅ Cấu hình & Tối ưu
-- ✅ Frontend & Backend
-- ✅ Troubleshooting
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- Python 3.8 - 3.11
-- Node.js 16+ - 18.x
-- CUDA-capable GPU (recommended, RTX 3050+)
+- Python 3.11 (khuyến nghị)
+- Node.js 18.x
+- CUDA-capable GPU (khuyến nghị RTX 3050+)
 - Anaconda/Miniconda
 - PostgreSQL 12+
 
-### Installation
+### Cài Đặt
 
-1. **Clone the repository**
+1. **Tạo môi trường Anaconda**
 ```bash
-git clone https://github.com/yourusername/traffic-system.git
-cd traffic-system
-```
-
-2. **Set up Anaconda environment**
-```bash
-conda create -n LVTN python=3.10
+conda create -n LVTN python=3.11
 conda activate LVTN
 ```
 
-3. **Install PyTorch with CUDA** (if using GPU)
+2. **Cài đặt PyTorch với CUDA**
 ```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
 
-4. **Set up the backend**
+3. **Cài đặt Backend dependencies**
 ```bash
 cd traffic-server
 pip install -r requirements.txt
 ```
 
-5. **Set up the frontend**
+4. **Cài đặt Frontend dependencies**
 ```bash
-# From project root
 npm install
 ```
 
-6. **Configure environment variables**
+5. **Cấu hình biến môi trường**
 
-Create `.env` file in `traffic-server/`:
+Tạo file `.env` trong `traffic-server/`:
 ```env
 DATABASE_URL=postgresql://user:password@localhost:5432/traffic_db
 SECRET_KEY=your-secret-key-here
@@ -93,7 +73,7 @@ VIDEOS_DIR=videos
 EVIDENCE_DIR=evidence
 ```
 
-### Running the Application
+### Chạy Ứng Dụng
 
 **Terminal 1 - Backend (FastAPI):**
 ```bash
@@ -107,12 +87,94 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 npm run dev
 ```
 
-**Access:**
+**Truy cập:**
 - Frontend: http://localhost:3000
 - Backend API: http://localhost:8000
 - API Docs: http://localhost:8000/docs
 
-## 📁 Project Structure
+## 📚 Thư Viện Sử Dụng
+
+### Backend (Python)
+
+#### Computer Vision & Deep Learning
+- **PyTorch 2.5.1** - Framework deep learning chính
+- **TorchVision 0.20.1** - Xử lý ảnh và computer vision
+- **Ultralytics 8.3.0** - YOLO-based object detection framework (YOLOv8/YOLOv10-compatible)
+- **OpenCV 4.10.0** - Xử lý ảnh và video
+- **EasyOCR 1.7.2** - Nhận dạng ký tự quang học
+- **PaddleOCR 3.2.0** - OCR engine cho tiếng Việt
+- **BoxMOT 15.0.9** - Multi-object tracking framework (using ByteTrack)
+- **Supervision 0.21.0** - Computer vision utilities
+
+#### Web Framework & API
+- **FastAPI 0.104.1** - Web framework async
+- **Uvicorn 0.24.0** - ASGI server
+- **Starlette 0.27.0** - Web framework core
+- **WebSockets 15.0.1** - Real-time communication
+- **Python-multipart 0.0.6** - File upload support
+
+#### Database & ORM
+- **SQLAlchemy 2.0.43** - ORM framework
+- **SQLModel 0.0.14** - Type-safe SQL models
+- **AsyncPG 0.30.0** - PostgreSQL async driver
+- **Psycopg2 2.9.10** - PostgreSQL adapter
+
+#### Authentication & Security
+- **Python-jose 3.3.0** - JWT tokens
+- **Passlib 1.7.4** - Password hashing
+- **BCrypt 5.0.0** - Password encryption
+- **Cryptography 44.0.3** - Cryptographic recipes
+
+#### Data Processing
+- **NumPy 1.26.4** - Numerical computing
+- **Pandas 2.3.2** - Data manipulation
+- **Pillow 11.3.0** - Image processing
+- **Matplotlib 3.10.5** - Data visualization
+- **SciPy 1.16.1** - Scientific computing
+- **Scikit-learn 1.7.2** - Machine learning
+- **Scikit-image 0.25.2** - Image processing
+
+#### Utilities
+- **Pydantic 2.5.0** - Data validation
+- **Python-dotenv 1.0.0** - Environment variables
+- **Requests 2.32.4** - HTTP client
+- **Loguru 0.7.3** - Logging
+- **TQDM 4.67.1** - Progress bars
+
+### Frontend (Node.js/React)
+
+#### Core Framework
+- **Next.js 14.2.6** - React framework
+- **React 18.3.1** - UI library
+- **TypeScript 5.5.4** - Type safety
+
+#### UI Components & Styling
+- **React-Bootstrap 2.10.4** - UI components
+- **Bootstrap 5.3.3** - CSS framework
+- **React-Icons 5.5.0** - Icon library
+- **SASS 1.77.8** - CSS preprocessor
+
+#### Data Visualization
+- **ApexCharts 3.52.0** - Charts library
+- **React-ApexCharts 1.4.1** - React wrapper
+- **JSVectorMap 1.3.2** - Interactive maps
+
+#### Form Handling
+- **React-Hook-Form 7.53.0** - Form management
+- **Yup 1.4.0** - Schema validation
+- **React-Select 5.8.0** - Select components
+
+#### Real-time & Communication
+- **WebSocket client** - Real-time updates
+- **SweetAlert2 11.25.0** - Beautiful alerts
+- **React-Toastify 10.0.5** - Notifications
+
+#### Development Tools
+- **ESLint** - Code linting
+- **Prettier 3.3.3** - Code formatting
+- **Vitest 4.0.15** - Testing framework
+
+## 📁 Cấu Trúc Dự Án
 
 ```
 traffic-system/
@@ -134,40 +196,48 @@ traffic-system/
 
 ## 🎯 YOLO Models
 
-| Model | File | Purpose | Accuracy |
-|-------|------|---------|----------|
-| Vehicle Detection | `yolo_vehicle_v10m.pt` | Detect vehicles | 95%+ |
-| License Plate | `yolo_plate_v10n.pt` | Detect plates | 90%+ |
-| OCR | `yolo_ocr_chars_v10n.pt` | Read plate text | 85%+ |
-| Traffic Light | `yolo_trafficlight_v10n.pt` | Detect light status | 92%+ |
+| Model | File | Mục đích | Độ chính xác |
+|-------|------|----------|--------------|
+| Phát hiện xe | `yolo_vehicle_v10m.pt` | Phát hiện các loại xe | 95%+ |
+| Biển số xe | `yolo_plate_v10n.pt` | Phát hiện biển số | 90%+ |
+| OCR | `yolo_ocr_chars_v10n.pt` | Đọc ký tự biển số | 85%+ |
+| Đèn giao thông | `yolo_trafficlight_v10n.pt` | Phát hiện trạng thái đèn | 92%+ |
 
-## 🔧 Configuration
+## 🔬 Experimental Setup
 
-### Backend Configuration (config.py)
-- Adjust detection confidence thresholds
-- Configure GPU/CPU device
-- Set database connection
-- Define ROI zones
+- **Input resolution**: 1280×720
+- **Inference device**: NVIDIA RTX 3050+ (CUDA 12.1)
+- **Average inference latency**: ~30–40 ms/frame
+- **Memory usage**: ~4-6GB VRAM (depending on model size)
+- **Supported video formats**: MP4, AVI, MOV, RTSP streams
 
-### Frontend Configuration
-- API endpoint in `services/api.ts`
-- WebSocket URL for real-time streaming
-- UI theme and layout settings
+## 🔧 Cấu Hình
 
-## 📊 API Documentation
+### Cấu hình Backend (config.py)
+- Điều chỉnh ngưỡng confidence detection
+- Cấu hình GPU/CPU device
+- Thiết lập kết nối database
+- Định nghĩa vùng ROI
 
-Once the backend is running, access the interactive API documentation at:
+### Cấu hình Frontend
+- API endpoint trong `services/api.ts`
+- WebSocket URL cho streaming thời gian thực
+- Cài đặt theme và layout UI
+
+## 📊 Tài Liệu API
+
+Khi backend đang chạy, truy cập tài liệu API tương tác tại:
 - Swagger UI: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
 
-## 🛠️ Development
+## 🛠️ Phát Triển
 
 ### Backend Development
 ```bash
-# Run with auto-reload
+# Chạy với auto-reload
 uvicorn app.main:app --reload
 
-# Run tests
+# Chạy tests
 pytest
 
 # Format code
@@ -179,50 +249,31 @@ black .
 # Development server
 npm run dev
 
-# Build for production
+# Build cho production
 npm run build
 
-# Run production build
+# Chạy production build
 npm start
 
 # Lint code
 npm run lint
 ```
 
-## 🐳 Docker Deployment (Coming Soon)
+## 📄 Giấy Phép
 
-```bash
-# Build and run with Docker Compose
-docker-compose up -d
-```
+Dự án này được cấp phép theo MIT License.
 
-## 📝 License
+## 👥 Tác Giả
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+- Nguyễn Thành Phát - Dự án LVTN
 
-## 🤝 Contributing
+## 🙏 Lời Cảm Ơn
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## 👥 Authors
-
-- Traffic System Team - LVTN Project
-
-## 🙏 Acknowledgments
-
-- YOLOv10 by Ultralytics
-- ByteTrack for object tracking
+- YOLOv10-based models for object detection
+- ByteTrack algorithm for multi-object tracking
 - FastAPI framework
 - Next.js and React community
 
-## 📞 Support
-
-For support, email support@trafficsystem.com or open an issue in the GitHub repository.
-
 ---
 
-**Note**: This is an academic project for learning purposes. For production use, additional security and optimization measures should be implemented.
+**Lưu ý**: Đây là dự án học thuật cho mục đích học tập. Để sử dụng trong production, cần thêm các biện pháp bảo mật và tối ưu hóa.
