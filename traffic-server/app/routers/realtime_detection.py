@@ -86,8 +86,16 @@ class DetectionModels:
         
         self._initialized = True
 
-# Global models instance
-models = DetectionModels()
+# Lazy model singleton.  Importing this router must remain safe when an
+# optional acceleration/runtime dependency is unavailable.
+models = None
+
+
+def get_models() -> DetectionModels:
+    global models
+    if models is None:
+        models = DetectionModels()
+    return models
 
 
 # ============================================
@@ -118,13 +126,15 @@ class VideoDetectionStream:
         self.width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         
+        model_bundle = get_models()
+
         # Initialize vehicle detection module with optimized settings
         self.vehicle_module = VehicleYOLOModule(
-            models=models,
+            models=model_bundle,
             enabled=True,
             use_tracking=True,  # ByteTrack
             confidence=INFERENCE_SETTINGS["conf"],  # Use optimized confidence
-            device=models.device
+            device=model_bundle.device
         )
         
         # Pre-warm model (first inference is slow)
@@ -375,10 +385,11 @@ async def websocket_detect_video_by_path(
 @router.get("/health")
 async def health_check():
     """Health check: kiểm tra model đã load chưa"""
+    model_bundle = get_models()
     return {
         "status": "ok",
-        "models_loaded": models.vehicle is not None,
-        "device": models.device,
+        "models_loaded": model_bundle.vehicle is not None,
+        "device": model_bundle.device,
         "gpu_available": torch.cuda.is_available()
     }
 

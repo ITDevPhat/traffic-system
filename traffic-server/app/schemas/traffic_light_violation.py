@@ -1,10 +1,12 @@
 from datetime import datetime
 from typing import Optional, Tuple
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class TrafficLightViolationIn(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     camera_id: Optional[int] = None
     camera_name: Optional[str] = None
     video_job_id: Optional[int] = None

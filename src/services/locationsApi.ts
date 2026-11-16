@@ -8,8 +8,8 @@ export interface Location {
   location_id: number;
   name: string;
   address?: string;
-  latitude?: number;
-  longitude?: number;
+  latitude?: number | null;
+  longitude?: number | null;
   description?: string;
   created_at: string;
 }
@@ -17,16 +17,16 @@ export interface Location {
 export interface LocationCreateInput {
   name: string;
   address?: string;
-  latitude?: number;
-  longitude?: number;
+  latitude?: number | null;
+  longitude?: number | null;
   description?: string;
 }
 
 export interface LocationUpdateInput {
   name: string;
   address?: string;
-  latitude?: number;
-  longitude?: number;
+  latitude?: number | null;
+  longitude?: number | null;
   description?: string;
 }
 

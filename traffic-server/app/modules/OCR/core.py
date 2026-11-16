@@ -172,7 +172,7 @@ class LicensePlateDetector:
         try:
             print(f"Loading detector model: {self.detector_model_path}")
             # Load model và set device ngay từ đầu
-            self.detector_model = YOLO(self.detector_model_path)
+            self.detector_model = YOLO(self.detector_model_path, task="detect")
             # Đảm bảo model được move lên device đúng
             if self.device == 'cuda' and torch.cuda.is_available():
                 # YOLO tự động sử dụng device khi predict, nhưng có thể set trước
@@ -181,7 +181,7 @@ class LicensePlateDetector:
                 print("⚠️  Detector model loaded on CPU")
             
             print(f"Loading OCR model: {self.ocr_model_path}")
-            self.ocr_model = YOLO(self.ocr_model_path)
+            self.ocr_model = YOLO(self.ocr_model_path, task="detect")
             if self.device == 'cuda' and torch.cuda.is_available():
                 print(f"✅ OCR model loaded - will use GPU: {torch.cuda.get_device_name(0)}")
             else:

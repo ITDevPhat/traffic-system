@@ -171,12 +171,22 @@ class YOLOModelsV2:
             logger.error(f"❌ Error loading models: {e}", exc_info=True)
             raise
 
-# Global models instance
-try:
-    models = YOLOModelsV2()
-except Exception as e:
-    logger.error(f"Failed to initialize YOLO models: {e}")
-    models = None
+# Lazy global models instance.  Model loading must not happen while FastAPI
+# imports routers (otherwise a missing ONNX/TensorRT/CUDA component can stop
+# unrelated endpoints such as authentication from starting).
+models = None
+
+
+def get_models():
+    """Load the legacy video-processing model bundle on first inference."""
+    global models
+    if models is None:
+        try:
+            models = YOLOModelsV2()
+        except Exception as exc:
+            logger.error("Failed to initialize YOLO models: %s", exc, exc_info=True)
+            models = None
+    return models
 
 # ============================================
 # 🔍 EasyOCR Fallback (Lazy Load)
@@ -241,11 +251,12 @@ def detect_traffic_light_status(frame: np.ndarray) -> str:
     Returns:
         "red", "green", "yellow", hoặc "unknown"
     """
-    if models is None or models.traffic_light is None:
+    model_bundle = get_models()
+    if model_bundle is None or model_bundle.traffic_light is None:
         return "unknown"
     
     try:
-        results = models.traffic_light.predict(
+        results = model_bundle.traffic_light.predict(
             frame,
             conf=settings.INFERENCE_CONFIDENCE_LIGHT,
             device=DEVICE,
@@ -257,7 +268,7 @@ def detect_traffic_light_status(frame: np.ndarray) -> str:
         
         # Lấy detection có confidence cao nhất
         best_light = max(results[0].boxes, key=lambda b: b.conf[0])
-        cls_name = models.traffic_light.names[int(best_light.cls[0])]
+        cls_name = model_bundle.traffic_light.names[int(best_light.cls[0])]
         
         return cls_name.lower()
     
@@ -287,12 +298,13 @@ def detect_and_read_plate(vehicle_crop: np.ndarray) -> Tuple[Optional[str], floa
     Returns:
         (plate_text, confidence)
     """
-    if models is None or models.plate is None:
+    model_bundle = get_models()
+    if model_bundle is None or model_bundle.plate is None:
         return None, 0.0
     
     try:
         # 1. Phát hiện vùng biển số
-        results_plate = models.plate.predict(
+        results_plate = model_bundle.plate.predict(
             vehicle_crop,
             conf=settings.INFERENCE_CONFIDENCE_PLATE,
             device=DEVICE,
@@ -322,14 +334,14 @@ def detect_and_read_plate(vehicle_crop: np.ndarray) -> Tuple[Optional[str], floa
         plate_text = "UNKNOWN"
         
         # 4. Try YOLO OCR (if available)
-        if models.ocr is not None:
+        if model_bundle.ocr is not None:
             try:
                 if two_line:
                     # Split and OCR each line separately
                     upper, lower = split_two_lines(plate_crop)
                     
                     def yolo_ocr_line(img):
-                        results = models.ocr.predict(
+                        results = model_bundle.ocr.predict(
                             img,
                             conf=settings.INFERENCE_CONFIDENCE_OCR,
                             device=DEVICE,
@@ -341,14 +353,14 @@ def detect_and_read_plate(vehicle_crop: np.ndarray) -> Tuple[Optional[str], floa
                         
                         # Sort characters by x-coordinate (left to right)
                         chars = sorted(results[0].boxes, key=lambda b: b.xyxy[0][0])
-                        return "".join([models.ocr.names[int(c.cls[0])] for c in chars])
+                        return "".join([model_bundle.ocr.names[int(c.cls[0])] for c in chars])
                     
                     upper_text = yolo_ocr_line(upper)
                     lower_text = yolo_ocr_line(lower)
                     plate_text = upper_text + lower_text
                 else:
                     # Single line OCR
-                    results_ocr = models.ocr.predict(
+                    results_ocr = model_bundle.ocr.predict(
                         plate_crop,
                         conf=settings.INFERENCE_CONFIDENCE_OCR,
                         device=DEVICE,
@@ -359,7 +371,7 @@ def detect_and_read_plate(vehicle_crop: np.ndarray) -> Tuple[Optional[str], floa
                         # Sort by x-coordinate
                         chars = sorted(results_ocr[0].boxes, key=lambda b: b.xyxy[0][0])
                         plate_text = "".join([
-                            models.ocr.names[int(c.cls[0])] for c in chars
+                            model_bundle.ocr.names[int(c.cls[0])] for c in chars
                         ])
                 
                 if plate_text != "UNKNOWN":
@@ -547,6 +559,10 @@ async def process_video(file, session: Session, module_config: Optional[Dict[str
         Dictionary with processing results
     """
     logger.info(f"📹 Starting video processing: {file.filename}")
+
+    model_bundle = get_models()
+    if model_bundle is None:
+        raise RuntimeError("AI models are unavailable; video processing cannot start")
     
     # 1. Save video
     unique_filename = f"{uuid.uuid4().hex}_{file.filename}"
@@ -609,7 +625,7 @@ async def process_video(file, session: Session, module_config: Optional[Dict[str
             roi_json_path=module_config.get("roi_json_path") if module_config.get("enable_roi_json", settings.MODULE_ENABLE_ROI_JSON) else None,
         )
         vehicle_module = VehicleYOLOModule(
-            models=models,
+            models=model_bundle,
             enabled=module_config.get("enable_vehicle_yolo", settings.MODULE_ENABLE_VEHICLE_YOLO),
             use_tracking=module_config.get("enable_bytetrack", settings.MODULE_ENABLE_BYTETRACK),
             confidence=module_config.get("inference_confidence_vehicle", settings.INFERENCE_CONFIDENCE_VEHICLE),

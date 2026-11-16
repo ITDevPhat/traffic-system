@@ -7,7 +7,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createCamera, CameraCreateInput } from '@/services/camerasApi';
 import { toast } from 'react-toastify';
-import { TextFormInput } from '@/components/FormInput'; // Assuming this exists based on guide
 
 export default function CreateCameraPage() {
     const router = useRouter();

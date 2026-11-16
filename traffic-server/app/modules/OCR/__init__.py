@@ -13,7 +13,15 @@ from .core import LicensePlateDetector, create_detector
 try:
     from .core_optimized import LicensePlateDetectorOptimized, create_detector_optimized
     __all__ = ['LicensePlateDetector', 'create_detector', 'LicensePlateDetectorOptimized', 'create_detector_optimized']
-except ImportError:
+except (ImportError, OSError, FileNotFoundError) as exc:
+    # TensorRT can raise FileNotFoundError/OSError when its native DLLs
+    # (for example nvinfer_10.dll) are unavailable.  TensorRT is optional;
+    # the OCR service can still use the PyTorch/ONNX implementation.
+    import logging
+    logging.getLogger(__name__).warning(
+        "Optimized OCR backend unavailable; continuing without TensorRT: %s",
+        exc,
+    )
     __all__ = ['LicensePlateDetector', 'create_detector']
 
 __version__ = '2.0.0'

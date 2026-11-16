@@ -1,11 +1,15 @@
-# =============================
+
+# ============================================================
 # PYTHON / FASTAPI
-# =============================
+# ============================================================
+
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+
+# Build / distribution
 build/
 develop-eggs/
 dist/
@@ -25,101 +29,278 @@ share/python-wheels/
 MANIFEST
 *.manifest
 *.spec
+
+# Python package artifacts
 pip-log.txt
 pip-delete-this-directory.txt
+pip-wheel-metadata/
 
-# Virtual env
+# Virtual environments
 .env
-.venv
+.venv/
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
 
+# Python tooling
+.python-version.local
+.pytype/
+.pyre/
+.pyright/
+.dmypy.json
+dmypy.json
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+
 # Coverage / Testing
 htmlcov/
 .tox/
 .nox/
-.coverage*
-.cache
+.coverage
+.coverage.*
 nosetests.xml
 coverage.xml
 *.cover
 *.py,cover
-.hypothesis/
-.pytest_cache/
 cover/
-
-# SQLite databases
-*.db
-*.sqlite
-*.sqlite3
-db.sqlite3
-db.sqlite3-journal
-
-# Logs
-logs/
-*.log
-log.txt
+test-results/
+playwright-report/
 
 # Jupyter / IPython
-.ipynb_checkpoints
+.ipynb_checkpoints/
 profile_default/
 ipython_config.py
-
-# PyInstaller
-*.manifest
-*.spec
 
 # Cython
 cython_debug/
 
-# =============================
-# NODE / NEXT.JS
-# =============================
+
+# ============================================================
+# NODE.JS / NEXT.JS / FRONTEND
+# ============================================================
+
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
 .pnpm-debug.log*
-report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Package manager generated files
 .pnp.*
-.yarn/cache
-.yarn/unplugged
+.yarn/cache/
+.yarn/unplugged/
 .yarn/build-state.yml
 .yarn/install-state.gz
+
+# Next.js
+.next/
+out/
+.vercel/
+.turbo/
+
+# Other frontend frameworks / bundlers
+.parcel-cache/
+.svelte-kit/
+.angular/
+.cache/
+.nyc_output/
+web_modules/
+
+# Build outputs
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.serverless/
+.dynamodb/
+.temp/
+
+# Lint / compiler cache
 .eslintcache
 .stylelintcache
 .rpt2_cache/
 .rts2_cache_*/
 
-# Build outputs
-.next/
-out/
-dist/
-build/
-.cache/
-.parcel-cache/
-.nyc_output
-coverage/
-web_modules/
-*.tsbuildinfo
-.serverless/
-.dynamodb/
-.temp
+# Testing
+playwright-report/
+test-results/
 
-# Env files
+# Logs
+*.log
+*.log.*
+
+
+# ============================================================
+# ENVIRONMENT VARIABLES / SECRETS
+# ============================================================
+
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
+!.env.example
+!.env.template
+!.env.sample
 
-# =============================
-# IDE / OS FILES
-# =============================
+secrets/
+credentials/
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Service account credentials
+service-account*.json
+firebase-adminsdk*.json
+credentials.json
+token.json
+
+
+# ============================================================
+# DATABASE / POSTGRESQL / SQLITE
+# ============================================================
+
+# Local database files
+*.db
+*.sqlite
+*.sqlite3
+db.sqlite3
+db.sqlite3-journal
+
+# PostgreSQL backups / exports
+*.dump
+*.backup.sql
+*.sql.gz
+
+# Local database backup directories
+/database-backups/
+/db-backups/
+/backups/
+
+# PostgreSQL temporary files
+*.pid
+*.sock
+
+# IMPORTANT:
+# Keep migrations, schema.sql, seed.sql (if sanitized),
+# alembic.ini and database configuration files.
+
+
+# ============================================================
+# AI / MACHINE LEARNING / COMPUTER VISION
+# ============================================================
+
+# Model weights
+*.pt
+*.pth
+*.onnx
+*.engine
+*.trt
+*.plan
+*.safetensors
+*.ckpt
+*.pb
+*.h5
+*.tflite
+*.weights
+
+# Model directories
+/models/
+/traffic-server/models/
+/traffic-server/app/modules/OCR/models/
+/project-export/models/
+/project-export/traffic-server/models/
+/project-export/traffic-server/app/modules/OCR/models/
+
+# AI experiment artifacts
+runs/
+wandb/
+mlruns/
+lightning_logs/
+tensorboard/
+ray_results/
+
+# Model training artifacts
+**/weights/
+**/checkpoints/
+**/exports/
+
+# Local model conversion artifacts
+**/trt_cache/
+**/cuda_cache/
+*.cubin
+*.fatbin
+
+# OCR caches
+**/ocr_cache/
+**/easyocr_cache/
+**/paddleocr_cache/
+
+# Inference temporary files
+**/inference_cache/
+**/temp_frames/
+**/extracted_frames/
+
+
+# ============================================================
+# DATASETS / VIDEOS / GENERATED OUTPUTS
+# ============================================================
+
+# Dataset directories
+/datasets/
+/data/raw/
+/data/processed/
+
+# Videos
+/videos/*
+!/videos/.gitkeep
+
+# Generated outputs
+/outputs/*
+!/outputs/.gitkeep
+
+/traffic-server/app/static/outputs/*
+!/traffic-server/app/static/outputs/.gitkeep
+
+# Temporary files
+/traffic-server/app/static/temp/*
+!/traffic-server/app/static/temp/.gitkeep
+
+# Uploaded runtime files
+/traffic-server/app/static/uploads/*
+!/traffic-server/app/static/uploads/.gitkeep
+
+# Video formats
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.flv
+*.wmv
+
+# Generated frames / screenshots
+**/screenshots/
+**/frames/
+
+# Dataset images only
+/datasets/**/*.jpg
+/datasets/**/*.jpeg
+/datasets/**/*.png
+/data/**/*.jpg
+/data/**/*.jpeg
+/data/**/*.png
+
+
+# ============================================================
+# IDE / EDITORS
+# ============================================================
+
 .idea/
 .vscode/
 *.swp
@@ -128,55 +309,105 @@ web_modules/
 .project
 .classpath
 .settings/
+
+# VS Code workspace files (optional)
+*.code-workspace
+
+
+# ============================================================
+# OPERATING SYSTEM
+# ============================================================
+
 .DS_Store
 Thumbs.db
 desktop.ini
+.AppleDouble
+.LSOverride
+._*
 
-# Backup files
+
+# ============================================================
+# BACKUP / TEMPORARY FILES
+# ============================================================
+
 *.backup
 *.bak
+*.old
+*.orig
+*.tmp
+*.temp
 *~
+
 tree.txt
 tree_*.txt
 
-# =============================
-# PROJECT-SPECIFIC
-# =============================
 
-# Videos and outputs
-/videos/*
-!/videos/.gitkeep
-/outputs/*
-!/outputs/.gitkeep
-/traffic-server/app/static/outputs/*
-!/traffic-server/app/static/outputs/.gitkeep
-/traffic-server/app/static/temp/*
-!/traffic-server/app/static/temp/.gitkeep
-/traffic-server/app/static/uploads/*
-!/traffic-server/app/static/uploads/.gitkeep
+# ============================================================
+# PYTHON / NODE / FRAMEWORK SPECIFIC
+# ============================================================
 
-# Model files (large)
-*.pt
-*.pth
-*.onnx
-*.pb
-*.h5
-*.tflite
-*.weights
+# Streamlit
+.streamlit/secrets.toml
 
-# Media (skip committing big video files)
-*.mp4
-*.avi
-*.mov
-*.mkv
-*.flv
-*.wmv
+# FastAPI / Uvicorn
+uvicorn.log
 
-# Secrets
-.env*
-!.env.example
-secrets/
-credentials/
-*.key
-*.pem
-*.crt
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Serverless
+.serverless/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Docker local overrides
+docker-compose.override.yml
+
+
+# ============================================================
+# PROJECT EXPORT / ARCHIVE
+# ============================================================
+
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+
+# Generated project exports
+/project-export/
+
+
+# ============================================================
+# KEEP IMPORTANT PROJECT FILES
+# ============================================================
+
+# Keep dependency manifests and lockfiles:
+# requirements.txt
+# pyproject.toml
+# poetry.lock
+# uv.lock
+# package.json
+# package-lock.json
+# pnpm-lock.yaml
+# yarn.lock
+
+# Keep frontend static assets:
+# public/
+# assets/
+# favicon.ico
+
+# Keep documentation:
+# README.md
+# PROJECT_CONTEXT.md
+# docs/
+
+# Keep database migration files:
+# alembic.ini
+# alembic/
+# migrations/
+# schema.sql

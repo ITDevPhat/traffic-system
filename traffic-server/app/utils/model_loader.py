@@ -26,6 +26,10 @@ except Exception as e:
 
 try:
     import onnxruntime as ort
+    # A namespace package can exist even when the actual runtime wheel is not
+    # installed. Require the API we use before marking ONNX as available.
+    if not hasattr(ort, "InferenceSession"):
+        raise ImportError("onnxruntime is present but InferenceSession is unavailable")
     HAVE_ONNX = True
     # Log available providers at startup
     if hasattr(ort, 'get_available_providers'):
@@ -156,7 +160,18 @@ def load_yolo_model(
     
     # Load theo format - chỉ hỗ trợ .onnx và .pt
     if model_type == "onnx":
-        model = load_onnx_model(actual_path, device, imgsz, half)
+        if not HAVE_ONNX:
+            pt_path = os.path.splitext(actual_path)[0] + ".pt"
+            if os.path.exists(pt_path):
+                logger.warning(
+                    "⚠️ ONNX Runtime unavailable; falling back to PyTorch model: %s",
+                    pt_path,
+                )
+                model = load_pytorch_model(pt_path, device, imgsz, half)
+            else:
+                raise RuntimeError("ONNX Runtime is unavailable and no sibling PyTorch model exists")
+        else:
+            model = load_onnx_model(actual_path, device, imgsz, half)
     elif model_type == "pt":
         model = load_pytorch_model(actual_path, device, imgsz, half)
     else:
@@ -231,7 +246,7 @@ def load_onnx_model(
         logger.warning(f"⚠️ ONNX chạy CPU-only: {active}")
 
     # Cuối cùng load bằng Ultralytics wrapper
-    model = YOLO(model_path)
+    model = YOLO(model_path, task="detect")
 
     # CUDA optimizations
     if device.startswith("cuda") and torch.cuda.is_available():
@@ -258,7 +273,7 @@ def load_pytorch_model(
     
     logger.info(f"📦 Loading PyTorch model: {model_path}")
     
-    model = YOLO(model_path)
+    model = YOLO(model_path, task="detect")
     
     # Move to device and optimize
     if device.startswith("cuda") and torch.cuda.is_available():

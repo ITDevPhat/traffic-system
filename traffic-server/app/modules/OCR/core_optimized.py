@@ -123,10 +123,10 @@ class LicensePlateDetectorOptimized:
         
         print(f"📦 Loading PyTorch models...")
         print(f"   Detector: {self.detector_model_path}")
-        self.detector_model = YOLO(self.detector_model_path)
+        self.detector_model = YOLO(self.detector_model_path, task="detect")
         
         print(f"   OCR: {self.ocr_model_path}")
-        self.ocr_model = YOLO(self.ocr_model_path)
+        self.ocr_model = YOLO(self.ocr_model_path, task="detect")
         
         print(f"✅ PyTorch models loaded on {self.device.upper()}")
     

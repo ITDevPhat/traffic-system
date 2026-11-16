@@ -1,0 +1,159 @@
+CƠ CHẾ HOẠT ĐỘNG CỦA BYTETRACK TRONG HỆ THỐNG TRAFFIC VIOLATION DETECTION
+================================================================================
+
+1. TỔNG QUAN BYTETRACK
+----------------------
+- ByteTrack là thuật toán tracking đa đối tượng (Multi-Object Tracking - MOT)
+- Được tích hợp thông qua thư viện boxmot (>=10.0.0)
+- Chạy song song với YOLO detection để theo dõi xe cộ qua các frame
+- Mục tiêu: Duy trì track_id ổn định cho từng phương tiện để phát hiện vi phạm
+
+2. KIẾN TRÚC TÍCH HỢP
+--------------------
+ByteTrack được tích hợp vào 3 thành phần chính:
+
+A. Detection Service (Xử lý video offline):
+   - Pipeline: YOLO → ByteTrack → OCR → Violation Detection
+   - File: traffic-server/app/services/detection_service.py
+
+B. Realtime Binary Stream (Streaming realtime):
+   - Pipeline: Capture → YOLO + ByteTrack → Encode → WebSocket
+   - File: traffic-server/app/services/realtime_binary_stream.py
+
+C. Tracking Engine (Module độc lập):
+   - Pure ByteTrack wrapper với smoothing
+   - File: traffic-server/app/engines/tracking_engine.py
+
+3. CƠ CHẾ HOẠT ĐỘNG CHI TIẾT
+----------------------------
+
+A. KHỞI TẠO BYTETRACK:
+   - Lazy loading thông qua boxmot_loader.py
+   - Tự động phát hiện các phiên bản boxmot khác nhau
+   - Fallback graceful nếu không có boxmot
+
+B. PIPELINE XỬ LÝ:
+   1. YOLO Detection:
+      - Detect vehicles: car, bus, truck, bike
+      - Output: bounding boxes + confidence + class_id
+   
+   2. ByteTrack Processing:
+      - Input format: [x1, y1, x2, y2, confidence, class_id]
+      - Gọi tracker.update(detections, frame)
+      - Output format: [x1, y1, x2, y2, track_id, score, class_id]
+   
+   3. Track Association:
+      - Sử dụng IoU (Intersection over Union) để match
+      - Duy trì track_id qua các frame
+      - Xử lý lost tracks với buffer
+
+C. CẤU HÌNH THAM SỐ:
+   - track_thresh: 0.5 (ngưỡng confidence để bắt đầu track)
+   - track_buffer: 30 frames (giữ lost track trong 1 giây @ 30fps)
+   - match_thresh: 0.8 (ngưỡng IoU để match detection với track)
+   - min_box_area: 10 pixels² (kích thước bbox tối thiểu)
+
+4. LUỒNG XỬ LÝ REALTIME
+-----------------------
+Thread 1 (Capture): Camera → Frame Queue
+Thread 2 (Inference): 
+   - YOLO detection mỗi detect_interval (1/30s)
+   - ByteTrack tracking cho mỗi frame
+   - Filter theo ROI
+Thread 3 (Encode): Vẽ bbox + TurboJPEG encoding
+Main Thread: WebSocket streaming
+
+5. TÍNH NĂNG NÂNG CAO
+--------------------
+
+A. TRACK SMOOTHING:
+   - Exponential smoothing với alpha=0.35
+   - Giảm jitter của bounding box
+   - Lưu history 10 frames cho mỗi track
+
+B. ROI FILTERING:
+   - Chỉ track vehicles trong vùng quan tâm
+   - Tối ưu performance và giảm false positive
+
+C. ADAPTIVE DETECTION:
+   - Detection interval có thể điều chỉnh theo FPS
+   - Tracking chạy full FPS, detection chạy theo interval
+
+6. PERFORMANCE OPTIMIZATION
+---------------------------
+
+A. MEMORY MANAGEMENT:
+   - torch.cuda.empty_cache() sau mỗi inference
+   - Cleanup stale tracks định kỳ
+   - Giới hạn track history
+
+B. FPS OPTIMIZATION:
+   - Target 30+ FPS trên RTX 3050
+   - ONNX format cho compatibility
+   - Half precision tùy chọn
+
+C. THREADING:
+   - Multi-threading pipeline
+   - Non-blocking queues
+   - Graceful shutdown
+
+7. XỬ LÝ LỖI VÀ FALLBACK
+------------------------
+
+A. BOXMOT NOT AVAILABLE:
+   - Fallback về dummy track IDs
+   - Warning logs rõ ràng
+   - Hướng dẫn cài đặt
+
+B. ONNX RUNTIME ERRORS:
+   - Graceful error handling
+   - Detailed error messages
+   - Suggested fixes
+
+C. TRACKING FAILURES:
+   - Fallback về raw detections
+   - Maintain pipeline stability
+
+8. CẤU HÌNH FILES
+-----------------
+
+A. Configuration:
+   - bytetrack.yaml: Cấu hình tracker parameters
+   - performance_config.py: BYTETRACK_SETTINGS
+   
+B. Module Integration:
+   - VehicleYOLOModule: YOLO + ByteTrack wrapper
+   - TrackingEngine: Pure ByteTrack engine
+   - boxmot_loader.py: Dynamic import handler
+
+9. MONITORING VÀ METRICS
+------------------------
+
+A. Performance Metrics:
+   - Tracking FPS
+   - Active tracks count
+   - Average tracking time
+   - Track history size
+
+B. Logging:
+   - Frame-level tracking info
+   - Performance statistics
+   - Error handling logs
+
+10. WORKFLOW TỔNG THỂ
+--------------------
+
+1. Video/Stream Input
+2. YOLO Vehicle Detection
+3. ByteTrack Association & Tracking
+4. ROI Filtering
+5. Track Smoothing
+6. Violation Detection (dựa trên track_id)
+7. Evidence Collection
+8. Database Storage
+9. Real-time Streaming/Results
+
+KẾT LUẬN:
+ByteTrack đóng vai trò cốt lõi trong việc duy trì tính nhất quán của tracking,
+cho phép hệ thống phát hiện vi phạm giao thông chính xác dựa trên quỹ đạo
+di chuyển của từng phương tiện qua thời gian.

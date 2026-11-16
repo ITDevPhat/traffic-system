@@ -95,13 +95,11 @@ logging.getLogger('sqlalchemy.dialects').setLevel(logging.WARNING)
 logging.getLogger('sqlalchemy.orm').setLevel(logging.WARNING)
 
 # =========================================================
-# 🚦 1️⃣ Kiểm tra DB trước khi chạy FastAPI
-# =========================================================
-logger.info("🔍 Checking database connection...")
-check_database_connection()
-
-# =========================================================
-# 🚀 2️⃣ Khởi tạo ứng dụng FastAPI
+# 🚀 Khởi tạo ứng dụng FastAPI
+#
+# Database checks belong to the startup lifecycle, not module import. This
+# keeps `uvicorn` importable and lets health/diagnostic tooling report a clear
+# startup failure instead of blocking while routers are imported.
 # =========================================================
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -200,6 +198,10 @@ def on_startup():
     """
     Khởi tạo database và tables khi ứng dụng start.
     """
+    logger.info("🔍 Checking database connection...")
+    # Fail fast with a clear error when the configured database credentials
+    # are invalid. Do not retry for 30 seconds during every code reload.
+    check_database_connection(retries=1, delay=0)
     create_db_and_tables()
     
     # Print optimization summary

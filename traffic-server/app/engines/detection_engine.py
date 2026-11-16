@@ -76,7 +76,7 @@ class DetectionEngine:
             logger.info(f"🔄 Loading YOLO model: {self.model_path}")
             start_time = time.time()
             
-            self.model = YOLO(self.model_path)
+            self.model = YOLO(self.model_path, task="detect")
             
             # Move to device and set precision
             if hasattr(self.model.model, 'to'):
